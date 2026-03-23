@@ -1,0 +1,851 @@
+{% extends "base.html" %}
+{% block title %}日次実績 — 予定管理システム{% endblock %}
+
+{% block content %}
+{# ---- 日付ナビゲーション ---- #}
+<div class="week-nav mb-2">
+  <a class="btn btn-outline-secondary btn-sm"
+     href="{{ url_for('daily_bp.daily_view', date_str=prev_date) }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user.id }}{% endif %}">
+    ◀ 前日
+  </a>
+  <h5 class="mb-0">
+    日次実績：{{ date_str }}（{{ day_label }}）
+    {% if is_admin_view is defined and is_admin_view %}
+    <span class="badge bg-warning text-dark ms-2">{{ target_user.name }} を表示中</span>
+    {% endif %}
+  </h5>
+  <a class="btn btn-outline-secondary btn-sm"
+     href="{{ url_for('daily_bp.daily_view', date_str=next_date) }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user.id }}{% endif %}">
+    次日 ▶
+  </a>
+  <a class="btn btn-outline-primary btn-sm ms-2"
+     href="{{ url_for('daily_bp.daily_today') }}">今日</a>
+  {% if (session.user_role == '管理職' or session.user_role == 'マスタ') and all_users %}
+  <div class="input-group input-group-sm ms-auto" style="width:auto;">
+    <span class="input-group-text">切り替え：</span>
+    <select class="form-select form-select-sm" style="width:auto;"
+            onchange="location.href='{{ url_for('daily_bp.daily_view', date_str=date_str) }}?user_id='+this.value">
+      {% for u in all_users %}
+      <option value="{{ u.id }}" {% if u.id == target_user.id %}selected{% endif %}>{{ u.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+</div>
+
+{# ---- 休暇バナー ---- #}
+{% if leave_type %}
+<div class="alert alert-warning py-2 mb-2">
+  <strong>{{ leave_type }}</strong> が設定されています。
+  {% if leave_type in ['1日有休', '祝日', '特休'] %}
+  実績入力はすべて無効です。
+  {% elif leave_type == 'AM半休' %}
+  午前は入力不可（午後のみ編集可能）です。
+  {% elif leave_type == 'PM半休' %}
+  午後は入力不可（午前のみ編集可能）です。
+  {% endif %}
+</div>
+{% endif %}
+
+{# ---- メインフォーム ---- #}
+<form method="post" action="{{ url_for('daily_bp.daily_save') }}" id="daily-form">
+  <input type="hidden" name="date_str" value="{{ date_str }}">
+  <input type="hidden" name="target_user_id" value="{{ target_user.id if target_user else '' }}">
+  <script id="task-map-data" type="application/json">{{ task_map_json | safe }}</script>
+  <script id="leave-dates-data" type="application/json">{{ leave_dates_json | safe }}</script>
+  <datalist id="task-list">
+    {% for t in task_master %}
+    <option value="{{ t.task_name }}">
+    {% endfor %}
+  </datalist>
+
+  {# ---- 2カラムレイアウト ---- #}
+  <div class="row g-3">
+
+    {# ---- 左カラム: 当日の予定（読み取り専用） ---- #}
+    <div class="col-md-5">
+      <div class="card h-100">
+        <div class="card-header bg-primary text-white py-2">
+          <strong>📋 本日の予定</strong>
+          <small class="ms-2 opacity-75">（編集不可）</small>
+        </div>
+        <div class="card-body p-2">
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light">
+              <tr>
+                <th class="text-center" style="width:40px;">区分</th>
+                <th class="text-center" style="width:28px;">枠</th>
+                <th>作業名</th>
+                <th class="text-center" style="width:52px;">時間</th>
+              </tr>
+            </thead>
+            <tbody>
+              {# 予定 午前 #}
+              {% for i in range(5) %}
+              {% set cell = schedule_am[i] if schedule_am and i < schedule_am|length else {'task_name': '', 'hours': 0} %}
+              <tr class="{% if leave_type in ['1日有休', '祝日', '特休', 'AM半休'] %}table-secondary{% else %}am-row{% endif %}">
+                {% if i == 0 %}<td class="slot-label text-center" rowspan="5">午前</td>{% endif %}
+                <td class="text-center">{{ i + 1 }}</td>
+                <td>{{ cell.task_name or '' }}</td>
+                <td class="text-center">{{ cell.hours if cell.hours else '' }}</td>
+              </tr>
+              {% endfor %}
+              {# 予定 午後 #}
+              {% for i in range(5) %}
+              {% set cell = schedule_pm[i] if schedule_pm and i < schedule_pm|length else {'task_name': '', 'hours': 0} %}
+              <tr class="{% if leave_type in ['1日有休', '祝日', '特休', 'PM半休'] %}table-secondary{% else %}pm-row{% endif %}">
+                {% if i == 0 %}<td class="slot-label text-center" rowspan="5">午後</td>{% endif %}
+                <td class="text-center">{{ i + 1 }}</td>
+                <td>{{ cell.task_name or '' }}</td>
+                <td class="text-center">{{ cell.hours if cell.hours else '' }}</td>
+              </tr>
+              {% endfor %}
+              {# 予定合計 #}
+              <tr class="day-total-row">
+                <td colspan="3" class="text-center fw-bold">予定合計</td>
+                <td class="text-center fw-bold">
+                  {% set total = namespace(v=0) %}
+                  {% if schedule_am %}{% for c in schedule_am %}{% set total.v = total.v + (c.hours or 0) %}{% endfor %}{% endif %}
+                  {% if schedule_pm %}{% for c in schedule_pm %}{% set total.v = total.v + (c.hours or 0) %}{% endfor %}{% endif %}
+                  {{ total.v }}h
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    {# ---- 右カラム: 実績入力 ---- #}
+    <div class="col-md-7">
+      <div class="card h-100">
+        <div class="card-header bg-success text-white py-2 d-flex justify-content-between align-items-center">
+          <strong>✏️ 本日の実績</strong>
+          <button type="button" id="btn-clear-result" class="btn btn-sm btn-outline-light"
+                  title="実績をクリアして予定を反映">実績クリア</button>
+        </div>
+        <div class="card-body p-2">
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light">
+              <tr>
+                <th class="text-center" style="width:40px;">区分</th>
+                <th class="text-center" style="width:28px;">枠</th>
+                <th>作業名（📅=リスケ ⏩=繰り越し）</th>
+                <th class="text-center" style="width:80px;">時間</th>
+              </tr>
+            </thead>
+            <tbody>
+              {# 実績 午前 #}
+              {% for i in range(5) %}
+              {% set r_cell = result.am[i] if result and result.am and i < result.am|length else {'task_name': '', 'hours': 0, 'defer_date': '', 'is_carryover': 0} %}
+              {% set s_cell = schedule_am[i] if schedule_am and i < schedule_am|length else {'task_name': '', 'hours': 0} %}
+              {% set am_off = leave_type in ['1日有休', '祝日', '特休', 'AM半休'] %}
+              {% set is_co = r_cell.is_carryover %}
+              <tr class="{% if am_off %}table-secondary{% else %}am-row{% endif %}">
+                {% if i == 0 %}<td class="slot-label text-center" rowspan="5">午前</td>{% endif %}
+                <td class="text-center">{{ i + 1 }}</td>
+                <td style="position:relative;">
+                  <div class="d-flex align-items-center gap-1">
+                    <input type="text" list="task-list"
+                           name="result_task_am_{{ i }}"
+                           value="{{ r_cell.task_name if r_cell.task_name else s_cell.task_name }}"
+                           class="form-control form-control-sm result-task"
+                           data-slot="am"
+                           data-nav-idx="{{ i * 2 }}"
+                           placeholder="作業名"
+                           autocomplete="off"
+                           {% if am_off %}disabled{% endif %}>
+                    {% set dd = r_cell.defer_date if r_cell.defer_date else '' %}
+                    <span class="reschedule-badge badge {% if not dd %}d-none{% endif %}"
+                          style="background:#fd7e14;color:#fff;cursor:pointer;white-space:nowrap;font-size:0.72em;">
+                      {% if dd %}{{ dd[5:7] }}/{{ dd[8:10] }} リスケ{% endif %}
+                    </span>
+                    <button type="button" class="carryover-btn p-0 ms-1"
+                            data-slot="am" data-idx="{{ i }}"
+                            style="border:none;background:none;font-size:1em;opacity:{{ '1' if is_co else '0.25' }};"
+                            title="繰り越し（作業したが未完了）"
+                            {% if am_off %}disabled{% endif %}>⏩</button>
+                    <input type="hidden" name="carryover_am_{{ i }}" value="{{ '1' if is_co else '' }}">
+                  </div>
+                  <input type="date" name="defer_date_am_{{ i }}"
+                         class="defer-date-picker" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;"
+                         value="{{ r_cell.defer_date if r_cell.defer_date else '' }}"
+                         min="{{ today }}" {% if am_off %}disabled{% endif %}>
+                  <div class="reschedule-popover d-none"
+                       style="position:absolute;z-index:200;background:#fff;border:1px solid #ccc;border-radius:6px;padding:4px 10px;box-shadow:0 2px 8px rgba(0,0,0,.18);top:100%;left:0;white-space:nowrap;">
+                    <a href="#" class="reschedule-link text-decoration-none fw-bold" style="color:#fd7e14;font-size:0.85em;">📅 リスケ</a>
+                  </div>
+                </td>
+                <td>
+                  <input type="number" step="0.25" min="0" max="24"
+                         name="result_hours_am_{{ i }}"
+                         value="{{ r_cell.hours if (r_cell.task_name or r_cell.defer_date) else (s_cell.hours if s_cell.hours else '') }}"
+                         class="form-control form-control-sm result-hours" style="min-width:75px;"
+                         data-slot="am"
+                         data-nav-idx="{{ i * 2 + 1 }}"
+                         placeholder="h"
+                         {% if am_off %}disabled{% endif %}>
+                </td>
+              </tr>
+              {% endfor %}
+              {# 実績 午後 #}
+              {% for i in range(5) %}
+              {% set r_cell = result.pm[i] if result and result.pm and i < result.pm|length else {'task_name': '', 'hours': 0, 'defer_date': '', 'is_carryover': 0} %}
+              {% set s_cell = schedule_pm[i] if schedule_pm and i < schedule_pm|length else {'task_name': '', 'hours': 0} %}
+              {% set pm_off = leave_type in ['1日有休', '祝日', '特休', 'PM半休'] %}
+              {% set is_co = r_cell.is_carryover %}
+              <tr class="{% if pm_off %}table-secondary{% else %}pm-row{% endif %}">
+                {% if i == 0 %}<td class="slot-label text-center" rowspan="5">午後</td>{% endif %}
+                <td class="text-center">{{ i + 1 }}</td>
+                <td style="position:relative;">
+                  <div class="d-flex align-items-center gap-1">
+                    <input type="text" list="task-list"
+                           name="result_task_pm_{{ i }}"
+                           value="{{ r_cell.task_name if r_cell.task_name else s_cell.task_name }}"
+                           class="form-control form-control-sm result-task"
+                           data-slot="pm"
+                           data-nav-idx="{{ (i + 5) * 2 }}"
+                           placeholder="作業名"
+                           autocomplete="off"
+                           {% if pm_off %}disabled{% endif %}>
+                    {% set dd = r_cell.defer_date if r_cell.defer_date else '' %}
+                    <span class="reschedule-badge badge {% if not dd %}d-none{% endif %}"
+                          style="background:#fd7e14;color:#fff;cursor:pointer;white-space:nowrap;font-size:0.72em;">
+                      {% if dd %}{{ dd[5:7] }}/{{ dd[8:10] }} リスケ{% endif %}
+                    </span>
+                    <button type="button" class="carryover-btn p-0 ms-1"
+                            data-slot="pm" data-idx="{{ i }}"
+                            style="border:none;background:none;font-size:1em;opacity:{{ '1' if is_co else '0.25' }};"
+                            title="繰り越し（作業したが未完了）"
+                            {% if pm_off %}disabled{% endif %}>⏩</button>
+                    <input type="hidden" name="carryover_pm_{{ i }}" value="{{ '1' if is_co else '' }}">
+                  </div>
+                  <input type="date" name="defer_date_pm_{{ i }}"
+                         class="defer-date-picker" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;"
+                         value="{{ r_cell.defer_date if r_cell.defer_date else '' }}"
+                         min="{{ today }}" {% if pm_off %}disabled{% endif %}>
+                  <div class="reschedule-popover d-none"
+                       style="position:absolute;z-index:200;background:#fff;border:1px solid #ccc;border-radius:6px;padding:4px 10px;box-shadow:0 2px 8px rgba(0,0,0,.18);top:100%;left:0;white-space:nowrap;">
+                    <a href="#" class="reschedule-link text-decoration-none fw-bold" style="color:#fd7e14;font-size:0.85em;">📅 リスケ</a>
+                  </div>
+                </td>
+                <td>
+                  <input type="number" step="0.25" min="0" max="24"
+                         name="result_hours_pm_{{ i }}"
+                         value="{{ r_cell.hours if (r_cell.task_name or r_cell.defer_date) else (s_cell.hours if s_cell.hours else '') }}"
+                         class="form-control form-control-sm result-hours" style="min-width:75px;"
+                         data-slot="pm"
+                         data-nav-idx="{{ (i + 5) * 2 + 1 }}"
+                         placeholder="h"
+                         {% if pm_off %}disabled{% endif %}>
+                </td>
+              </tr>
+              {% endfor %}
+              {# 実績合計 #}
+              <tr class="day-total-row">
+                <td colspan="3" class="text-center fw-bold">実績合計</td>
+                <td class="text-center fw-bold" id="result-total">—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ---- 繰越業務 ---- #}
+  {% if pending_carryovers %}
+  <div class="row g-3 mt-1">
+    <div class="col-12">
+      <div class="card border-warning">
+        <div class="card-header bg-warning text-dark py-2 d-flex align-items-center gap-2">
+          <strong>⏩ 繰越業務（未完了）</strong>
+          <span class="badge bg-dark">{{ pending_carryovers | length }}</span>
+          <small class="ms-2 text-dark">作業完了したら「解決」を押してください</small>
+        </div>
+        <div class="card-body p-2">
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>作業名</th>
+                <th class="text-center" style="width:90px;">予定時間</th>
+                <th class="text-center" style="width:110px;">元の日付</th>
+                <th class="text-center" style="width:70px;">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for co in pending_carryovers %}
+              <tr>
+                <td>{{ co.task_name }}</td>
+                <td class="text-center">{{ co.planned_hours }}h</td>
+                <td class="text-center">{{ co.original_date }}</td>
+                <td class="text-center">
+                  <button type="submit"
+                          form="resolve-form-{{ co.id }}"
+                          class="btn btn-sm btn-success py-0 px-2">解決</button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ---- コメント欄 ---- #}
+  <div class="row g-3 mt-1">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header bg-info text-white py-2">
+          <strong>💬 本日の振り返り</strong>
+        </div>
+        <div class="card-body p-2">
+          <textarea name="reflection" class="form-control" rows="4"
+                    placeholder="本日の業務を振り返り、良かった点・改善点などを記入してください。">{{ comment.reflection if comment else '' }}</textarea>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header bg-warning text-dark py-2">
+          <strong>⚠️ 今後の対策・懸念事項</strong>
+        </div>
+        <div class="card-body p-2">
+          <textarea name="action" class="form-control" rows="4"
+                    placeholder="課題・懸念事項・翌日以降の対策などを記入してください。">{{ comment.action if comment else '' }}</textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ---- 管理者（上長）コメント欄 ---- #}
+  {# 表示条件: 管理職→対象がユーザーのみ / マスタ→対象が管理職orユーザー #}
+  {% if (session.user_role == '管理職' or session.user_role == 'マスタ') and is_admin_view is defined and is_admin_view
+      and not (session.user_role == '管理職' and target_user.get('role','') in ('管理職','マスタ'))
+      and not (session.user_role == 'マスタ' and target_user.get('role','') == 'マスタ') %}
+  {# 管理者が部下の画面を閲覧中: 振り返り（左）＋上長コメント（右）の2カラム #}
+  <div class="row g-3 mt-1">
+    <!-- 左: 部下の振り返り（読み取り専用） -->
+    <div class="col-md-5">
+      <div class="card border-info h-100">
+        <div class="card-header bg-info text-white py-2">
+          <strong>{{ target_user.name }}さんの振り返り</strong>
+        </div>
+        <div class="card-body p-2">
+          <div class="mb-2">
+            <small class="text-muted fw-bold">本日の振り返り</small>
+            <div style="min-height:60px;max-height:120px;overflow-y:auto;white-space:pre-wrap;background:#f8f9fa;padding:0.5rem;border-radius:4px;">
+              {{ comment.reflection if comment and comment.reflection else '（未記入）' }}
+            </div>
+          </div>
+          <div>
+            <small class="text-muted fw-bold">対策・懸念事項</small>
+            <div style="min-height:60px;max-height:120px;overflow-y:auto;white-space:pre-wrap;background:#f8f9fa;padding:0.5rem;border-radius:4px;">
+              {{ comment.action if comment and comment.action else '（未記入）' }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- 右: 上長コメント入力 -->
+    <div class="col-md-7">
+      <div class="card border-success h-100">
+        <div class="card-header bg-success text-white py-2">
+          <strong>📝 上長コメント</strong>
+        </div>
+        <div class="card-body p-2">
+          <form id="admin-comment-form" method="post" action="{{ url_for('daily_bp.daily_save_admin_comment') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="date_str" value="{{ date_str }}">
+            <input type="hidden" name="target_user_id" value="{{ target_user.id }}">
+            <input type="hidden" name="ajax" value="1">
+            <textarea name="admin_comment" id="admin-comment-textarea" class="form-control" rows="6"
+                      placeholder="部下への上長コメントを入力してください。" style="overflow-y:auto; max-height:200px;">{{ comment.admin_comment if comment and comment.admin_comment else '' }}</textarea>
+            <div class="mt-2 d-flex align-items-center gap-2">
+              <button type="submit" class="btn btn-success btn-sm">💾 上長コメントを保存</button>
+              <span id="admin-comment-status" class="small
+                {% if comment and comment.admin_comment and comment.updated_at %}text-success{% else %}text-muted{% endif %}">
+                {% if comment and comment.admin_comment and comment.updated_at %}
+                  ✅ 保存済み {{ comment.updated_at[:16] | replace('T', ' ') }}{% if comment.updated_by %}（{{ comment.updated_by }}）{% endif %}
+                {% else %}
+                  未保存
+                {% endif %}
+              </span>
+            </div>
+          </form>
+        </div>
+        <script>
+        (function() {
+          var form = document.getElementById('admin-comment-form');
+          if (!form) return;
+          form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var btn = form.querySelector('button[type="submit"]');
+            var status = document.getElementById('admin-comment-status');
+            btn.disabled = true;
+            btn.textContent = '保存中...';
+            fetch(form.action, {
+              method: 'POST',
+              body: new FormData(form)
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (data.ok) {
+                status.className = 'small text-success';
+                status.textContent = '✅ 保存済み ' + data.updated_at + '（' + data.updated_by + '）';
+              } else {
+                status.className = 'small text-danger';
+                status.textContent = '❌ 保存に失敗しました';
+              }
+            })
+            .catch(function() {
+              status.className = 'small text-danger';
+              status.textContent = '❌ 通信エラー';
+            })
+            .finally(function() {
+              btn.disabled = false;
+              btn.textContent = '💾 上長コメントを保存';
+            });
+          });
+        })();
+        </script>
+      </div>
+    </div>
+  </div>
+  {% elif session.user_role != '管理職' and session.user_role != 'マスタ' %}
+  {# 一般ユーザー: 読み取り専用で上長コメントを表示 #}
+  <div class="row g-3 mt-1">
+    <div class="col-12">
+      <div class="card border-success">
+        <div class="card-header bg-success text-white py-2 d-flex justify-content-between align-items-center">
+          <strong>📝 管理者（上長）コメント</strong>
+          {% if result_meta and result_meta.updated_at %}
+          <small class="text-white-50">
+            {% if comment and comment.updated_by and comment.admin_comment %}
+            最終更新: {{ comment.updated_at[:16] | replace('T', ' ') }}（{{ comment.updated_by }}）
+            {% endif %}
+          </small>
+          {% endif %}
+        </div>
+        <div class="card-body p-2">
+          <div id="admin-comment-view"
+               style="min-height:60px; max-height:200px; overflow-y:auto; white-space:pre-wrap; padding:0.5rem; background:#f8f9fa; border-radius:4px;">
+            {{ comment.admin_comment if comment and comment.admin_comment else '（コメントなし）' }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  {# 管理者自身のページ（is_admin_view=False）の場合は管理者コメント欄を表示しない #}
+
+  {# ---- 操作ボタン ---- #}
+  <div class="d-flex align-items-center gap-2 mt-3 flex-wrap">
+    {% if not (is_admin_view is defined and is_admin_view) %}
+    <button type="submit" class="btn btn-primary">💾 実績を保存</button>
+    {% endif %}
+    <a href="{{ url_for('export_bp.download_report', date=date_str) }}"
+       class="btn btn-outline-success">📥 日報 Excel ダウンロード</a>
+    {% if session.user_role == '管理職' or session.user_role == 'マスタ' %}
+    <a href="{{ url_for('export_bp.download_team_report', date=date_str) }}"
+       class="btn btn-outline-info">📋 チーム日報 Excel</a>
+    <a href="{{ url_for('mail_report_bp.preview', date=date_str) }}"
+       class="btn btn-outline-primary">📧 管理職日報メール</a>
+    {% endif %}
+    {% if session.user_role == 'マスタ' %}
+    <a href="{{ url_for('export_bp.export_admin_daily', date_str=date_str) }}"
+       class="btn btn-outline-warning">📊 全員日報 Excel</a>
+
+    {% endif %}
+  </div>
+
+  {# ---- 最終更新情報 ---- #}
+  {% if result_meta and result_meta.updated_at %}
+  <div class="text-muted small mt-2">
+    実績 最終更新: {{ result_meta.updated_at[:16] | replace('T', ' ') }}
+    {% if result_meta.updated_by %}（{{ result_meta.updated_by }}）{% endif %}
+  </div>
+  {% endif %}
+
+</form>
+
+{# ---- 繰り越し解決フォーム群（メインフォーム外に配置してネスト回避） ---- #}
+{% for co in pending_carryovers %}
+<form id="resolve-form-{{ co.id }}"
+      method="post"
+      action="{{ url_for('daily_bp.resolve_carryover', carryover_id=co.id) }}"
+      style="display:none;">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="date_str" value="{{ date_str }}">
+</form>
+{% endfor %}
+
+{# ---- 管理者: 部下の振り返りコメント一覧 ---- #}
+{% if (session.user_role == '管理職' or session.user_role == 'マスタ') and not is_admin_view and subordinate_comments %}
+<div class="mt-4">
+  <h6 class="fw-bold border-bottom pb-2">部下の振り返りコメント（{{ date_str }}）</h6>
+  {% for item in subordinate_comments %}
+  <div class="row g-3 mb-3">
+    <div class="col-md-6">
+      <div class="card border-info h-100">
+        <div class="card-header bg-info text-white py-2">
+          <strong>{{ item.user.name }}</strong>
+          <small class="ms-2 text-white-50">{{ item.user.dept or '' }}</small>
+        </div>
+        <div class="card-body p-2">
+          <div class="mb-2">
+            <small class="text-muted fw-bold">本日の振り返り</small>
+            <div style="min-height:50px; max-height:120px; overflow-y:auto; white-space:pre-wrap; background:#f8f9fa; padding:0.5rem; border-radius:4px; font-size:0.9em;">
+              {{ item.comment.reflection if item.comment and item.comment.reflection else '（未記入）' }}
+            </div>
+          </div>
+          <div>
+            <small class="text-muted fw-bold">対策・懸念事項</small>
+            <div style="min-height:50px; max-height:120px; overflow-y:auto; white-space:pre-wrap; background:#f8f9fa; padding:0.5rem; border-radius:4px; font-size:0.9em;">
+              {{ item.comment.action if item.comment and item.comment.action else '（未記入）' }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card border-success h-100">
+        <div class="card-header bg-success text-white py-2">
+          <strong>📝 上長コメント</strong>
+        </div>
+        <div class="card-body p-2">
+          <form method="post" action="{{ url_for('daily_bp.daily_save_admin_comment') }}" class="admin-comment-form">
+            <input type="hidden" name="date_str" value="{{ date_str }}">
+            <input type="hidden" name="target_user_id" value="{{ item.user.id }}">
+            <input type="hidden" name="from_own_page" value="1">
+            <input type="hidden" name="ajax" value="1">
+            <textarea name="admin_comment" class="form-control" rows="5"
+                      placeholder="上長コメントを入力してください。" style="overflow-y:auto; max-height:180px; font-size:0.9em;">{{ item.comment.admin_comment if item.comment and item.comment.admin_comment else '' }}</textarea>
+            <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+              <button type="submit" class="btn btn-success btn-sm btn-save-admin-comment">💾 保存</button>
+              <span class="admin-comment-status small
+                {% if item.comment and item.comment.admin_comment and item.comment.updated_at %}text-success{% else %}text-muted{% endif %}">
+                {% if item.comment and item.comment.admin_comment and item.comment.updated_at %}
+                  ✅ 保存済み {{ item.comment.updated_at[:16] | replace('T', ' ') }}{% if item.comment.updated_by %}（{{ item.comment.updated_by }}）{% endif %}
+                {% else %}
+                  未保存
+                {% endif %}
+              </span>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const TASK_MAP   = JSON.parse(document.getElementById('task-map-data').textContent);
+const LEAVE_DATES = JSON.parse(document.getElementById('leave-dates-data').textContent);
+const STD_HOURS = {{ user.std_hours | default(8.0) }};
+const LEAVE_TYPE = {{ (leave_type or '') | tojson }};
+
+// 休暇区分に応じた実効標準勤務時間を返す
+function effectiveStdHours() {
+    if (LEAVE_TYPE === 'AM半休') return STD_HOURS - 3;
+    if (LEAVE_TYPE === 'PM半休') return STD_HOURS - 4.75;
+    if (['1日有休', '祝日', '特休'].includes(LEAVE_TYPE)) return 0;
+    return STD_HOURS;
+}
+
+// 実績合計を計算して表示する
+function updateResultTotal() {
+    let total = 0;
+    document.querySelectorAll('.result-hours:not(:disabled)').forEach(inp => {
+        total += parseFloat(inp.value || 0);
+    });
+    const cell = document.getElementById('result-total');
+    if (cell) {
+        const disp = Number.isInteger(total) ? total : parseFloat(total.toFixed(2));
+        cell.textContent = disp + 'h';
+        const std = effectiveStdHours();
+        if (std > 0 && total < std) {
+            cell.classList.add('text-danger');
+        } else {
+            cell.classList.remove('text-danger');
+        }
+    }
+}
+
+document.querySelectorAll('.result-hours').forEach(inp => {
+    inp.addEventListener('input', updateResultTotal);
+});
+updateResultTotal();
+
+// タスク選択時に標準時間を自動セット
+document.querySelectorAll('.result-task').forEach(inp => {
+    inp.addEventListener('change', function () {
+        const hours = TASK_MAP[this.value];
+        if (hours !== undefined && hours > 0) {
+            const row = this.closest('tr');
+            const hoursInput = row ? row.querySelector('.result-hours') : null;
+            if (hoursInput && !hoursInput.disabled && (!hoursInput.value || parseFloat(hoursInput.value) === 0)) {
+                hoursInput.value = hours;
+                updateResultTotal();
+            }
+        }
+    });
+});
+
+// ===== リスケ機能 =====
+(function() {
+  // ポップオーバーを全て閉じる
+  function closeAllPopovers() {
+    document.querySelectorAll('.reschedule-popover').forEach(p => p.classList.add('d-none'));
+  }
+
+  document.querySelectorAll('.result-task').forEach(input => {
+    const td       = input.closest('td');
+    const popover  = td.querySelector('.reschedule-popover');
+    const badge    = td.querySelector('.reschedule-badge');
+    const picker   = td.querySelector('.defer-date-picker');
+    const tr       = input.closest('tr');
+
+    // focus: 値があれば datalist 無効化してリスケ表示、空欄は触らない（再セットでflashするため）
+    input.addEventListener('focus', function() {
+      if (this.value.trim() && !picker.disabled) {
+        this.setAttribute('list', '');   // datalist 無効化
+        closeAllPopovers();
+        popover.classList.remove('d-none');
+      }
+      // 空欄時は list 属性を触らない（HTML の list="task-list" をそのまま使う）
+    });
+    // 編集開始時に datalist を復元、クリア時はバッジ・リスケ解除
+    input.addEventListener('input', function() {
+      if (this.getAttribute('list') !== 'task-list') {
+        this.setAttribute('list', 'task-list');
+      }
+      if (!this.value.trim()) {
+        popover.classList.add('d-none');
+        badge.classList.add('d-none');
+        picker.value = '';
+        const hoursInput = tr.querySelector('.result-hours');
+        if (hoursInput) hoursInput.step = '0.25';
+      }
+    });
+    // フォーカスが外れたらポップオーバーを閉じる
+    input.addEventListener('blur', function() {
+      setTimeout(() => {
+        if (!td.contains(document.activeElement)) {
+          popover.classList.add('d-none');
+          if (!this.value.trim() && this.getAttribute('list') !== 'task-list') {
+            this.setAttribute('list', 'task-list');  // 空欄は datalist 復元
+          }
+        }
+      }, 200);
+    });
+
+    // 「リスケ」クリック → カレンダーを開く
+    td.querySelector('.reschedule-link').addEventListener('click', function(e) {
+      e.preventDefault();
+      popover.classList.add('d-none');
+      // 一時的に pointer-events を有効にしてクリック
+      picker.style.pointerEvents = 'auto';
+      picker.style.opacity = '1';
+      picker.style.width = '1px';
+      picker.style.height = '1px';
+      picker.showPicker ? picker.showPicker() : picker.click();
+      setTimeout(() => {
+        picker.style.pointerEvents = 'none';
+        picker.style.opacity = '0';
+        picker.style.width = '0';
+        picker.style.height = '0';
+      }, 300);
+    });
+
+    // 日付選択後 → 休暇チェック → バッジ表示・時間を0にリセット
+    picker.addEventListener('change', function() {
+      if (this.value) {
+        const leaveType = LEAVE_DATES[this.value];
+        if (leaveType) {
+          alert(`${this.value} は休暇（${leaveType}）のため選択できません。`);
+          this.value = '';
+          return;
+        }
+        const [y, m, d] = this.value.split('-');
+        badge.textContent = m + '/' + d + ' リスケ';
+        badge.classList.remove('d-none');
+        const hoursInput = tr.querySelector('.result-hours');
+        if (hoursInput && !hoursInput.disabled) {
+          hoursInput.value = 0;
+          updateResultTotal();
+        }
+      } else {
+        badge.classList.add('d-none');
+      }
+    });
+
+    // バッジクリック → リスケ解除
+    badge.addEventListener('click', function() {
+      picker.value = '';
+      badge.classList.add('d-none');
+    });
+  });
+
+  // ページロード時: リスケ済み行の確認（将来の拡張用）
+  document.querySelectorAll('.defer-date-picker').forEach(picker => {
+    if (picker.value) {
+      const tr = picker.closest('tr');
+      if (tr) {
+        // リスケ済み行の初期処理（現在は特になし）
+      }
+    }
+  });
+
+  // 他の場所クリックでポップオーバーを閉じる
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.reschedule-popover') && !e.target.classList.contains('result-task')) {
+      closeAllPopovers();
+    }
+  });
+})();
+
+// 実績入力: Enterキーで次フィールドへ遷移（作業名→時間→次行の作業名）
+(function() {
+  function getNavInputs() {
+    return Array.from(document.querySelectorAll('[data-nav-idx]:not(:disabled)'))
+                .sort((a, b) => parseInt(a.dataset.navIdx) - parseInt(b.dataset.navIdx));
+  }
+  document.getElementById('daily-form').addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    const inputs = getNavInputs();
+    const idx = inputs.indexOf(document.activeElement);
+    if (idx === -1) return;
+    e.preventDefault();
+    const next = inputs[idx + 1];
+    if (next) next.focus();
+  });
+})();
+
+// 実績クリア → 予定値を反映（振り返り・対策・上司コメントは保持）
+(function() {
+  const btn = document.getElementById('btn-clear-result');
+  if (!btn) return;
+
+  btn.addEventListener('click', function() {
+    if (!confirm('実績をクリアして予定の値を反映し、保存しますか？\n（振り返り・今後の対策・上司コメントは変更されません）')) return;
+
+    ['am', 'pm'].forEach(slot => {
+      for (let i = 0; i < 5; i++) {
+        const taskInput  = document.querySelector(`[name="result_task_${slot}_${i}"]`);
+        const hoursInput = document.querySelector(`[name="result_hours_${slot}_${i}"]`);
+        const deferInput = document.querySelector(`[name="defer_date_${slot}_${i}"]`);
+
+        if (!taskInput || taskInput.disabled) continue;
+
+        // 全フィールドを空にする（保存後のリロードで予定値が表示される）
+        taskInput.value  = '';
+        hoursInput.value = '';
+        hoursInput.step  = '0.25';
+
+        // リスケ解除
+        if (deferInput) deferInput.value = '';
+        // 繰り越し解除
+        const carryoverInput = document.querySelector(`[name="carryover_${slot}_${i}"]`);
+        if (carryoverInput) {
+          carryoverInput.value = '';
+          const coBtn = document.querySelector(`.carryover-btn[data-slot="${slot}"][data-idx="${i}"]`);
+          if (coBtn) coBtn.style.opacity = '0.25';
+        }
+        const td    = taskInput.closest('td');
+        const badge = td ? td.querySelector('.reschedule-badge') : null;
+        if (badge) badge.classList.add('d-none');
+
+        // list 属性をリセット
+        if (taskInput.getAttribute('list') !== 'task-list') {
+          taskInput.setAttribute('list', 'task-list');
+        }
+      }
+    });
+
+    updateResultTotal();
+    // 離脱警告を無効化してフォーム保存
+    isDirty = false;
+    document.getElementById('daily-form').submit();
+  });
+})();
+
+// 繰り越しボタン: ⏩ トグルで carryover hidden input を切り替え
+(function() {
+  document.querySelectorAll('.carryover-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const slot = this.dataset.slot;
+      const idx  = this.dataset.idx;
+      const hidden = document.querySelector(`[name="carryover_${slot}_${idx}"]`);
+      if (!hidden) return;
+      if (hidden.value === '1') {
+        hidden.value = '';
+        this.style.opacity = '0.25';
+      } else {
+        hidden.value = '1';
+        this.style.opacity = '1';
+      }
+    });
+  });
+})();
+
+// フォーム変更検知・離脱警告
+let isDirty = false;
+document.getElementById('daily-form').addEventListener('input', () => { isDirty = true; });
+document.getElementById('daily-form').addEventListener('submit', () => { isDirty = false; });
+window.addEventListener('beforeunload', (e) => {
+    if (isDirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// 部下コメント一覧: 上長コメントをAJAXで保存（スクロールなし・インライン通知）
+document.querySelectorAll('.admin-comment-form').forEach(form => {
+  form.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const btn = this.querySelector('.btn-save-admin-comment');
+    const status = this.querySelector('.admin-comment-status');
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+    try {
+      const resp = await fetch(this.action, {
+        method: 'POST',
+        body: new FormData(this),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        if (status) {
+          status.className = 'admin-comment-status small text-success';
+          status.textContent = '✅ 保存済み ' + data.updated_at + '（' + data.updated_by + '）';
+        }
+        btn.textContent = '✓ 保存しました';
+        btn.classList.replace('btn-success', 'btn-outline-success');
+        setTimeout(() => {
+          btn.textContent = '💾 保存';
+          btn.classList.replace('btn-outline-success', 'btn-success');
+          btn.disabled = false;
+        }, 2000);
+      } else {
+        if (status) {
+          status.className = 'admin-comment-status small text-danger';
+          status.textContent = '❌ 保存に失敗しました';
+        }
+        btn.textContent = '⚠ エラー';
+        btn.disabled = false;
+      }
+    } catch {
+      if (status) {
+        status.className = 'admin-comment-status small text-danger';
+        status.textContent = '❌ 通信エラー';
+      }
+      btn.textContent = '⚠ エラー';
+      btn.disabled = false;
+    }
+  });
+});
+</script>
+{% endblock %}

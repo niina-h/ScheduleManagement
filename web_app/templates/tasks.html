@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block title %}作業マスタ管理 - 予定管理システム{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+
+    <h4 class="mb-4 fw-bold">作業マスタ管理 - {{ user_name }}</h4>
+
+    <!-- 登録済み作業一覧 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-light fw-semibold">登録済み作業一覧</div>
+      <div class="card-body p-0">
+        {% if task_master %}
+        <table class="table table-hover mb-0">
+          <thead class="table-secondary">
+            <tr>
+              <th class="ps-3">作業名</th>
+              <th>大区分</th>
+              <th>中区分</th>
+              <th class="text-center" style="width:90px;">標準時間(h)</th>
+              <th class="text-center" style="width:90px;">順序</th>
+              <th class="text-center" style="width:70px;">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for task in task_master %}
+            <tr>
+              <td class="ps-3">{{ task.task_name }}</td>
+              <td class="text-muted small">{{ task.category_name or '—' }}</td>
+              <td class="text-muted small">{{ task.subcategory_name or '—' }}</td>
+              <td class="text-center">{{ task.default_hours if task.default_hours else '—' }}</td>
+              <td class="text-center">
+                {% if not loop.first %}
+                <form method="post" action="{{ url_for('tasks.move', task_id=task.id, direction='up') }}" class="d-inline">
+                  <button type="submit" class="btn btn-outline-secondary btn-sm px-1" title="上へ">▲</button>
+                </form>
+                {% else %}
+                <span class="btn btn-sm px-1 invisible">▲</span>
+                {% endif %}
+                {% if not loop.last %}
+                <form method="post" action="{{ url_for('tasks.move', task_id=task.id, direction='down') }}" class="d-inline">
+                  <button type="submit" class="btn btn-outline-secondary btn-sm px-1" title="下へ">▼</button>
+                </form>
+                {% else %}
+                <span class="btn btn-sm px-1 invisible">▼</span>
+                {% endif %}
+              </td>
+              <td class="text-center">
+                <form method="post"
+                      action="{{ url_for('tasks.delete', task_id=task.id) }}"
+                      class="d-inline"
+                      onsubmit="return confirm('「{{ task.task_name }}」を削除しますか？');">
+                  <button type="submit" class="btn btn-outline-danger btn-sm">削除</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="p-4 text-center text-muted">登録されている作業がありません。</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- 作業追加フォーム -->
+    <div class="card shadow-sm">
+      <div class="card-header bg-light fw-semibold">作業を追加する</div>
+      <div class="card-body">
+        {# 中区分データをJSに渡す #}
+        <script type="application/json" id="SUBCAT_DATA">
+          {{ all_subcategories | tojson }}
+        </script>
+        <form method="post" action="{{ url_for('tasks.add') }}">
+          <div class="input-group">
+            <select class="form-select" id="add_category_id" name="category_id" style="max-width:160px;">
+              <option value="">大区分</option>
+              {% for cat in categories %}
+              <option value="{{ cat.id }}">{{ cat.name }}</option>
+              {% endfor %}
+            </select>
+            <select class="form-select" id="add_subcategory_id" name="subcategory_id"
+                    style="max-width:160px;" disabled>
+              <option value="">中区分</option>
+            </select>
+            <input type="text"
+                   class="form-control"
+                   id="task_name"
+                   name="task_name"
+                   placeholder="作業名を入力してください"
+                   maxlength="100"
+                   disabled
+                   required>
+            <input type="number"
+                   class="form-control"
+                   id="default_hours"
+                   name="default_hours"
+                   placeholder="標準時間(h)"
+                   step="0.25"
+                   min="0"
+                   max="12"
+                   style="max-width:130px;"
+                   disabled>
+            <button type="submit" class="btn btn-primary" id="add_submit_btn" disabled>追加</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{% if login_role in ('管理職', 'マスタ') %}
+<hr class="my-4">
+<div class="row g-4">
+
+  {# ── 左カラム：大区分 ── #}
+  <div class="col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">大区分一覧</div>
+      <div class="card-body p-0" style="max-height: 260px; overflow-y: auto;">
+        {% if categories %}
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light sticky-top">
+            <tr>
+              <th>大区分名</th>
+              <th class="text-end" style="width:80px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for cat in categories %}
+            <tr>
+              <td class="align-middle">{{ cat.name }}</td>
+              <td class="text-end">
+                <form method="post"
+                      action="{{ url_for('tasks.category_delete', cat_id=cat.id) }}"
+                      onsubmit="return confirm('大区分「{{ cat.name }}」とその中区分をすべて削除しますか？')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="btn btn-danger btn-sm">削除</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted p-3 mb-0">大区分が登録されていません。</p>
+        {% endif %}
+      </div>
+      <div class="card-footer bg-white py-2">
+        <form method="post" action="{{ url_for('tasks.category_add') }}" class="d-flex gap-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="text" name="name" class="form-control form-control-sm"
+                 placeholder="大区分名を入力して追加" maxlength="100" required>
+          <button type="submit" class="btn btn-primary btn-sm text-nowrap">追加</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {# ── 右カラム：中区分 ── #}
+  <div class="col-lg-7">
+    <div class="card shadow-sm">
+      <div class="card-header fw-bold">中区分一覧</div>
+      <div class="card-body p-2" style="max-height: 400px; overflow-y: auto;">
+        {% if categories %}
+        <div class="accordion" id="subcatAccordion">
+          {% for cat in categories %}
+          {% set sub_list = all_subcategories | selectattr('category_id', 'equalto', cat.id) | list %}
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="heading-{{ cat.id }}">
+              <button class="accordion-button {% if not loop.first %}collapsed{% endif %} py-2"
+                      type="button"
+                      data-bs-toggle="collapse"
+                      data-bs-target="#collapse-{{ cat.id }}"
+                      aria-expanded="{{ 'true' if loop.first else 'false' }}"
+                      aria-controls="collapse-{{ cat.id }}">
+                {{ cat.name }}
+                <span class="badge bg-secondary ms-2">{{ sub_list | length }}</span>
+              </button>
+            </h2>
+            <div id="collapse-{{ cat.id }}"
+                 class="accordion-collapse collapse {% if loop.first %}show{% endif %}"
+                 aria-labelledby="heading-{{ cat.id }}">
+              <div class="accordion-body p-2">
+                {% if sub_list %}
+                <div style="max-height: 160px; overflow-y: auto;">
+                  <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light sticky-top">
+                      <tr>
+                        <th>中区分名</th>
+                        <th class="text-end" style="width:80px">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for sub in sub_list %}
+                      <tr>
+                        <td class="align-middle">{{ sub.name }}</td>
+                        <td class="text-end">
+                          <form method="post"
+                                action="{{ url_for('tasks.subcategory_delete', sub_id=sub.id) }}"
+                                onsubmit="return confirm('中区分「{{ sub.name }}」を削除しますか？')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="btn btn-outline-danger btn-sm">削除</button>
+                          </form>
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+                {% else %}
+                <p class="text-muted small mb-2">中区分が登録されていません。</p>
+                {% endif %}
+                <form method="post" action="{{ url_for('tasks.subcategory_add') }}"
+                      class="d-flex gap-2 mt-2">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="category_id" value="{{ cat.id }}">
+                  <input type="text" name="name" class="form-control form-control-sm"
+                         placeholder="中区分名を入力して追加" maxlength="100" required>
+                  <button type="submit" class="btn btn-outline-primary btn-sm text-nowrap">追加</button>
+                </form>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted p-2 mb-0">先に大区分を追加してください。</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endif %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var taskNameInput = document.getElementById('task_name');
+    var defaultHoursInput = document.getElementById('default_hours');
+    var catSelect = document.getElementById('add_category_id');
+    var subcatSelect = document.getElementById('add_subcategory_id');
+
+    // ページ表示時（フォーム送信後のリロード含む）は作業名フィールドにフォーカス
+    if (taskNameInput) {
+      taskNameInput.focus();
+    }
+
+    // 作業名フィールドでEnterキー押下時 → 時間フィールドへフォーカス遷移
+    if (taskNameInput && defaultHoursInput) {
+      taskNameInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          defaultHoursInput.focus();
+        }
+      });
+    }
+
+    // 大区分→中区分→作業名の順に有効化する
+    if (catSelect && subcatSelect) {
+      var subcatData = JSON.parse(document.getElementById('SUBCAT_DATA').textContent);
+      var submitBtn = document.getElementById('add_submit_btn');
+
+      function setInputsEnabled(enabled) {
+        taskNameInput.disabled = !enabled;
+        defaultHoursInput.disabled = !enabled;
+        submitBtn.disabled = !enabled;
+      }
+
+      catSelect.addEventListener('change', function () {
+        var selectedCatId = parseInt(catSelect.value) || 0;
+
+        // 中区分をリセット
+        subcatSelect.innerHTML = '<option value="">中区分</option>';
+
+        if (selectedCatId === 0) {
+          // 大区分未選択 → 中区分・作業名を無効化
+          subcatSelect.disabled = true;
+          setInputsEnabled(false);
+          return;
+        }
+
+        // 大区分選択済み → 中区分に選択肢を追加して有効化（作業名はまだ無効）
+        var filtered = subcatData.filter(function (s) { return s.category_id === selectedCatId; });
+        filtered.forEach(function (s) {
+          var opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.name;
+          subcatSelect.appendChild(opt);
+        });
+        subcatSelect.disabled = false;
+        setInputsEnabled(false);
+      });
+
+      // 中区分選択後に作業名・追加ボタンを有効化
+      subcatSelect.addEventListener('change', function () {
+        if (subcatSelect.value) {
+          setInputsEnabled(true);
+          if (taskNameInput) taskNameInput.focus();
+        } else {
+          setInputsEnabled(false);
+        }
+      });
+    }
+  });
+</script>
+{% endblock %}
+{% endblock %}

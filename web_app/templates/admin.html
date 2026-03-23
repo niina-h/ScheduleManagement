@@ -1,0 +1,515 @@
+{% extends "base.html" %}
+
+{% block title %}管理者ダッシュボード - 予定管理システム{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <h4 class="mb-0 fw-bold">管理者ダッシュボード</h4>
+  <div class="d-flex gap-2">
+    {% if session.user_role == 'マスタ' %}
+    <a href="{{ url_for('mail_report_bp.settings') }}" class="btn btn-outline-warning btn-sm">⚙ メール設定</a>
+    {% endif %}
+    <a href="{{ url_for('admin_bp.operation_logs') }}" class="btn btn-outline-secondary">操作ログ</a>
+  </div>
+</div>
+
+<!-- ===== セクション1: 週間予定登録状況 ===== -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-primary text-white fw-semibold d-flex align-items-center justify-content-between">
+    <span>週間予定登録状況</span>
+    <a href="{{ url_for('export_bp.export_team_week') }}"
+       class="btn btn-light btn-sm">
+      📥 メンバー全員エクスポート（今週）
+    </a>
+  </div>
+  <div class="card-body">
+
+    <!-- 週ナビゲーション -->
+    <div class="d-flex align-items-center gap-3 mb-3">
+      <a href="{{ url_for('admin_bp.dashboard') }}?week={{ prev_week }}"
+         class="btn btn-outline-secondary btn-sm">&laquo; 前週</a>
+      <span class="fw-semibold">{{ week_start }}（月曜）の週</span>
+      <a href="{{ url_for('admin_bp.dashboard') }}?week={{ next_week }}"
+         class="btn btn-outline-secondary btn-sm">次週 &raquo;</a>
+    </div>
+
+    <!-- ステータステーブル -->
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-secondary">
+          <tr>
+            <th>名前</th>
+            <th>部署</th>
+            <th>役職</th>
+            <th class="text-center">登録状況</th>
+            <th class="text-center">入力枠数</th>
+            <th class="text-center">エクスポート</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in status_list %}
+          <tr>
+            <td class="fw-semibold">{{ s.name }}</td>
+            <td>{{ s.dept or '-' }}</td>
+            <td>{{ s.role }}</td>
+            <td class="text-center">
+              {% if s.has_schedule %}
+              <span class="badge bg-success">✓ 登録済</span>
+              {% else %}
+              <span class="badge bg-danger">未登録</span>
+              {% endif %}
+            </td>
+            <td class="text-center">{{ s.filled_slots }}</td>
+            <td class="text-center">
+              <a href="{{ url_for('export_bp.export_user', user_id=s.id) }}?week={{ week_start }}"
+                 class="btn btn-outline-primary btn-sm">
+                Excel
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 担当メンバー設定カード ===== -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-secondary text-white fw-semibold">
+    担当メンバー設定
+  </div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      各メンバーの直属の上長を設定します。設定されたメンバーのみ、その上長がスケジュール・実績を閲覧・編集できます。
+      「（未設定）」の場合は同一部署の管理職全員がアクセス可能です。
+    </p>
+    {% if assignable_users %}
+    <form method="post" action="{{ url_for('admin_bp.save_assignments') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-secondary">
+            <tr>
+              <th>名前</th>
+              <th>部署</th>
+              <th>役職</th>
+              <th style="min-width:180px;">直属の上長</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for u in assignable_users %}
+            <tr>
+              <td class="fw-semibold">{{ u.name }}</td>
+              <td>{{ u.dept or '-' }}</td>
+              <td>{{ u.role }}</td>
+              <td>
+                <select name="manager_{{ u.id }}" class="form-select form-select-sm">
+                  <option value="">（未設定）</option>
+                  {% for m in manager_candidates %}
+                  {% if m.id != u.id %}
+                  <option value="{{ m.id }}" {% if u.manager_id == m.id %}selected{% endif %}>
+                    {{ m.name }}（{{ m.role }}）
+                  </option>
+                  {% endif %}
+                  {% endfor %}
+                </select>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="mt-3 d-flex justify-content-end">
+        <button type="submit" class="btn btn-primary btn-sm">✅ 担当設定を保存</button>
+      </div>
+    </form>
+    {% else %}
+    <p class="text-muted mb-0">設定対象のメンバーがいません。</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ===== セクション2: ユーザー管理（Bootstrap accordion） ===== -->
+<div class="accordion shadow-sm" id="userManagementAccordion">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingUsers">
+      <button class="accordion-button collapsed fw-semibold"
+              type="button"
+              data-bs-toggle="collapse"
+              data-bs-target="#collapseUsers"
+              aria-expanded="false"
+              aria-controls="collapseUsers">
+        ユーザー管理
+      </button>
+    </h2>
+    <div id="collapseUsers"
+         class="accordion-collapse collapse"
+         aria-labelledby="headingUsers"
+         data-bs-parent="#userManagementAccordion">
+      <div class="accordion-body p-0">
+
+        <!-- ユーザー一覧（一括編集フォーム） -->
+        <form method="post" action="{{ url_for('admin_bp.bulk_update_users') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="user_count" value="{{ all_users | length }}">
+          <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+              <thead class="table-secondary">
+                <tr>
+                  {% if login_role == 'マスタ' %}<th class="text-center" style="width:60px;">並び替え</th>{% endif %}
+                  <th class="ps-3">名前</th>
+                  <th style="width:110px;">役職</th>
+                  <th>部署</th>
+                  <th class="text-center" style="width:130px;">基本勤務時間(h)</th>
+                  <th class="text-center" style="width:60px;">削除</th>
+                </tr>
+              </thead>
+              <tbody id="user-tbody">
+                {% for u in all_users %}
+                <tr data-uid="{{ u.id }}">
+                  <input type="hidden" name="uid_{{ loop.index0 }}" value="{{ u.id }}">
+                  {% if login_role == 'マスタ' %}
+                  <td class="text-center">
+                    <button type="button" class="btn btn-outline-secondary btn-sm p-0 px-1 lh-1"
+                            onclick="moveRow(this,-1)" title="上へ">▲</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm p-0 px-1 lh-1"
+                            onclick="moveRow(this,1)"  title="下へ">▼</button>
+                  </td>
+                  {% endif %}
+                  <td class="ps-3">
+                    <input type="text" name="name_{{ loop.index0 }}" value="{{ u.name }}"
+                           class="form-control form-control-sm" maxlength="50" required>
+                  </td>
+                  <td>
+                    <select name="role_{{ loop.index0 }}" class="form-select form-select-sm">
+                      <option value="ユーザー" {% if u.role == 'ユーザー' %}selected{% endif %}>ユーザー</option>
+                      <option value="管理職"   {% if u.role == '管理職'   %}selected{% endif %}>管理職</option>
+                      <option value="マスタ"   {% if u.role == 'マスタ'   %}selected{% endif %}>マスタ</option>
+                    </select>
+                  </td>
+                  <td>
+                    <select name="dept_{{ loop.index0 }}" class="form-select form-select-sm">
+                      <option value="">（なし）</option>
+                      {% for dept in all_depts %}
+                      <option value="{{ dept.dept_name }}" {% if u.dept == dept.dept_name %}selected{% endif %}>{{ dept.dept_name }}</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                  <td class="text-center">
+                    <input type="number" name="std_hours_{{ loop.index0 }}"
+                           value="{{ u.std_hours if u.std_hours else (u.std_hours_am + u.std_hours_pm) }}"
+                           step="0.25" min="0" max="24"
+                           class="form-control form-control-sm text-center"
+                           style="width:80px; margin:auto;">
+                  </td>
+                  <td class="text-center">
+                    <form method="post"
+                          action="{{ url_for('admin_bp.delete_user_route', user_id=u.id) }}"
+                          class="d-inline"
+                          onsubmit="return confirm('ユーザー「{{ u.name }}」を削除しますか？\nこの操作は取り消せません。');">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <button type="submit" class="btn btn-outline-danger btn-sm">削除</button>
+                    </form>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="p-3 d-flex justify-content-end border-top">
+            <button type="submit" class="btn btn-primary btn-sm">✅ すべて更新</button>
+          </div>
+        </form>
+
+        <!-- 並び順保存フォーム（マスタのみ） -->
+        {% if login_role == 'マスタ' %}
+        <form id="reorder-form" method="post" action="{{ url_for('admin_bp.reorder_users') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        </form>
+        <div class="px-3 pb-2 d-flex justify-content-end">
+          <button type="button" class="btn btn-outline-primary btn-sm" onclick="saveOrder()">
+            💾 並び順を保存
+          </button>
+        </div>
+        {% endif %}
+
+        <!-- ユーザー追加フォーム -->
+        <div class="p-4 border-top bg-light">
+          <h6 class="fw-bold mb-3">ユーザーを追加する</h6>
+          <form method="post" action="{{ url_for('admin_bp.add_user_route') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-md-3">
+                <label class="form-label small mb-1">名前 <span class="text-danger">*</span></label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       name="name"
+                       placeholder="山田 太郎"
+                       maxlength="50"
+                       required>
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small mb-1">役職 <span class="text-danger">*</span></label>
+                <select class="form-select form-select-sm" name="role" required>
+                  <option value="ユーザー" selected>ユーザー</option>
+                  <option value="管理職">管理職</option>
+                  <option value="マスタ">マスタ</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small mb-1">部署</label>
+                <select class="form-select form-select-sm" name="dept">
+                  <option value="">（なし）</option>
+                  {% for dept in all_depts %}
+                  <option value="{{ dept.dept_name }}">{{ dept.dept_name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small mb-1">基本勤務時間(h)</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       name="std_hours"
+                       value="8.0"
+                       step="0.25"
+                       min="0"
+                       max="24">
+              </div>
+              <div class="col-12 col-md-1">
+                <button type="submit" class="btn btn-primary btn-sm w-100">追加</button>
+              </div>
+            </div>
+          </form>
+        </div>
+
+      </div><!-- /accordion-body -->
+    </div><!-- /accordion-collapse -->
+  </div><!-- /accordion-item -->
+
+  <!-- ===== セクション3: パスワード管理（管理者のみ） ===== -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingPassword">
+      <button class="accordion-button collapsed fw-semibold"
+              type="button"
+              data-bs-toggle="collapse"
+              data-bs-target="#collapsePassword"
+              aria-expanded="false"
+              aria-controls="collapsePassword">
+        管理者パスワード管理
+      </button>
+    </h2>
+    <div id="collapsePassword"
+         class="accordion-collapse collapse"
+         aria-labelledby="headingPassword"
+         data-bs-parent="#userManagementAccordion">
+      <div class="accordion-body">
+        <p class="text-muted small mb-3">パスワードを設定すると、ログイン時にパスワード入力が必要になります。管理職は自身・他の管理職・ユーザーのパスワードを設定できます。</p>
+        {% if all_users %}
+        <div class="table-responsive">
+          <table class="table align-middle mb-0">
+            <thead class="table-secondary">
+              <tr>
+                <th>名前</th>
+                <th>部署</th>
+                <th>役職</th>
+                <th class="text-center">パスワード状態</th>
+                <th>新しいパスワード設定</th>
+                <th class="text-center">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for u in all_users %}
+              {% if login_role == 'マスタ' or (login_role == '管理職' and u.role in ('ユーザー', '管理職')) %}
+              <tr>
+                <td class="fw-semibold">{{ u.name }}</td>
+                <td>{{ u.dept or '-' }}</td>
+                <td>{{ u.role }}</td>
+                <td class="text-center">
+                  {% if u.id in users_with_password %}
+                  <span class="badge bg-success">設定済</span>
+                  {% else %}
+                  <span class="badge bg-secondary">未設定</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <form method="post"
+                        action="{{ url_for('admin_bp.set_password', user_id=u.id) }}"
+                        class="d-flex gap-2 align-items-center">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="password" name="password" class="form-control form-control-sm"
+                           placeholder="4桁の数字" style="max-width:220px;"
+                           minlength="4" maxlength="4" inputmode="numeric" pattern="\d{4}">
+                    <input type="password" name="password_confirm" class="form-control form-control-sm"
+                           placeholder="4桁の数字（確認）" style="max-width:160px;"
+                           minlength="4" maxlength="4" inputmode="numeric" pattern="\d{4}">
+                    <button type="submit" class="btn btn-primary btn-sm text-nowrap">設定</button>
+                  </form>
+                </td>
+                <td class="text-center">
+                  {% if u.id in users_with_password %}
+                  <form method="post"
+                        action="{{ url_for('admin_bp.clear_password', user_id=u.id) }}"
+                        class="d-inline"
+                        onsubmit="return confirm('「{{ u.name }}」のパスワードを削除してパスワードなしログインに戻しますか？');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-outline-danger btn-sm">削除</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted">ユーザーがいません。</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+
+
+</div><!-- /accordion -->
+<!-- ===== 部署管理（マスタのみ）アコーディオン再開 ===== -->
+<div class="accordion shadow-sm" id="deptAccordion">
+
+  <!-- ===== 部署管理（マスタのみ） ===== -->
+  {% if login_role == 'マスタ' %}
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingDepts">
+      <button class="accordion-button collapsed fw-semibold"
+              type="button"
+              data-bs-toggle="collapse"
+              data-bs-target="#collapseDepts"
+              aria-expanded="false"
+              aria-controls="collapseDepts">
+        部署管理
+      </button>
+    </h2>
+    <div id="collapseDepts"
+         class="accordion-collapse collapse"
+         aria-labelledby="headingDepts"
+         data-bs-parent="#deptAccordion">
+      <div class="accordion-body">
+
+        <!-- 部署一覧（編集・削除） -->
+        {% if all_depts %}
+        <div class="table-responsive mb-3">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-secondary">
+              <tr>
+                <th>部署名</th>
+                <th style="width:100px;">表示順</th>
+                <th class="text-center" style="width:130px;">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for dept in all_depts %}
+              <!-- 更新用フォーム（非表示） -->
+              <form method="post" action="{{ url_for('admin_bp.update_dept_route', dept_id=dept.id) }}"
+                    id="dept-update-form-{{ dept.id }}" class="d-none">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="dept_name"      id="dept-hidden-name-{{ dept.id }}">
+                <input type="hidden" name="display_order"  id="dept-hidden-order-{{ dept.id }}">
+              </form>
+              <tr>
+                <td>
+                  <input type="text" id="dept-name-{{ dept.id }}" value="{{ dept.dept_name }}"
+                         class="form-control form-control-sm" required>
+                </td>
+                <td>
+                  <input type="number" id="dept-order-{{ dept.id }}" value="{{ dept.display_order }}"
+                         class="form-control form-control-sm">
+                </td>
+                <td class="text-center d-flex gap-1 justify-content-center">
+                  <button type="button" class="btn btn-sm btn-outline-primary"
+                          onclick="submitDeptUpdate({{ dept.id }})">更新</button>
+                  <form method="post" action="{{ url_for('admin_bp.delete_dept_route', dept_id=dept.id) }}"
+                        class="d-inline"
+                        onsubmit="return confirm('部署「{{ dept.dept_name }}」を削除しますか？')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">削除</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="text-muted small mb-3">登録された部署はありません。</p>
+        {% endif %}
+
+        <!-- 部署追加フォーム -->
+        <div class="border-top pt-3">
+          <h6 class="fw-bold mb-2">部署を追加する</h6>
+          <form method="post" action="{{ url_for('admin_bp.add_dept_route') }}" class="row g-2 align-items-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="col-auto">
+              <label class="form-label small mb-1">部署名 <span class="text-danger">*</span></label>
+              <input type="text" name="dept_name" class="form-control form-control-sm" required placeholder="部署名">
+            </div>
+            <div class="col-auto">
+              <label class="form-label small mb-1">表示順</label>
+              <input type="number" name="display_order" value="0" class="form-control form-control-sm" style="width:80px">
+            </div>
+            <div class="col-auto align-self-end">
+              <button type="submit" class="btn btn-sm btn-success">＋ 追加</button>
+            </div>
+          </form>
+        </div>
+
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div><!-- /accordion -->
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ユーザー行の上下移動 */
+function moveRow(btn, direction) {
+  const row = btn.closest('tr');
+  const tbody = row.parentElement;
+  if (direction === -1 && row.previousElementSibling) {
+    tbody.insertBefore(row, row.previousElementSibling);
+  } else if (direction === 1 && row.nextElementSibling) {
+    tbody.insertBefore(row.nextElementSibling, row);
+  }
+}
+
+/* 現在のDOM順でuser_idを並び順フォームに詰めて送信 */
+function saveOrder() {
+  const tbody = document.getElementById('user-tbody');
+  if (!tbody) return;
+  const form = document.getElementById('reorder-form');
+  form.querySelectorAll('input[name^="order_"]').forEach(function(i){ i.remove(); });
+  Array.from(tbody.querySelectorAll('tr')).forEach(function(row, idx) {
+    const uid = row.dataset.uid;
+    if (uid) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'order_' + idx;
+      input.value = uid;
+      form.appendChild(input);
+    }
+  });
+  form.submit();
+}
+
+function submitDeptUpdate(deptId) {
+  const name = document.getElementById('dept-name-' + deptId).value.trim();
+  const order = document.getElementById('dept-order-' + deptId).value;
+  if (!name) { alert('部署名を入力してください'); return; }
+  document.getElementById('dept-hidden-name-' + deptId).value = name;
+  document.getElementById('dept-hidden-order-' + deptId).value = order;
+  document.getElementById('dept-update-form-' + deptId).submit();
+}
+</script>
+{% endblock %}

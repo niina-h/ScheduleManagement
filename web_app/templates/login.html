@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block title %}ログイン - 予定管理システム{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-center align-items-center" style="min-height: 70vh;">
+  <div class="card shadow-sm" style="max-width: 400px; width: 100%;">
+    <div class="card-header bg-primary text-white text-center py-3">
+      <h4 class="mb-0 fw-bold">予定管理システム ログイン</h4>
+    </div>
+    <div class="card-body p-4">
+      <form method="post" action="{{ url_for('auth.login') }}">
+        <div class="mb-3">
+          <label for="user_id" class="form-label fw-semibold">ユーザーを選択してください</label>
+          <select class="form-select" id="user_id" name="user_id" required>
+            <option value="" disabled {% if not last_user_id %}selected{% endif %}>-- ユーザーを選択 --</option>
+            {% for u in users %}
+            <option value="{{ u.id }}" {% if u.id | string == last_user_id %}selected{% endif %}>
+              {{ u.name }}（{{ u.role }}）{% if u.dept %} - {{ u.dept }}{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <input type="hidden" name="use_remember_token" id="use_remember_token" value="0">
+        <div class="mb-3" id="password-field" style="display:none;">
+          <label for="password" class="form-label fw-semibold">パスワード</label>
+          <input type="password" class="form-control" id="password" name="password"
+                 placeholder="管理者パスワード（4桁）" autocomplete="current-password"
+                 maxlength="4" inputmode="numeric" pattern="[0-9]{4}">
+          <div class="form-text text-muted" id="password-hint">管理者アカウントにはパスワードが必要です</div>
+          <div class="mt-2">
+            <a href="#" class="small text-secondary" id="forgot-pw-link" style="display:none;">🔑 パスワードを忘れた場合はこちら</a>
+          </div>
+        </div>
+        <div class="d-grid">
+          <button type="submit" class="btn btn-primary btn-lg">ログイン</button>
+        </div>
+      </form>
+
+      <!-- パスワード再設定フォーム（別フォーム） -->
+      <div id="reset-pw-section" style="display:none;" class="mt-3 border-top pt-3">
+        <p class="small text-muted mb-2">新しいパスワードを設定してログインします</p>
+        <form method="post" action="{{ url_for('auth.reset_password_and_login') }}" id="reset-form">
+          <input type="hidden" name="user_id" id="reset_user_id" value="">
+          <div class="mb-2">
+            <input type="password" class="form-control form-control-sm" name="new_password"
+                   id="new_password" placeholder="新しいパスワード（4桁）"
+                   maxlength="4" inputmode="numeric" pattern="[0-9]{4}" required>
+          </div>
+          <div class="mb-2">
+            <input type="password" class="form-control form-control-sm" name="new_password_confirm"
+                   id="new_password_confirm" placeholder="確認（もう一度入力）"
+                   maxlength="4" inputmode="numeric" pattern="[0-9]{4}" required>
+          </div>
+          <div class="d-grid">
+            <button type="submit" class="btn btn-warning btn-sm">新しいパスワードで登録・ログイン</button>
+          </div>
+        </form>
+        <div class="mt-2 text-center">
+          <a href="#" class="small text-secondary" id="cancel-reset-link">← パスワードを入力してログイン</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const PASSWORD_REQUIRED_IDS = new Set({{ password_required_ids | tojson }});
+const REMEMBERED_USER_ID = {{ remembered_user_id | tojson if remembered_user_id is not none else 'null' }};
+
+function showResetSection() {
+  const val = document.getElementById('user_id').value;
+  document.getElementById('reset_user_id').value = val;
+  document.getElementById('reset-pw-section').style.display = '';
+  document.getElementById('password-field').style.display = 'none';
+  document.querySelector('button[type=submit].btn-primary').closest('.d-grid').style.display = 'none';
+}
+
+function hideResetSection() {
+  document.getElementById('reset-pw-section').style.display = 'none';
+  document.getElementById('password-field').style.display = '';
+  document.querySelector('button[type=submit].btn-primary').closest('.d-grid').style.display = '';
+}
+
+function updatePasswordField() {
+  const val = parseInt(document.getElementById('user_id').value);
+  const field = document.getElementById('password-field');
+  const input = document.getElementById('password');
+  const hint  = document.getElementById('password-hint');
+  const useToken = document.getElementById('use_remember_token');
+  const forgotLink = document.getElementById('forgot-pw-link');
+
+  // リセットセクションを閉じる
+  document.getElementById('reset-pw-section').style.display = 'none';
+  document.querySelector('button[type=submit].btn-primary').closest('.d-grid').style.display = '';
+
+  if (PASSWORD_REQUIRED_IDS.has(val)) {
+    field.style.display = '';
+    forgotLink.style.display = '';
+    if (REMEMBERED_USER_ID === val) {
+      // パスワード保存済み：ダミー値を表示してトークン認証を使用
+      input.value = '****';
+      input.required = false;
+      input.removeAttribute('pattern');
+      input.style.color = '#6c757d';
+      hint.textContent = '✅ パスワードは保存されています';
+      hint.style.color = '#198754';
+      useToken.value = '1';
+    } else {
+      input.value = '';
+      input.required = true;
+      input.setAttribute('pattern', '[0-9]{4}');
+      input.style.color = '';
+      hint.textContent = '管理職・マスタアカウントにはパスワードが必要です';
+      hint.style.color = '';
+      useToken.value = '0';
+    }
+  } else {
+    field.style.display = 'none';
+    forgotLink.style.display = 'none';
+    input.required = false;
+    input.value = '';
+    input.setAttribute('pattern', '[0-9]{4}');
+    useToken.value = '0';
+  }
+}
+
+// パスワード欄をクリックしたら手動入力に切り替え
+document.getElementById('password').addEventListener('focus', function() {
+  const val = parseInt(document.getElementById('user_id').value);
+  if (REMEMBERED_USER_ID === val && this.value === '****') {
+    this.value = '';
+    this.required = true;
+    this.setAttribute('pattern', '[0-9]{4}');
+    this.style.color = '';
+    document.getElementById('password-hint').textContent = '管理者アカウントにはパスワードが必要です';
+    document.getElementById('password-hint').style.color = '';
+    document.getElementById('use_remember_token').value = '0';
+  }
+});
+
+document.getElementById('user_id').addEventListener('change', updatePasswordField);
+document.getElementById('forgot-pw-link').addEventListener('click', function(e) {
+  e.preventDefault();
+  showResetSection();
+});
+document.getElementById('cancel-reset-link').addEventListener('click', function(e) {
+  e.preventDefault();
+  hideResetSection();
+});
+// ページロード時にも実行（前回ユーザーが選択済みの場合）
+updatePasswordField();
+</script>
+{% endblock %}

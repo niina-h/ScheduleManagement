@@ -1,0 +1,35 @@
+body { font-size: 14px; }
+
+/* 予定テーブル */
+.schedule-table { font-size: 12px; min-width: 900px; }
+.schedule-table td, .schedule-table th { vertical-align: middle; padding: 3px 4px; }
+.schedule-table input[type=text],
+.schedule-table input[list] { min-width: 80px; padding: 2px 4px; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; }
+.schedule-table input[type=number] { width: 55px; padding: 2px 4px; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; }
+.total-cell { font-weight: bold; text-align: center; min-width: 80px; }
+.slot-label { writing-mode: horizontal-tb; font-weight: bold; text-align: center; background-color: #f0f0f0; }
+.am-row { background-color: #f0f7fb; }
+.pm-row { background-color: #fdf8f0; }
+.am-total-row { background-color: #d0e8f4; }
+.pm-total-row { background-color: #f4e8d0; }
+
+/* 管理者テーブル */
+.status-registered { color: #198754; font-weight: bold; }
+.status-unregistered { color: #dc3545; }
+
+/* タスク入力を最大幅に伸ばす */
+.task-input { flex: 1 1 auto; min-width: 80px; }
+.hours-input { width: 58px !important; flex: 0 0 58px; }
+.day-total-row { background-color: #e8f4ea; }
+
+/* ナビゲーション */
+.week-nav { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+
+/* 週間予定 入力値は濃く・プレースホルダーは薄く */
+.task-input, .hours-input { color: #212529 !important; }
+.task-input::placeholder, .hours-input::placeholder { color: #b8c2cc !important; opacity: 1; }
+
+/* 全入力フィールド共通: プレースホルダーを最大限薄く */
+::placeholder { color: #c8d0d8 !important; opacity: 1 !important; }
+input::placeholder, textarea::placeholder, select::placeholder { color: #c8d0d8 !important; opacity: 1 !important; }
+.form-control::placeholder { color: #c8d0d8 !important; opacity: 1 !important; }

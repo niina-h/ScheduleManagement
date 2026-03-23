@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}操作ログ — 予定管理システム{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3">
+  <h4 class="mb-0">操作ログ</h4>
+  <a href="{{ url_for('admin_bp.dashboard') }}" class="btn btn-outline-secondary btn-sm">← 管理画面</a>
+</div>
+
+<form class="d-flex gap-2 mb-3" method="get">
+  <select name="action_type" class="form-select form-select-sm w-auto">
+    <option value="">— すべてのアクション —</option>
+    {% for at in action_types %}
+    <option value="{{ at }}" {% if at == action_type %}selected{% endif %}>{{ at }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn btn-primary btn-sm" type="submit">絞り込み</button>
+  {% if action_type %}
+  <a href="{{ url_for('admin_bp.operation_logs') }}" class="btn btn-outline-secondary btn-sm">クリア</a>
+  {% endif %}
+</form>
+
+<p class="text-muted small">全 {{ total }} 件 （{{ page }} / {{ total_pages }} ページ）</p>
+
+<div class="table-responsive">
+  <table class="table table-bordered table-sm table-hover">
+    <thead class="table-dark">
+      <tr>
+        <th>日時</th>
+        <th>ユーザー</th>
+        <th>アクション</th>
+        <th>詳細</th>
+        <th>IPアドレス</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in logs %}
+      <tr>
+        <td class="text-nowrap small">{{ log.created_at }}</td>
+        <td class="small">{{ log.user_name or '—' }}</td>
+        <td>
+          {% set badge_map = {
+            'LOGIN': 'success', 'LOGOUT': 'secondary',
+            'SCHEDULE_SAVE': 'primary', 'DAILY_SAVE': 'info',
+            'USER_ADD': 'warning', 'USER_UPDATE': 'warning', 'USER_DELETE': 'danger',
+            'EXPORT': 'dark'
+          } %}
+          <span class="badge bg-{{ badge_map.get(log.action_type, 'secondary') }}">{{ log.action_type }}</span>
+        </td>
+        <td class="small">{{ log.detail }}</td>
+        <td class="small text-muted">{{ log.ip_address }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="text-center text-muted">ログがありません</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_pages > 1 %}
+<nav>
+  <ul class="pagination pagination-sm">
+    {% for p in range(1, total_pages + 1) %}
+    <li class="page-item {% if p == page %}active{% endif %}">
+      <a class="page-link" href="?page={{ p }}&action_type={{ action_type }}">{{ p }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>
+{% endif %}
+{% endblock %}

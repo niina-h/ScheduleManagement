@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}ヘルプ — 予定管理システム{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-3">
+  <h4 class="mb-0">❓ ヘルプ・操作手順</h4>
+</div>
+
+<ul class="nav nav-tabs mb-3" id="helpTabs" role="tablist">
+  <li class="nav-item"><button class="nav-link {% if page_name == 'index' or page_name == 'login' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-login" type="button">ログイン</button></li>
+  <li class="nav-item"><button class="nav-link {% if page_name == 'schedule' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-schedule" type="button">週間予定</button></li>
+  <li class="nav-item"><button class="nav-link {% if page_name == 'daily' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-daily" type="button">日次実績</button></li>
+  <li class="nav-item"><button class="nav-link {% if page_name == 'export' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-export" type="button">Excel出力</button></li>
+  <li class="nav-item"><button class="nav-link {% if page_name == 'admin' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-admin" type="button">管理者機能</button></li>
+  <li class="nav-item"><button class="nav-link {% if page_name == 'version' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-version" type="button">バージョン</button></li>
+</ul>
+
+<div class="tab-content" id="helpTabContent">
+
+  <!-- ログイン -->
+  <div class="tab-pane fade {% if page_name == 'index' or page_name == 'login' %}show active{% endif %}" id="tab-login">
+    <div class="card"><div class="card-body">
+      <h5 class="card-title">🔑 ログイン手順</h5>
+      <ol>
+        <li>ログイン画面でユーザー名を選択します。</li>
+        <li>パスワード入力が必要なユーザーは4桁の数字を入力してください。</li>
+        <li>管理者アカウントは次回ログイン時にパスワードが自動入力されます（「パスワードは保存されています」と表示）。</li>
+        <li>「ログイン」ボタンを押すと週間予定画面へ移動します。</li>
+      </ol>
+      <div class="alert alert-info py-2 small">💡 パスワードを変更したい場合は管理者にお問い合わせください。</div>
+    </div></div>
+  </div>
+
+  <!-- 週間予定 -->
+  <div class="tab-pane fade {% if page_name == 'schedule' %}show active{% endif %}" id="tab-schedule">
+    <div class="card"><div class="card-body">
+      <h5 class="card-title">📅 週間予定の使い方</h5>
+      <h6>予定の入力</h6>
+      <ol>
+        <li>「週間予定」画面で該当週を表示します（◀前週・次週▶で週を移動）。</li>
+        <li>各曜日・午前/午後の枠にタスク名と時間を入力します。時間は <strong>0.25時間（15分）単位</strong> で入力してください。</li>
+        <li>タスク名は「作業登録」で登録したタスクが補完候補に表示されます。</li>
+        <li>休暇がある場合は「休暇」プルダウンで種別を選択します（1日有休・AM半休など）。</li>
+        <li>入力後「保存」ボタンを押してください。</li>
+      </ol>
+      <h6 class="mt-3">予定と実績の切り替え</h6>
+      <ul>
+        <li><strong>📋 予定</strong>ボタン：登録した週間予定を表示します。</li>
+        <li><strong>📊 実績</strong>ボタン：日次実績で登録した実績を表示します（当日以前の日のみ切り替わります）。</li>
+        <li>日付の横に <span class="badge" style="background:#0d6efd;color:#fff">実績</span> バッジがある日は実績が入力済みです。</li>
+      </ul>
+      <h6 class="mt-3">その他の操作</h6>
+      <ul>
+        <li>「先週の予定をコピー」：先週の予定をそのまま今週にコピーします。</li>
+        <li>「📥 Excelダウンロード」：前週・今週・来週の3週分をExcelで出力します。📋予定／📊実績の表示状態に応じた内容で出力されます。</li>
+      </ul>
+    </div></div>
+  </div>
+
+  <!-- 日次実績 -->
+  <div class="tab-pane fade {% if page_name == 'daily' %}show active{% endif %}" id="tab-daily">
+    <div class="card"><div class="card-body">
+      <h5 class="card-title">✏️ 日次実績の使い方</h5>
+      <h6>基本操作</h6>
+      <ol>
+        <li>ナビバーの「本日実績」ボタン、または週間予定の日付リンクから実績入力画面を開きます。</li>
+        <li>左側「本日の予定」で当日の計画を確認しながら、右側「本日の実績」に実際の作業内容と時間を入力します。</li>
+        <li>時間は <strong>0.25時間（15分）単位</strong> で入力してください。</li>
+        <li>「保存」ボタンで実績を保存します。保存後、週間予定の「📊 実績」ボタンに反映されます。</li>
+      </ol>
+      <div class="alert alert-warning py-2 small">⚠️ 実績は当日のみ編集可能です。過去の実績は管理者のみ修正できます。</div>
+
+      <h6 class="mt-3">📅 リスケ（予定していたが全く作業できなかった場合）</h6>
+      <ol>
+        <li>作業名欄をクリックすると「📅 リスケ」リンクが表示されます。</li>
+        <li>クリックするとカレンダーが開くので、振り替え先の日付を選択します。</li>
+        <li>保存すると振り替え先の週間予定に「【MM/DD リスケ】作業名」が自動で追加されます。</li>
+        <li>リスケした行の時間は自動的に0になります（未着手のため）。</li>
+        <li>作業名横のオレンジ色バッジ（MM/DD リスケ）をクリックするとリスケを解除できます。</li>
+      </ol>
+
+      <h6 class="mt-3">⏩ 繰り越し（作業したが時間切れで終わらなかった場合）</h6>
+      <ol>
+        <li>作業名の右側にある薄い ⏩ ボタンをクリックして点灯（濃く）させます。</li>
+        <li>実績時間を入力して「保存」します。</li>
+        <li>保存後、画面下部に「⏩ 繰越業務（未完了）」カードが表示されます。</li>
+        <li>後日その作業が完了したら、カードの「解決」ボタンを押すと一覧から消えます。</li>
+      </ol>
+      <div class="alert alert-info py-2 small">
+        💡 <strong>リスケと繰り越しの違い</strong><br>
+        📅 リスケ = 全く着手できなかった → 別日に振り替え（週間予定に自動追加）<br>
+        ⏩ 繰り越し = 着手したが未完了 → 繰越一覧で管理（週間予定への追加は手動）
+      </div>
+
+      <h6 class="mt-3">実績クリアボタン</h6>
+      <ul>
+        <li>「実績クリア」を押すと入力内容をすべて空にして保存します（振り返り・対策・上司コメントは保持されます）。</li>
+      </ul>
+    </div></div>
+  </div>
+
+  <!-- Excel出力 -->
+  <div class="tab-pane fade {% if page_name == 'export' %}show active{% endif %}" id="tab-export">
+    <div class="card"><div class="card-body">
+      <h5 class="card-title">📥 Excel出力の使い方</h5>
+      <ol>
+        <li>週間予定画面の「📥 Excelダウンロード」ボタンをクリックします。</li>
+        <li>前週・今週・翌週の3シートが含まれるExcelファイルがダウンロードされます。</li>
+        <li><strong>予定モード</strong>（📋 予定）で出力すると週間計画のみ記載されます。</li>
+        <li><strong>実績モード</strong>（📊 実績）で出力すると実績入力済みの日は実績値で記載されます。</li>
+      </ol>
+      <div class="alert alert-info py-2 small">💡 出力前に「📋 予定」「📊 実績」ボタンで表示を切り替えると、その内容でExcelが出力されます。</div>
+    </div></div>
+  </div>
+
+  <!-- 管理者機能 -->
+  <div class="tab-pane fade {% if page_name == 'admin' %}show active{% endif %}" id="tab-admin">
+    <div class="card"><div class="card-body">
+      <h5 class="card-title">⚙️ 管理者機能</h5>
+      <p class="text-muted small">管理者ロールのユーザーのみ利用できます。</p>
+      <h6>ユーザー管理</h6>
+      <ul>
+        <li>メンバーの追加・削除・パスワード変更が行えます。</li>
+        <li>標準作業時間（1日の目標時間）を個人ごとに設定できます。</li>
+      </ul>
+      <h6 class="mt-3">操作ログ</h6>
+      <ul>
+        <li>管理画面の「📋 操作ログ」からメンバーのログイン履歴・操作履歴を確認できます。</li>
+        <li>アクション種別でフィルタして表示できます。</li>
+      </ul>
+      <h6 class="mt-3">日次状況確認</h6>
+      <ul>
+        <li>全メンバーの当日実績入力状況を一覧で確認できます。</li>
+      </ul>
+    </div></div>
+  </div>
+
+
+  <!-- バージョン -->
+  <div class="tab-pane fade {% if page_name == 'version' %}show active{% endif %}" id="tab-version">
+    <div class="card"><div class="card-body">
+      <h5 class="card-title">🔖 システムバージョン</h5>
+      <div class="alert alert-primary py-2 mb-4">
+        <strong>現在のバージョン：{{ app_version }}</strong>　リリース日：{{ app_release_date }}
+      </div>
+      <h6>バージョン履歴</h6>
+      <table class="table table-sm table-bordered">
+        <thead class="table-light">
+          <tr><th style="width:110px;">バージョン</th><th style="width:120px;">リリース日</th><th>主な変更内容</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge bg-primary">1.2.0</span></td>
+            <td>2026-03-22</td>
+            <td>
+              上長コメント機能（管理職・マスタが部下の日次実績に上長コメントを入力可能）<br>
+              週間予定に「上長」バッジ追加（上長コメントが入力済みの日を表示）<br>
+              管理職の閲覧スコープ制限（自部署のユーザーのみ切り替え可能）<br>
+              ヘルプページにバージョン情報タブ追加
+            </td>
+          </tr>
+          <tr>
+            <td><span class="badge bg-secondary">1.1.0</span></td>
+            <td>2026-03-01</td>
+            <td>
+              週間予定に実績バッジ・予定/実績切り替えトグル追加<br>
+              リスケ・繰り越し機能追加<br>
+              管理者操作ログ機能追加<br>
+              Excel出力（前週・今週・来週 3シート）
+            </td>
+          </tr>
+          <tr>
+            <td><span class="badge bg-secondary">1.0.0</span></td>
+            <td>2026-01-15</td>
+            <td>初回リリース（週間予定・日次実績・ユーザー管理・Excel出力）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div></div>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}管理職日報メール - 予定管理システム{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-9">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h5 class="fw-bold mb-0">📧 管理職日報メール — {{ date_display }}（{{ day_of_week }}）</h5>
+      <a href="{{ url_for('daily_bp.daily_view', date_str=date_str) }}" class="btn btn-outline-secondary btn-sm">← 日報画面へ戻る</a>
+    </div>
+
+    {# ── タブ切り替え ── #}
+    <ul class="nav nav-tabs mb-3" id="mailTabs">
+      <li class="nav-item">
+        <button class="nav-link {% if login_role == '管理職' %}active{% endif %}"
+                id="tab-mgr" data-tab="mgr" type="button">管理職用</button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link {% if login_role == 'マスタ' %}active{% endif %}"
+                id="tab-master" data-tab="master" type="button">マスタ用</button>
+      </li>
+    </ul>
+
+    {# ── 宛先（ロール別・編集可能） ── #}
+    {% for role, setting, prefix in [
+        ('管理職', mgr_setting, 'mgr'),
+        ('マスタ',  master_setting, 'master')
+    ] %}
+    <div class="address-block" id="addr-{{ prefix }}"
+         style="{% if (prefix == 'mgr' and login_role != '管理職') or (prefix == 'master' and login_role != 'マスタ') %}display:none;{% endif %}">
+      <div class="card shadow-sm mb-3">
+        <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center">
+          <span>{{ role }}用 宛先設定</span>
+        </div>
+        <div class="card-body py-2">
+          <form method="post" action="{{ url_for('mail_report_bp.save_address') }}" class="row g-2 align-items-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="role" value="{{ role }}">
+            <input type="hidden" name="date_str" value="{{ date_str }}">
+            <div class="col-sm-5">
+              <label class="form-label small fw-semibold mb-1">TO</label>
+              <input type="text" class="form-control form-control-sm" name="to_address"
+                     value="{{ setting.to_address }}" placeholder="a@b.com;c@d.com">
+            </div>
+            <div class="col-sm-5">
+              <label class="form-label small fw-semibold mb-1">CC</label>
+              <input type="text" class="form-control form-control-sm" name="cc_address"
+                     value="{{ setting.cc_address }}" placeholder="a@b.com;c@d.com">
+            </div>
+            <div class="col-sm-2">
+              <button type="submit" class="btn btn-outline-primary btn-sm w-100">保存</button>
+            </div>
+            <div class="col-12">
+              <div class="form-text">複数の場合は ; （セミコロン）区切りで入力</div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+    {# ── メール内容プレビュー（タブ別） ── #}
+    {% for prefix, subject, body, mailto_url in [
+        ('mgr',    mgr_subject,    mgr_body,    mgr_mailto),
+        ('master', master_subject, master_body, master_mailto)
+    ] %}
+    <div class="tab-panel" id="panel-{{ prefix }}"
+         style="{% if (prefix == 'mgr' and login_role != '管理職') or (prefix == 'master' and login_role != 'マスタ') %}display:none;{% endif %}">
+      <div class="card shadow-sm mb-3">
+        <div class="card-header bg-light fw-semibold">メール内容プレビュー</div>
+        <div class="card-body">
+          <div class="mb-2">
+            <span class="fw-semibold me-2">件名：</span>
+            <span class="badge bg-secondary fs-6">{{ subject }}</span>
+          </div>
+          <div class="border rounded p-3 bg-white"
+               style="white-space:pre-wrap; font-size:0.9rem; max-height:400px; overflow-y:auto;">{{ body }}</div>
+        </div>
+      </div>
+      <div class="d-flex gap-2 mb-4">
+        <a href="{{ mailto_url }}" class="btn btn-primary">📨 Outlookで開く</a>
+        <button type="button" class="btn btn-outline-secondary copy-btn" data-body="{{ body | e }}">📋 本文をコピー</button>
+        {% if session.user_role == 'マスタ' %}
+        <a href="{{ url_for('mail_report_bp.settings') }}" class="btn btn-outline-warning btn-sm ms-auto">⚙ メール設定</a>
+        {% endif %}
+      </div>
+      {% if prefix == 'master' %}
+      <div class="alert alert-light border small text-muted mb-4">
+        💡 <strong>フォントについて：</strong>「Outlookで開く」で作成されるメールのフォントは、Outlookの既定フォント設定に従います。
+        游ゴシック 11pt にするには Outlook の「ファイル → オプション → メール → 新しいメッセージを作成する → フォント」で設定してください。
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var defaultTab = {{ (login_role == 'マスタ') | tojson }} ? 'master' : 'mgr';
+
+    function switchTab(tab) {
+      // タブボタン
+      document.querySelectorAll('#mailTabs .nav-link').forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+      });
+      // パネル・宛先ブロック
+      ['mgr', 'master'].forEach(function (t) {
+        document.getElementById('panel-' + t).style.display   = (t === tab) ? '' : 'none';
+        document.getElementById('addr-' + t).style.display    = (t === tab) ? '' : 'none';
+      });
+    }
+
+    // 初期タブ
+    switchTab(defaultTab);
+
+    // タブクリック
+    document.querySelectorAll('#mailTabs .nav-link').forEach(function (btn) {
+      btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
+    });
+
+    // 本文コピー
+    document.querySelectorAll('.copy-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var body = btn.dataset.body;
+        navigator.clipboard.writeText(body).then(function () {
+          var orig = btn.textContent;
+          btn.textContent = '✅ コピーしました';
+          setTimeout(function () { btn.textContent = orig; }, 2000);
+        });
+      });
+    });
+  });
+</script>
+{% endblock %}

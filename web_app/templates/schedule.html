@@ -1,0 +1,564 @@
+{% extends "base.html" %}
+
+{% block title %}週間予定 — 予定管理システム{% endblock %}
+
+{% block content %}
+{# ------------------------------------------------------------------ #}
+{# 週ナビゲーションバー                                                 #}
+{# ------------------------------------------------------------------ #}
+<div class="week-nav">
+  <a class="btn btn-outline-secondary btn-sm nav-confirm" href="{{ url_for('schedule.weekly') }}?week={{ prev_week }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user_id }}{% endif %}">◀ 前週</a>
+  <h5 class="mb-0">
+    週間予定：{{ week_start }} 〜 {{ week_dates[4] }}
+    {% if is_admin_view is defined and is_admin_view %}
+    <span class="badge bg-warning text-dark ms-2">{{ user.name }} の予定</span>
+    {% endif %}
+  </h5>
+  <a class="btn btn-outline-secondary btn-sm nav-confirm" href="{{ url_for('schedule.weekly') }}?week={{ next_week }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user_id }}{% endif %}">次週 ▶</a>
+  <a class="btn btn-outline-primary btn-sm ms-2 nav-confirm" href="{{ url_for('schedule.weekly') }}{% if is_admin_view is defined and is_admin_view %}?user_id={{ target_user_id }}{% endif %}">今週</a>
+  {% if (session.user_role == '管理職' or session.user_role == 'マスタ') and all_users is defined and all_users %}
+  <div class="input-group input-group-sm ms-auto" style="width:auto;">
+    <span class="input-group-text">切り替え：</span>
+    <select class="form-select form-select-sm" style="width:auto;"
+            onchange="location.href='{{ url_for('schedule.weekly') }}?week={{ week_start }}&user_id='+this.value">
+      {% for u in all_users %}
+      <option value="{{ u.id }}" {% if u.id == target_user_id %}selected{% endif %}>{{ u.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+</div>
+
+{# ------------------------------------------------------------------ #}
+{# 操作ボタン行                                                         #}
+{# ------------------------------------------------------------------ #}
+<div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+  <form method="post" action="{{ url_for('schedule.copy_last_week') }}">
+    <input type="hidden" name="week_start" value="{{ week_start }}">
+    {% if is_admin_view is defined and is_admin_view %}
+    <input type="hidden" name="target_user_id" value="{{ target_user_id }}">
+    {% endif %}
+    <button type="submit" class="btn btn-outline-secondary btn-sm">先週の予定をコピー</button>
+  </form>
+
+  {% if has_data %}
+  <a id="excel-export-link"
+     href="{{ url_for('export_bp.export_multi_week') }}?week={{ week_start }}&mode=result"
+     class="btn btn-outline-success btn-sm"
+     onclick="isDirty = false;">
+    📥 Excelダウンロード（前週・今週・来週）
+  </a>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('schedule.clear_schedule') }}" id="clear-form">
+    <input type="hidden" name="week_start" value="{{ week_start }}">
+    {% if is_admin_view is defined and is_admin_view %}
+    <input type="hidden" name="target_user_id" value="{{ target_user_id }}">
+    {% endif %}
+    <button type="button" class="btn btn-outline-danger btn-sm" onclick="confirmClear()">
+      🗑️ 週間予定をクリア
+    </button>
+  </form>
+
+  {% if today >= week_dates[0] %}
+  <div class="btn-group btn-group-sm ms-auto" id="view-toggle" role="group">
+    <button type="button" class="btn btn-outline-primary" id="btn-plan-view" onclick="setViewMode('plan')">📋 予定</button>
+    <button type="button" class="btn btn-primary active" id="btn-result-view" onclick="setViewMode('result')">📊 実績</button>
+  </div>
+  {% endif %}
+</div>
+
+{# ------------------------------------------------------------------ #}
+{# メイン保存フォーム                                                    #}
+{# ------------------------------------------------------------------ #}
+<form method="post" action="{{ url_for('schedule.save') }}" id="schedule-form">
+  <input type="hidden" name="week_start" value="{{ week_start }}">
+  {% if is_admin_view is defined and is_admin_view %}
+  <input type="hidden" name="target_user_id" value="{{ target_user_id }}">
+  {% endif %}
+  <input type="hidden" id="std-hours" value="{{ user.std_hours if user and user.std_hours else 8.0 }}">
+  <input type="hidden" id="today-date" value="{{ today }}">
+  <script id="task-map-data"     type="application/json">{{ task_map_json | safe }}</script>
+  <script id="week-plan-data"    type="application/json">{{ schedule | tojson }}</script>
+  <script id="week-results-data" type="application/json">{{ week_daily_results | tojson if week_daily_results is defined else '{}' }}</script>
+
+  <datalist id="task-list">
+    {% for t in task_master %}
+    <option value="{{ t.task_name }}">
+    {% endfor %}
+  </datalist>
+
+  <div class="table-responsive">
+    <table class="table table-bordered table-sm schedule-table">
+      <thead class="table-light">
+        <tr>
+          <th class="text-center" style="width:40px;">区分</th>
+          <th class="text-center" style="width:30px;">枠</th>
+          {% for i in range(5) %}
+          {% set day_labels = ['月', '火', '水', '木', '金'] %}
+          {% set d = week_dates[i] %}
+          <th class="text-center">
+            <a href="{{ url_for('daily_bp.daily_view', date_str=d) }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user_id }}{% endif %}"
+               class="text-decoration-none fw-bold" style="font-size:1.05rem; color:#0d6efd;">
+              {{ d[5:7]|int }}/{{ d[8:10]|int }}（{{ day_labels[i] }}）
+            </a>
+            {% if week_daily_results is defined and week_daily_results[i].has_result %}
+            <span class="badge result-badge ms-1" style="background:#0d6efd;color:#fff;font-size:0.7em;">実績</span>
+            {% endif %}
+            {% if week_admin_comments is defined and week_admin_comments[i].has_admin_comment %}
+            <span class="badge ms-1" style="background:#198754;color:#fff;font-size:0.7em;">上長</span>
+            {% endif %}
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+
+        {# 休暇種別行 #}
+        <tr class="leave-row">
+          <td colspan="2" class="text-center text-muted small">休暇</td>
+          {% for day in range(5) %}
+          {% set ltype = leave_data.get(day, '') if leave_data is defined and leave_data else '' %}
+          <td class="text-center">
+            <select name="leave_{{ day }}" class="form-select form-select-sm leave-select"
+                    data-day="{{ day }}" data-date="{{ week_dates[day] }}"
+                    onchange="applyLeaveType({{ day }}, this.value)">
+              <option value="" {% if ltype == '' %}selected{% endif %}>なし</option>
+              <option value="1日有休" {% if ltype == '1日有休' %}selected{% endif %}>1日有休</option>
+              <option value="AM半休" {% if ltype == 'AM半休' %}selected{% endif %}>AM半休</option>
+              <option value="PM半休" {% if ltype == 'PM半休' %}selected{% endif %}>PM半休</option>
+              <option value="祝日" {% if ltype == '祝日' %}selected{% endif %}>祝日</option>
+              <option value="特休" {% if ltype == '特休' %}selected{% endif %}>特休</option>
+              <option value="その他休み" {% if ltype == 'その他休み' %}selected{% endif %}>その他休み</option>
+            </select>
+          </td>
+          {% endfor %}
+        </tr>
+
+        {# 午前セクション #}
+        {% for i in range(5) %}
+        <tr class="am-row">
+          {% if i == 0 %}<td class="slot-label text-center" rowspan="5">午前</td>{% endif %}
+          <td class="text-center">{{ i + 1 }}</td>
+          {% for day in range(5) %}
+          {% set cell = schedule[day]['am'][i] if schedule and day in schedule and 'am' in schedule[day] and i < schedule[day]['am']|length else {'task_name': '', 'hours': ''} %}
+          {% set day_date = week_dates[day] %}
+          {% set r_cell = week_daily_results[day].am[i] if week_daily_results is defined else none %}
+          {% set day_has_result = week_daily_results is defined and week_daily_results[day].has_result %}
+          {% set use_result = day_date <= today and day_has_result and r_cell is not none and (r_cell.task_name or r_cell.defer_date or r_cell.hours > 0) %}
+          {% set disp_task = r_cell.task_name if use_result else cell.task_name %}
+          {% set disp_hours = r_cell.hours if use_result else (cell.hours if cell.hours else '') %}
+          <td>
+            <div class="d-flex gap-1">
+              <input type="text" list="task-list"
+                     name="task_{{ day }}_am_{{ i }}"
+                     value="{{ disp_task }}"
+                     data-plan-task="{{ cell.task_name }}"
+                     class="form-control form-control-sm task-input"
+                     data-date="{{ day_date }}"
+                     placeholder="タスク名">
+              <input type="number" step="0.25" min="0" max="24"
+                     name="hours_{{ day }}_am_{{ i }}"
+                     value="{{ disp_hours }}"
+                     data-plan-hours="{{ cell.hours if cell.hours else '' }}"
+                     class="form-control form-control-sm hours-input"
+                     data-date="{{ day_date }}"
+                     placeholder="h">
+            </div>
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+
+        {# 午後セクション #}
+        {% for i in range(5) %}
+        <tr class="pm-row">
+          {% if i == 0 %}<td class="slot-label text-center" rowspan="5">午後</td>{% endif %}
+          <td class="text-center">{{ i + 1 }}</td>
+          {% for day in range(5) %}
+          {% set cell = schedule[day]['pm'][i] if schedule and day in schedule and 'pm' in schedule[day] and i < schedule[day]['pm']|length else {'task_name': '', 'hours': ''} %}
+          {% set day_date = week_dates[day] %}
+          {% set r_cell = week_daily_results[day].pm[i] if week_daily_results is defined else none %}
+          {% set day_has_result = week_daily_results is defined and week_daily_results[day].has_result %}
+          {% set use_result = day_date <= today and day_has_result and r_cell is not none and (r_cell.task_name or r_cell.defer_date or r_cell.hours > 0) %}
+          {% set disp_task = r_cell.task_name if use_result else cell.task_name %}
+          {% set disp_hours = r_cell.hours if use_result else (cell.hours if cell.hours else '') %}
+          <td>
+            <div class="d-flex gap-1">
+              <input type="text" list="task-list"
+                     name="task_{{ day }}_pm_{{ i }}"
+                     value="{{ disp_task }}"
+                     data-plan-task="{{ cell.task_name }}"
+                     class="form-control form-control-sm task-input"
+                     data-date="{{ day_date }}"
+                     placeholder="タスク名">
+              <input type="number" step="0.25" min="0" max="24"
+                     name="hours_{{ day }}_pm_{{ i }}"
+                     value="{{ disp_hours }}"
+                     data-plan-hours="{{ cell.hours if cell.hours else '' }}"
+                     class="form-control form-control-sm hours-input"
+                     data-date="{{ day_date }}"
+                     placeholder="h">
+            </div>
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+
+        {# 1日合計行 #}
+        <tr class="day-total-row">
+          <td colspan="2" class="text-center fw-bold">1日合計</td>
+          {% for day in range(5) %}
+          <td class="total-cell text-center" id="total_day_{{ day }}">—</td>
+          {% endfor %}
+        </tr>
+
+      </tbody>
+    </table>
+  </div>
+
+  <div class="mt-2 d-flex align-items-center gap-3 flex-wrap">
+    <button type="submit" class="btn btn-primary">保存</button>
+    {% if schedule_meta is defined and schedule_meta %}
+    <span class="text-muted small">
+      最終更新: {{ schedule_meta.updated_at[:16] | replace('T', ' ') }}
+      {% if schedule_meta.updated_by %}（{{ schedule_meta.updated_by }}）{% endif %}
+    </span>
+    {% endif %}
+  </div>
+</form>
+
+{# ---- 上長コメント確認モーダル ---- #}
+<div class="modal fade" id="adminCommentModal" tabindex="-1" aria-labelledby="adminCommentModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header bg-success text-white py-2">
+        <h6 class="modal-title" id="adminCommentModalLabel">📝 振り返り・上長コメント</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-2" id="modal-date-label"></p>
+        <div class="mb-3">
+          <strong class="small text-muted">振り返り</strong>
+          <div id="modal-reflection" style="min-height:60px;background:#f8f9fa;padding:0.5rem;border-radius:4px;white-space:pre-wrap;font-size:0.9em;"></div>
+        </div>
+        <div class="mb-3">
+          <strong class="small text-muted">対策・懸念事項</strong>
+          <div id="modal-action" style="min-height:60px;background:#f8f9fa;padding:0.5rem;border-radius:4px;white-space:pre-wrap;font-size:0.9em;"></div>
+        </div>
+        <div>
+          <strong class="small text-muted">上長コメント</strong>
+          <div id="modal-admin-comment" style="min-height:60px;background:#e8f5e9;padding:0.5rem;border-radius:4px;white-space:pre-wrap;font-size:0.9em;border-left:3px solid #198754;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const STD_HOURS = parseFloat(document.getElementById('std-hours').value);
+const TASK_MAP  = JSON.parse(document.getElementById('task-map-data').textContent);
+const TODAY     = document.getElementById('today-date').value;
+const WEEK_ADMIN_COMMENTS = {{ week_admin_comments | tojson }};
+
+function showAdminCommentModal(dayIdx, dateStr) {
+  const data = WEEK_ADMIN_COMMENTS[String(dayIdx)];  // JSON keys are strings
+  if (!data) return;
+  document.getElementById('modal-date-label').textContent = dateStr;
+  document.getElementById('modal-reflection').textContent = data.reflection || '（未記入）';
+  document.getElementById('modal-action').textContent = data.action || '（未記入）';
+  document.getElementById('modal-admin-comment').textContent = data.admin_comment || '（コメントなし）';
+  new bootstrap.Modal(document.getElementById('adminCommentModal')).show();
+}
+
+// 予定・実績データを最初に初期化（スクリプト内のどこからでも参照できるよう先頭で宣言）
+var WEEK_PLAN    = {};
+var WEEK_RESULTS = {};
+try {
+  WEEK_PLAN    = JSON.parse(document.getElementById('week-plan-data').textContent);
+  WEEK_RESULTS = JSON.parse(document.getElementById('week-results-data').textContent);
+} catch(e) {
+  console.error('[WEEK_DATA] データ解析エラー:', e);
+}
+
+let isDirty = false;
+
+// 過去日・当日の入力フィールドを無効化する（週間予定は当日以前編集不可）
+document.querySelectorAll('.task-input, .hours-input').forEach(inp => {
+    if (!inp.dataset.date) return;
+    if (inp.dataset.date < TODAY) {
+        inp.disabled = true;
+        inp.style.backgroundColor = '#f0f0f0';
+        inp.title = '過去の日付は編集できません';
+    } else if (inp.dataset.date === TODAY) {
+        inp.disabled = true;
+        inp.style.backgroundColor = '#ffffff';
+        inp.style.border = '2px solid #0d6efd';
+        inp.style.borderRadius = '4px';
+        inp.title = '当日の予定は編集できません';
+    }
+});
+
+// 休暇セレクト: 当日は常に無効、過去日は実績ありの場合のみ無効
+document.querySelectorAll('.leave-select').forEach(sel => {
+    if (!sel.dataset.date) return;
+    if (sel.dataset.date === TODAY) {
+        // 当日は常に無効（背景白）
+        sel.disabled = true;
+        sel.style.backgroundColor = '#ffffff';
+    } else if (sel.dataset.date < TODAY) {
+        // 過去日: 実績がある場合のみ無効
+        const dayIdx = parseInt(sel.dataset.day);
+        const hasResult = WEEK_RESULTS[dayIdx] && WEEK_RESULTS[dayIdx].has_result;
+        if (hasResult) {
+            sel.disabled = true;
+        }
+    }
+});
+
+// フォーム変更検知
+document.getElementById('schedule-form').addEventListener('input', () => { isDirty = true; });
+document.getElementById('schedule-form').addEventListener('submit', () => { isDirty = false; });
+
+// ページ離脱警告
+window.addEventListener('beforeunload', (e) => {
+    if (isDirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// ナビゲーションリンクの確認
+document.querySelectorAll('.nav-confirm').forEach(link => {
+    link.addEventListener('click', (e) => {
+        if (isDirty && !confirm('保存されていない変更があります。移動しますか？')) {
+            e.preventDefault();
+        } else {
+            isDirty = false;
+        }
+    });
+});
+
+// 先週コピーの確認（isDirty の場合のみ警告）
+const copyForm = document.querySelector('form[action*="copy_last_week"]');
+if (copyForm) {
+    copyForm.addEventListener('submit', (e) => {
+        if (!confirm('先週の予定をコピーしますか？\n現在の入力は上書きされます。')) {
+            e.preventDefault();
+            return;
+        }
+        isDirty = false;
+    });
+}
+
+// 週間予定クリア確認
+function confirmClear() {
+    if (confirm('この週の週間予定をすべてクリアしますか？\nこの操作は元に戻せません。')) {
+        isDirty = false;
+        document.getElementById('clear-form').submit();
+    }
+}
+
+// タスク選択時に標準時間を自動セット
+function applyTaskHours(inp) {
+    const hours = TASK_MAP[inp.value];
+    if (hours !== undefined && hours > 0) {
+        const hoursInput = inp.closest('.d-flex').querySelector('.hours-input');
+        if (hoursInput && !hoursInput.disabled && (!hoursInput.value || parseFloat(hoursInput.value) === 0)) {
+            hoursInput.value = hours;
+            updateTotals(parseInt(inp.name.split('_')[1]));
+        }
+    }
+}
+document.querySelectorAll('.task-input').forEach(inp => {
+    // change は値が変化したときのみ発火するため、blur でも同じ処理を実行する
+    // （同じ作業名を再入力した場合でも時間が正しく補完される）
+    inp.addEventListener('change', function () { applyTaskHours(this); });
+    inp.addEventListener('blur',   function () { applyTaskHours(this); });
+});
+
+// 休暇種別ごとの有効勤務時間を返す
+function getEffectiveStdHours(day) {
+    const sel = document.querySelector(`[name="leave_${day}"]`);
+    const lt = sel ? sel.value : '';
+    if (lt === 'AM半休')  return Math.max(0, STD_HOURS - 3);
+    if (lt === 'PM半休')  return Math.max(0, STD_HOURS - 4.75);
+    if (['1日有休', '祝日', '特休', 'その他休み'].includes(lt)) return 0;
+    return STD_HOURS;
+}
+
+// 合計計算（休暇種別に応じて目標時間を変える）
+function updateTotals(day) {
+    let total = 0;
+    for (let i = 0; i < 5; i++) {
+        for (const slot of ['am', 'pm']) {
+            const h = document.querySelector(`[name="hours_${day}_${slot}_${i}"]`);
+            total += parseFloat(h ? h.value || 0 : 0);
+        }
+    }
+    const cell = document.getElementById(`total_day_${day}`);
+    if (cell) {
+        const eff = getEffectiveStdHours(day);
+        const sel = document.querySelector(`[name="leave_${day}"]`);
+        const lt = sel ? sel.value : '';
+        const isFullLeave = ['1日有休', '祝日', '特休', 'その他休み'].includes(lt);
+        if (isFullLeave) {
+            cell.textContent = '0h';
+            cell.style.color = '#212529';
+            cell.style.fontWeight = 'bold';
+        } else {
+            const disp = Number.isInteger(total) ? total : parseFloat(total.toFixed(2));
+            cell.textContent = disp + 'h / ' + eff + 'h';
+            cell.style.color = Math.abs(total - eff) < 0.001 ? '#000' : '#dc3545';
+            cell.style.fontWeight = 'bold';
+        }
+    }
+}
+
+document.querySelectorAll('.hours-input').forEach(inp => {
+    inp.addEventListener('input', () => { updateTotals(parseInt(inp.name.split('_')[1])); });
+});
+
+for (let d = 0; d < 5; d++) updateTotals(d);
+
+// 休暇種別に応じて入力フィールドを無効化する（markDirty=trueの場合のみisDirtyをセット）
+function applyLeaveType(day, leaveType, markDirty = true) {
+    const amInputs = document.querySelectorAll(
+        `[name^="task_${day}_am_"], [name^="hours_${day}_am_"]`
+    );
+    const pmInputs = document.querySelectorAll(
+        `[name^="task_${day}_pm_"], [name^="hours_${day}_pm_"]`
+    );
+    const disableAll = ['1日有休', '祝日', '特休', 'その他休み'].includes(leaveType);
+    const disableAm  = disableAll || leaveType === 'AM半休';
+    const disablePm  = disableAll || leaveType === 'PM半休';
+
+    [amInputs, pmInputs].forEach((inputs, idx) => {
+        const shouldDisable = idx === 0 ? disableAm : disablePm;
+        inputs.forEach(inp => {
+            // 過去日フィールドは元々 disabled なので上書きしない
+            if (!shouldDisable && inp.dataset.date && inp.dataset.date < TODAY) return;
+            inp.disabled = shouldDisable;
+            inp.style.backgroundColor = shouldDisable ? '#f0f0f0' : '';
+            inp.title = shouldDisable ? leaveType + 'のため編集不可' : (inp.dataset.date && inp.dataset.date < TODAY ? '過去の日付は編集できません' : '');
+        });
+    });
+    updateTotals(day);
+    if (markDirty) isDirty = true;
+}
+
+// ページ読み込み時に現在の休暇種別を適用する（isDirty は変えない）
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.leave-select').forEach(sel => {
+        if (sel.value) applyLeaveType(parseInt(sel.dataset.day), sel.value, false);
+    });
+});
+
+// 予定/実績 切り替えトグル
+
+/** disabled input に値を確実に反映するヘルパー */
+function _setInputValue(inp, val) {
+  const wasDisabled = inp.disabled;
+  if (wasDisabled) inp.removeAttribute('disabled');
+  inp.value = val;
+  inp.defaultValue = String(val);  // disabled 再設定時に表示値が保持されるよう defaultValue も更新
+  if (wasDisabled) inp.setAttribute('disabled', '');
+}
+
+function setViewMode(mode) {
+  document.getElementById('btn-plan-view').className = 'btn btn-' + (mode === 'plan' ? 'primary active' : 'outline-primary');
+  document.getElementById('btn-result-view').className = 'btn btn-' + (mode === 'result' ? 'primary active' : 'outline-primary');
+
+  for (let day = 0; day < 5; day++) {
+    const dayDate = document.querySelector(`input[name="task_${day}_am_0"]`)?.dataset.date;
+    if (!dayDate) continue;
+
+    const dayPlan   = WEEK_PLAN[day];                        // 週間予定（予定モード用）
+    const dayResult = WEEK_RESULTS[day];                     // 日次実績（実績モード用）
+    const hasResult = dayResult && dayResult.has_result;
+
+    for (const slot of ['am', 'pm']) {
+      for (let i = 0; i < 5; i++) {
+        const taskInp  = document.querySelector(`input[name="task_${day}_${slot}_${i}"]`);
+        const hoursInp = document.querySelector(`input[name="hours_${day}_${slot}_${i}"]`);
+        if (!taskInp || !hoursInp) continue;
+
+        // 予定値（WEEK_PLANから取得）
+        const planCell  = dayPlan  && dayPlan[slot]  && dayPlan[slot][i];
+        const planTask  = planCell ? (planCell.task_name || '') : '';
+        const planHours = planCell && planCell.hours > 0 ? planCell.hours : '';
+
+        let taskVal  = planTask;
+        let hoursVal = planHours;
+
+        if (mode === 'result' && hasResult) {
+          const rc = dayResult[slot] && dayResult[slot][i];
+          if (rc && (rc.task_name || rc.defer_date || rc.hours > 0)) {
+            taskVal  = rc.task_name || planTask;
+            hoursVal = rc.hours > 0 ? rc.hours : '';
+          }
+        }
+
+        _setInputValue(taskInp,  taskVal);
+        _setInputValue(hoursInp, hoursVal);
+      }
+    }
+    updateTotals(day);
+  }
+
+  // 実績バッジの表示/非表示
+  document.querySelectorAll('.result-badge').forEach(b => {
+    b.style.display = mode === 'result' ? '' : 'none';
+  });
+
+  // Excelダウンロードリンクのmodeパラメータを同期
+  const excelLink = document.getElementById('excel-export-link');
+  if (excelLink) {
+    const url = new URL(excelLink.href, location.origin);
+    url.searchParams.set('mode', mode);
+    excelLink.href = url.pathname + url.search;
+  }
+}
+
+// ページロード時はデフォルトで実績表示
+if (document.getElementById('btn-result-view')) {
+  setViewMode('result');
+}
+
+// エンターキーナビゲーション
+// 作業名→時間→次行作業名→…→pm最終行→次の曜日am先頭
+document.querySelectorAll('.task-input, .hours-input').forEach(inp => {
+    inp.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+
+        const parts = this.name.split('_');
+        const type = parts[0], day = parseInt(parts[1]), slot = parts[2], i = parseInt(parts[3]);
+
+        let nextName;
+        if (type === 'task') {
+            nextName = `hours_${day}_${slot}_${i}`;
+        } else if (i < 4) {
+            nextName = `task_${day}_${slot}_${i + 1}`;
+        } else if (slot === 'am') {
+            nextName = `task_${day}_pm_0`;
+        } else {
+            nextName = `task_${(day + 1) % 5}_am_0`;
+        }
+
+        // 無効フィールドをスキップして次の有効フィールドへ
+        let next = document.querySelector(`[name="${nextName}"]`);
+        for (let step = 0; step < 20 && next && next.disabled; step++) {
+            const p = next.name.split('_');
+            const t2 = p[0], d2 = parseInt(p[1]), s2 = p[2], i2 = parseInt(p[3]);
+            let nn;
+            if (t2 === 'task') nn = `hours_${d2}_${s2}_${i2}`;
+            else if (i2 < 4) nn = `task_${d2}_${s2}_${i2 + 1}`;
+            else if (s2 === 'am') nn = `task_${d2}_pm_0`;
+            else nn = `task_${(d2 + 1) % 5}_am_0`;
+            next = document.querySelector(`[name="${nn}"]`);
+        }
+        if (next && !next.disabled) next.focus();
+    });
+});
+</script>
+{% endblock %}

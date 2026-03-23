@@ -1,0 +1,39 @@
+# SQLiteデータベース（個人情報含む）
+db/
+
+# Excel出力ファイル
+output/
+
+# レポート出力
+reports/
+
+# Pythonキャッシュ
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 仮想環境
+venv/
+.venv/
+env/
+
+# 環境変数
+.env
+.env.*
+
+# 一時ファイル
+*.tmp
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Codeローカル設定
+.claude/

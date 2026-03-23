@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}メール設定 - 予定管理システム{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-9">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h5 class="fw-bold mb-0">⚙ 管理職日報メール設定</h5>
+      <a href="{{ url_for('admin_bp.dashboard') }}" class="btn btn-outline-secondary btn-sm">← 管理画面へ戻る</a>
+    </div>
+
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      {# ── 管理職用 ── #}
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white fw-semibold">管理職用メール設定</div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">TO（宛先）</label>
+            <input type="text" class="form-control" name="mgr_to"
+                   value="{{ mgr_setting.to_address }}" placeholder="example@company.com">
+            <div class="form-text">複数の場合はセミコロン区切り（例: a@b.com;c@d.com）</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">CC</label>
+            <input type="text" class="form-control" name="mgr_cc"
+                   value="{{ mgr_setting.cc_address }}" placeholder="example@company.com">
+          </div>
+          <p class="text-muted small mb-0">
+            ※ 件名・本文は固定テンプレートで自動生成されます（設定不要）。
+          </p>
+          <input type="hidden" name="mgr_subject" value="{{ mgr_setting.subject_template }}">
+          <input type="hidden" name="mgr_body" value="{{ mgr_setting.body_template }}">
+        </div>
+      </div>
+
+      {# ── マスタ用 ── #}
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-warning text-dark fw-semibold">マスタ用メール設定</div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">TO（宛先）</label>
+            <input type="text" class="form-control" name="master_to"
+                   value="{{ master_setting.to_address }}" placeholder="example@company.com">
+            <div class="form-text">複数の場合はセミコロン区切り（例: a@b.com;c@d.com）</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">CC</label>
+            <input type="text" class="form-control" name="master_cc"
+                   value="{{ master_setting.cc_address }}" placeholder="example@company.com">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">宛先挨拶文（本文冒頭）</label>
+            <textarea class="form-control" name="master_body" rows="2"
+                      style="font-family: monospace; font-size: 0.85rem;">{{ master_setting.body_template }}</textarea>
+            <div class="form-text">
+              例: <code>矢野会長様、志保社長様</code> ／ 空欄の場合は挨拶行を省略します。
+            </div>
+          </div>
+          <div class="alert alert-info small mb-0">
+            <strong>件名・本文は自動生成</strong>されます。<br>
+            件名: 【部署】日次業務報告yyyy/mm/dd（曜日）（金曜は「管理・日次業務報告」）<br>
+            本文: 大区分・中区分別実績、メンバーAM/PM作業、振り返り、AI開発状況、次回予定を自動で組み立てます。
+          </div>
+          <input type="hidden" name="master_subject" value="{{ master_setting.subject_template }}">
+        </div>
+      </div>
+
+      <div class="d-flex gap-2 mb-4">
+        <button type="submit" class="btn btn-primary">保存</button>
+        <a href="{{ url_for('admin_bp.dashboard') }}" class="btn btn-outline-secondary">キャンセル</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
