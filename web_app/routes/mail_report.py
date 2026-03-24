@@ -9,8 +9,11 @@ from flask import Blueprint, abort, redirect, render_template, request, session,
 from ..auth_helpers import is_privileged, is_master
 from ..models import (
     get_accessible_users,
+    get_all_categories,
+    get_all_subcategories,
     get_daily_result,
     get_daily_comment,
+    get_global_task_category_map,
     get_mail_setting,
     get_task_master,
     get_weekly_schedule,
@@ -111,7 +114,7 @@ def _build_mgr_self_body(login_user: dict, target_date: date) -> tuple[str, str]
         "＜本日の振り返り＞\n"
         f"{reflection}\n"
         "\n"
-        "＜要点＞\n"
+        "＜朝礼での気づき＞\n"
         f"{action}\n"
         "\n"
         "＜実施内容＞\n"
@@ -171,6 +174,9 @@ def _build_master_body(
     target_dow = target_date.weekday()
     week_start_str = (target_date - timedelta(days=target_dow)).isoformat()
 
+    # 全ユーザー横断の区分マップ（フォールバック用）
+    global_cat_map = get_global_task_category_map()
+
     # 各メンバーの実績・タスクマスタ・週次スケジュールを収集
     member_data: list[dict] = []
     for member in members:
@@ -178,14 +184,15 @@ def _build_master_body(
         result = get_daily_result(uid, date_str)
         comment_row = get_daily_comment(uid, date_str)
         task_master_list = get_task_master(uid)
-        # task_name → {category_name, subcategory_name} マップ
-        task_cat_map: dict[str, dict] = {
+        # task_name → {category_name, subcategory_name} マップ（個人＋グローバルフォールバック）
+        task_cat_map: dict[str, dict] = dict(global_cat_map)
+        task_cat_map.update({
             t["task_name"]: {
                 "category_name": t.get("category_name") or "",
                 "subcategory_name": t.get("subcategory_name") or "",
             }
             for t in task_master_list
-        }
+        })
         # 対象日の週次スケジュール（計画判定用）
         schedule_data = get_weekly_schedule(uid, week_start_str)
         scheduled_tasks: set[str] = {
@@ -234,12 +241,8 @@ def _build_master_body(
     resc_rate = int(resc_hours / total_actual_hours * 100) if total_actual_hours > 0 else 0
     jisseki_rate = plan_rate + sudden_rate + resc_rate
 
-    # 大区分→中区分→作業名でグループ化・時間集計
-    cat_map: dict[str, dict[str, dict[str, float]]] = {}
-    cat_order: list[str] = []
-    subcat_order: dict[str, list[str]] = {}
-    task_order: dict[str, dict[str, list[str]]] = {}
-
+    # タスク別時間集計（同名タスクは合算）: {(cat_name, subcat_name, task_name): hours}
+    task_hours: dict[tuple[str, str, str], float] = {}
     for md in member_data:
         for slot in ("am", "pm"):
             for item in md["result"].get(slot, []):
@@ -248,59 +251,87 @@ def _build_master_body(
                 if not task or hours == 0.0:
                     continue
                 cat_info = md["task_cat_map"].get(task, {})
-                cat = cat_info.get("category_name") or "（区分なし）"
-                subcat = cat_info.get("subcategory_name") or "（中区分なし）"
-                if cat not in cat_map:
-                    cat_map[cat] = {}
-                    cat_order.append(cat)
-                    subcat_order[cat] = []
-                    task_order[cat] = {}
-                if subcat not in cat_map[cat]:
-                    cat_map[cat][subcat] = {}
-                    subcat_order[cat].append(subcat)
-                    task_order[cat][subcat] = []
-                if task not in cat_map[cat][subcat]:
-                    cat_map[cat][subcat][task] = 0.0
-                    task_order[cat][subcat].append(task)
-                cat_map[cat][subcat][task] += hours
+                cat = cat_info.get("category_name") or ""
+                subcat = cat_info.get("subcategory_name") or ""
+                if not cat:
+                    cat = "その他"
+                    subcat = ""
+                key = (cat, subcat, task)
+                task_hours[key] = task_hours.get(key, 0.0) + hours
 
-    # 業務内容セクション
+    # 全大区分・中区分をマスタから取得（全表示用）
+    all_cats = get_all_categories()
+    all_subcats = get_all_subcategories()
+    # cat_id → cat_name マップ
+    cat_id_name: dict[int, str] = {c["id"]: c["name"] for c in all_cats}
+    # cat_name → [subcat_name] の順序付きマップ
+    cat_subcats_ordered: dict[str, list[str]] = {c["name"]: [] for c in all_cats}
+    for s in all_subcats:
+        cname = cat_id_name.get(s["category_id"], "")
+        if cname and cname in cat_subcats_ordered:
+            cat_subcats_ordered[cname].append(s["name"])
+
+    # 業務内容セクション（全大区分・中区分を表示、該当タスクがあれば%付き）
     content_lines: list[str] = ["業務内容 / 対応内容"]
-    for cat in cat_order:
-        content_lines.append(f"・{cat}")
-        for subcat in subcat_order.get(cat, []):
-            for task in task_order.get(cat, {}).get(subcat, []):
-                t_hours = cat_map[cat][subcat][task]
-                rate = int(t_hours / total_std_hours * 100) if total_std_hours > 0 else 0
-                content_lines.append(f"  {subcat}　※{task}　{rate}%")
+    for cat_name in cat_subcats_ordered:
+        content_lines.append(f"・{cat_name}")
+        for subcat_name in cat_subcats_ordered[cat_name]:
+            # この中区分に該当するタスクを収集
+            matched: list[str] = []
+            for (c, s, t), h in task_hours.items():
+                if c == cat_name and s == subcat_name:
+                    rate = int(h / total_std_hours * 100) if total_std_hours > 0 else 0
+                    matched.append(f"{t} {rate}%")
+            if matched:
+                content_lines.append(f"  {subcat_name}　{'、'.join(matched)}")
+            else:
+                content_lines.append(f"  {subcat_name}")
 
-    # メンバー AM/PM サマリ
+    # 「その他」（区分なしタスク）があれば末尾に追加
+    other_tasks: list[str] = []
+    for (c, s, t), h in task_hours.items():
+        if c == "その他":
+            rate = int(h / total_std_hours * 100) if total_std_hours > 0 else 0
+            other_tasks.append(f"{t} {rate}%")
+    if other_tasks:
+        content_lines.append(f"・その他")
+        content_lines.append(f"  {'、'.join(other_tasks)}")
+
+    # メンバー AM/PM サマリ（定例作業は除外、両方なしなら重複表示しない）
     member_lines: list[str] = []
     for md in member_data:
         name = md["member"]["name"]
         result = md["result"]
+        tcm = md["task_cat_map"]
         am_tasks = list(dict.fromkeys(
             item["task_name"]
             for item in result.get("am", [])
             if item.get("task_name", "").strip() and float(item.get("hours", 0)) > 0
+            and tcm.get(item["task_name"].strip(), {}).get("subcategory_name") != "定例作業"
         ))
         pm_tasks = list(dict.fromkeys(
             item["task_name"]
             for item in result.get("pm", [])
             if item.get("task_name", "").strip() and float(item.get("hours", 0)) > 0
+            and tcm.get(item["task_name"].strip(), {}).get("subcategory_name") != "定例作業"
         ))
-        am_str = "・".join(am_tasks) if am_tasks else "（なし）"
-        pm_str = "・".join(pm_tasks) if pm_tasks else "（なし）"
-        member_lines.append(f"{name}：{am_str} / {pm_str}")
+        am_str = "/ ".join(am_tasks) if am_tasks else "（なし）"
+        pm_str = "/ ".join(pm_tasks) if pm_tasks else "（なし）"
+        if am_str == pm_str:
+            member_lines.append(f"{name}：{am_str}")
+        else:
+            member_lines.append(f"{name}：{am_str} / {pm_str}")
 
-    # マスタ自身の振り返り
+    # マスタ自身の振り返り・対策
     master_comment = get_daily_comment(login_id, date_str)
     reflection = master_comment.get("reflection", "").strip() or "（未入力）"
+    action = master_comment.get("action", "").strip() or "（未入力）"
 
-    # ＜開発状況＞: AI開発関連タスク（カテゴリ・中区分・作業名に「AI」を含む）
-    ai_seen: set[str] = set()
-    ai_lines: list[str] = []
+    # ＜開発状況＞: AI開発関連タスク（同一人物・同一タスクは時間を合算）
+    ai_totals: dict[tuple[str, str], float] = {}  # (name, task) -> hours
+    ai_order: list[tuple[str, str]] = []
     for md in member_data:
+        name = md["member"]["name"]
         for slot in ("am", "pm"):
             for item in md["result"].get(slot, []):
                 task = item.get("task_name", "").strip()
@@ -311,10 +342,14 @@ def _build_master_body(
                 cat = cat_info.get("category_name", "")
                 subcat = cat_info.get("subcategory_name", "")
                 if "AI" in cat or "AI" in subcat or "AI" in task:
-                    line = f"  {md['member']['name']}：{task}　{hours}h"
-                    if line not in ai_seen:
-                        ai_seen.add(line)
-                        ai_lines.append(line)
+                    key = (name, task)
+                    if key not in ai_totals:
+                        ai_order.append(key)
+                    ai_totals[key] = ai_totals.get(key, 0.0) + hours
+    ai_lines: list[str] = [
+        f"  {name}：{task}　{ai_totals[(name, task)]}h"
+        for name, task in ai_order
+    ]
     ai_section = "\n".join(ai_lines) if ai_lines else "  （AI開発作業なし）"
 
     # ＜次回予定＞: マスタ自身の翌稼働日予定
@@ -343,6 +378,9 @@ def _build_master_body(
         "\n".join(content_lines),
         "",
         "\n".join(member_lines),
+        "",
+        "＜朝礼での気づき＞",
+        action,
         "",
         "＜本日の振り返り＞",
         reflection,

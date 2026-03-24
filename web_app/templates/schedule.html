@@ -97,9 +97,9 @@
           {% for i in range(5) %}
           {% set day_labels = ['月', '火', '水', '木', '金'] %}
           {% set d = week_dates[i] %}
-          <th class="text-center">
+          <th class="text-center"{% if d == today %} style="background-color:#0d47a1; color:#fff;"{% endif %}>
             <a href="{{ url_for('daily_bp.daily_view', date_str=d) }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user_id }}{% endif %}"
-               class="text-decoration-none fw-bold" style="font-size:1.05rem; color:#0d6efd;">
+               class="text-decoration-none fw-bold" style="font-size:1.05rem; color:{% if d == today %}#fff{% else %}#0d6efd{% endif %};">
               {{ d[5:7]|int }}/{{ d[8:10]|int }}（{{ day_labels[i] }}）
             </a>
             {% if week_daily_results is defined and week_daily_results[i].has_result %}
@@ -295,8 +295,6 @@ document.querySelectorAll('.task-input, .hours-input').forEach(inp => {
     } else if (inp.dataset.date === TODAY) {
         inp.disabled = true;
         inp.style.backgroundColor = '#ffffff';
-        inp.style.border = '2px solid #0d6efd';
-        inp.style.borderRadius = '4px';
         inp.title = '当日の予定は編集できません';
     }
 });

@@ -1,4 +1,4 @@
-# CC日報管理アプリ - Python コーディングルール
+# 予定管理システム（Web版）- Python コーディングルール
 # このファイルはAI（Claude Code / Cline 等）がコード生成・補完を行う際に参照するルールです。
 
 ## 言語・スタイル
@@ -7,55 +7,56 @@
 - インデントはスペース 4 つ（タブ禁止）
 
 ## 命名規則
-- モジュール名・変数名・関数名: snake_case （例: load_csv, today_df）
-- クラス名: PascalCase （例: ReportService, WelcomeFrame）
-- 定数: UPPER_SNAKE_CASE （例: CSV_ENCODING, C_PRIMARY）
-- プライベートメソッド: アンダースコア 1 つのプレフィックス（例: _build, _on_next）
+- モジュール名・変数名・関数名: snake_case （例: get_weekly_schedule, save_daily_result）
+- クラス名: PascalCase （例: Config）
+- 定数: UPPER_SNAKE_CASE （例: APP_VERSION, ACTION_LOGIN）
+- プライベート関数: アンダースコア 1 つのプレフィックス（例: _require_privileged, _build_query）
+- Blueprint 変数名: xxx_bp （例: schedule_bp, admin_bp）
 
 ## 型ヒント
 - すべての関数・メソッドの引数と戻り値に型ヒントを必須とする
 - Python 標準ライブラリの typing モジュールを使用する
 - Optional の代わりに X | None の形式を推奨（Python 3.10+）
 
-## クラス設計
-- 単一責任の原則（SRP）を守ること
-- GUI クラスはウィジェット構築のみを担当し、ビジネスロジックを含めない
-- ビジネスロジックは src/services/ 層に置くこと
-- 抽象ベースクラス（ABC）を継承した具象クラスは全抽象メソッドを実装すること
+## アーキテクチャ（Flask Web アプリ）
+- アプリファクトリパターン: web_app/app.py の create_app() でアプリを生成
+- ルーティング: Blueprint を使用し、web_app/routes/ に機能別に配置
+- データアクセス: web_app/models.py に関数として集約（ORM不使用・直接SQL）
+- テンプレート: Jinja2 + Bootstrap 5.3、web_app/templates/ に配置
+- 権限チェック: web_app/auth_helpers.py のヘルパー関数を使用
 
-## ビジネスロジックと入出力の分離
-- CSV の読み込み・Markdown の書き出しは src/utils/file_io.py に集約する
-- 日付操作は src/utils/date_utils.py に集約し、datetime.date / datetime.datetime を統一して使う
-- GUI 層から直接ファイル I/O を行わないこと
+## ビジネスロジックとルートの分離
+- ルートハンドラはリクエスト処理・レスポンス生成のみ担当
+- データベース操作は web_app/models.py の関数を呼び出す
+- 操作ログは web_app/log_service.py を使用する
+- ルートハンドラから直接 SQL を書かないこと
 
 ## エラー処理
-- ファイル操作・データ変換のエラーは src/exceptions.py の独自例外クラスで捕捉する
-  - ReportError: アプリ全体の基底例外
-  - CSVLoadError(ReportError): CSV 読み込み失敗
-  - ValidationError(ReportError): 入力値バリデーション失敗
-  - ReportSaveError(ReportError): レポート保存失敗
 - print() によるデバッグ出力を禁止し、logging モジュールを使用する
 - ロガーは各モジュールの先頭で logging.getLogger(__name__) で取得する
+- ユーザー向けエラーは flash() でメッセージを表示する
+- 例外は握り潰さず、ログ出力またはユーザー向けメッセージを必ず残す
 
-## データクラス
-- ドメインモデルは src/models/report.py の @dataclass を使用する
-- 不変データは @dataclass(frozen=True) を使用する（例: Plan）
-- フィールドには型ヒントを必須とする
-
-## ディレクトリ構成（変更禁止）
-- src/models/    : ドメインモデル（Plan, ActualResult, DailyReport）
-- src/services/  : ビジネスロジック（ReportBase, ReportService）
-- src/utils/     : 共通ユーティリティ（file_io, date_utils）
-- src/gui/       : GUI フレームと共通ウィジェット
-- main.py        : エントリーポイント（logging 設定のみ）
+## ディレクトリ構成
+- web_app/app.py         : アプリファクトリ（create_app）
+- web_app/config.py      : Flask 設定クラス
+- web_app/database.py    : DB 接続・スキーマ初期化
+- web_app/models.py      : データアクセス関数群
+- web_app/auth_helpers.py: 権限チェックヘルパー
+- web_app/log_service.py : 操作ログ記録
+- web_app/routes/        : Blueprint ルート群
+- web_app/templates/     : Jinja2 テンプレート
+- web_app/static/        : CSS・JS 等の静的ファイル
+- run_web.py             : エントリーポイント
 
 ## インポート順序（isort 準拠）
 1. 標準ライブラリ
-2. サードパーティ（pandas 等）
-3. プロジェクト内モジュール（src.*）
+2. サードパーティ（flask, openpyxl 等）
+3. プロジェクト内モジュール（web_app.*）
 各グループ間に空行を 1 行入れる
 
 ## 新機能追加時のルール
-- 既存の .clinerules と ReportBase の抽象クラスを必ず確認する
-- 新しいデータソース（DB・API 等）は ReportService のサブクラスとして実装する
-- GUI への機能追加は既存フレームクラスのパターンに倣う
+- 新しいルートは Blueprint として web_app/routes/ に追加し、app.py で register する
+- データベーススキーマ変更は web_app/database.py の init_db() に追加する
+- テンプレートは base.html を継承して作成する
+- 既存の Blueprint・モデル関数のパターンに倣うこと

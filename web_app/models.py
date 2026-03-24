@@ -145,14 +145,18 @@ def get_accessible_users(login_id: int, login_role: str, login_dept: str) -> lis
             return [self_user] + others
         return others
     if login_role == "管理職":
+        all_dept = get_all_users(dept_filter=login_dept if login_dept else None)
+        self_user = next((u for u in all_dept if u.get("id") == login_id), None)
         direct = get_direct_reports(login_id)
         if direct:
-            return direct
-        # 直属部下未設定の場合: 同一部署（マスタ除く）
-        return [
-            u for u in get_all_users(dept_filter=login_dept if login_dept else None)
-            if u.get("role") != "マスタ"
-        ]
+            members = direct
+        else:
+            # 直属部下未設定の場合: 同一部署（マスタ除く）
+            members = [u for u in all_dept if u.get("role") != "マスタ"]
+        # 自分自身をリスト先頭に追加（未含の場合）
+        if self_user and not any(u.get("id") == login_id for u in members):
+            return [self_user] + members
+        return members
     return []
 
 
@@ -283,10 +287,14 @@ def add_user(
     """
     db = get_db()
     try:
+        # 新規ユーザーは全表示で最後尾に配置（display_order の最大値 + 1）
+        max_order = db.execute(
+            "SELECT COALESCE(MAX(display_order), 0) FROM users"
+        ).fetchone()[0]
         db.execute(
-            "INSERT INTO users (name, role, dept, std_hours_am, std_hours_pm, std_hours) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, role, dept, std_hours / 2, std_hours / 2, std_hours),
+            "INSERT INTO users (name, role, dept, std_hours_am, std_hours_pm, std_hours, display_order) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, role, dept, std_hours / 2, std_hours / 2, std_hours, max_order + 1),
         )
         db.commit()
         return True
@@ -393,6 +401,37 @@ def get_task_master(user_id: int) -> list[dict]:
         (user_id,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_global_task_category_map() -> dict[str, dict[str, str]]:
+    """全ユーザー横断でタスク名→区分情報のマップを取得する。
+
+    同名タスクが複数ユーザーに登録されている場合、最初に見つかった
+    区分情報を採用する（区分が設定されているもの優先）。
+
+    Returns:
+        dict[str, dict[str, str]]: {task_name: {"category_name": ..., "subcategory_name": ...}}
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT DISTINCT tm.task_name,"
+        " tc.name AS category_name,"
+        " ts.name AS subcategory_name"
+        " FROM task_master tm"
+        " LEFT JOIN task_category tc ON tm.category_id = tc.id"
+        " LEFT JOIN task_subcategory ts ON tm.subcategory_id = ts.id"
+        " WHERE tc.name IS NOT NULL"
+        " ORDER BY tm.task_name",
+    ).fetchall()
+    result: dict[str, dict[str, str]] = {}
+    for row in rows:
+        name = row["task_name"]
+        if name not in result:
+            result[name] = {
+                "category_name": row["category_name"] or "",
+                "subcategory_name": row["subcategory_name"] or "",
+            }
+    return result
 
 
 def add_task(
@@ -654,13 +693,13 @@ def get_all_users_schedule_status(
     if dept_filter:
         users = db.execute(
             "SELECT id, name, dept, role, std_hours_am, std_hours_pm, std_hours "
-            "FROM users WHERE dept = ? ORDER BY name ASC",
+            "FROM users WHERE dept = ? ORDER BY display_order ASC, id ASC",
             (dept_filter,),
         ).fetchall()
     else:
         users = db.execute(
             "SELECT id, name, dept, role, std_hours_am, std_hours_pm, std_hours "
-            "FROM users ORDER BY name ASC"
+            "FROM users ORDER BY display_order ASC, id ASC"
         ).fetchall()
 
     result: list[dict] = []

@@ -98,10 +98,9 @@ def login() -> str:
         return resp
 
     users = get_all_users()
-    # 管理職・マスタを名前降順→その他ユーザーを名前降順の順で並べる
-    admins = sorted([u for u in users if is_privileged(u["role"])], key=lambda u: u["name"], reverse=True)
-    others = sorted([u for u in users if not is_privileged(u["role"])], key=lambda u: u["name"], reverse=True)
-    users = admins + others
+    # ログイン画面用: 部署名順 → ロール順（マスタ→管理職→ユーザー）
+    _role_order = {"マスタ": 0, "管理職": 1, "ユーザー": 2}
+    users.sort(key=lambda u: (u.get("dept", ""), _role_order.get(u.get("role", ""), 9)))
 
     # パスワードが設定されている管理職・マスタIDのセット（JS用）
     password_required_ids = [

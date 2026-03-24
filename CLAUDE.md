@@ -1,4 +1,4 @@
-# ScheduleManagement（CRW予定管理システム）— Claude Code 設定
+# ScheduleManagement（予定管理システム）— Claude Code 設定
 
 > **言語ポリシー**：会話・コード生成・コメント・エラー説明は **すべて日本語** で行うこと。
 

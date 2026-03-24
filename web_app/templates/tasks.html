@@ -11,15 +11,15 @@
     <!-- 登録済み作業一覧 -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-light fw-semibold">登録済み作業一覧</div>
-      <div class="card-body p-0">
+      <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
         {% if task_master %}
         <table class="table table-hover mb-0">
-          <thead class="table-secondary">
+          <thead class="table-secondary sticky-top">
             <tr>
-              <th class="ps-3">作業名</th>
-              <th>大区分</th>
-              <th>中区分</th>
-              <th class="text-center" style="width:90px;">標準時間(h)</th>
+              <th class="ps-3 sortable" data-col="0" role="button" title="クリックで並び替え">作業名 <span class="sort-icon">⇅</span></th>
+              <th class="sortable" data-col="1" role="button" title="クリックで並び替え">大区分 <span class="sort-icon">⇅</span></th>
+              <th class="sortable" data-col="2" role="button" title="クリックで並び替え">中区分 <span class="sort-icon">⇅</span></th>
+              <th class="text-center sortable" data-col="3" role="button" title="クリックで並び替え" style="width:90px;">標準時間(h) <span class="sort-icon">⇅</span></th>
               <th class="text-center" style="width:90px;">順序</th>
               <th class="text-center" style="width:70px;">操作</th>
             </tr>
@@ -171,18 +171,18 @@
           {% set sub_list = all_subcategories | selectattr('category_id', 'equalto', cat.id) | list %}
           <div class="accordion-item">
             <h2 class="accordion-header" id="heading-{{ cat.id }}">
-              <button class="accordion-button {% if not loop.first %}collapsed{% endif %} py-2"
+              <button class="accordion-button collapsed py-2"
                       type="button"
                       data-bs-toggle="collapse"
                       data-bs-target="#collapse-{{ cat.id }}"
-                      aria-expanded="{{ 'true' if loop.first else 'false' }}"
+                      aria-expanded="false"
                       aria-controls="collapse-{{ cat.id }}">
                 {{ cat.name }}
                 <span class="badge bg-secondary ms-2">{{ sub_list | length }}</span>
               </button>
             </h2>
             <div id="collapse-{{ cat.id }}"
-                 class="accordion-collapse collapse {% if loop.first %}show{% endif %}"
+                 class="accordion-collapse collapse"
                  aria-labelledby="heading-{{ cat.id }}">
               <div class="accordion-body p-2">
                 {% if sub_list %}
@@ -240,6 +240,38 @@
 {% block scripts %}
 <script>
   document.addEventListener('DOMContentLoaded', function () {
+    // --- 登録済み作業一覧のソート機能 ---
+    var sortState = {};  // {colIndex: 'asc'|'desc'}
+    document.querySelectorAll('th.sortable').forEach(function (th) {
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', function () {
+        var col = parseInt(th.getAttribute('data-col'));
+        var tbody = th.closest('table').querySelector('tbody');
+        if (!tbody) return;
+        var rows = Array.from(tbody.querySelectorAll('tr'));
+        var dir = sortState[col] === 'asc' ? 'desc' : 'asc';
+        sortState = {};
+        sortState[col] = dir;
+        rows.sort(function (a, b) {
+          var aCell = a.children[col];
+          var bCell = b.children[col];
+          if (!aCell || !bCell) return 0;
+          var aVal = aCell.textContent.trim();
+          var bVal = bCell.textContent.trim();
+          // 標準時間列は数値ソート
+          if (col === 3) {
+            var aNum = parseFloat(aVal) || 0;
+            var bNum = parseFloat(bVal) || 0;
+            return dir === 'asc' ? aNum - bNum : bNum - aNum;
+          }
+          return dir === 'asc' ? aVal.localeCompare(bVal, 'ja') : bVal.localeCompare(aVal, 'ja');
+        });
+        rows.forEach(function (row) { tbody.appendChild(row); });
+        // アイコン更新
+        document.querySelectorAll('th.sortable .sort-icon').forEach(function (icon) { icon.textContent = '⇅'; });
+        th.querySelector('.sort-icon').textContent = dir === 'asc' ? '▲' : '▼';
+      });
+    });
     var taskNameInput = document.getElementById('task_name');
     var defaultHoursInput = document.getElementById('default_hours');
     var catSelect = document.getElementById('add_category_id');

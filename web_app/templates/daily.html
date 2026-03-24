@@ -299,7 +299,7 @@
     <div class="col-md-6">
       <div class="card">
         <div class="card-header bg-info text-white py-2">
-          <strong>💬 本日の振り返り</strong>
+          <strong>💬 本日の振り返り{% if session.user_role == '管理職' %}＜要点＞{% endif %}</strong>
         </div>
         <div class="card-body p-2">
           <textarea name="reflection" class="form-control" rows="4"
@@ -310,7 +310,7 @@
     <div class="col-md-6">
       <div class="card">
         <div class="card-header bg-warning text-dark py-2">
-          <strong>⚠️ 今後の対策・懸念事項</strong>
+          <strong>⚠️ 今後の対策・懸念事項{% if session.user_role == '管理職' %}＜朝礼での気づき＞{% endif %}</strong>
         </div>
         <div class="card-body p-2">
           <textarea name="action" class="form-control" rows="4"

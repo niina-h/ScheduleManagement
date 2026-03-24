@@ -444,6 +444,174 @@ def _build_team_week_excel_v2(
     return buf
 
 
+def _build_team_week_from_schedule_tpl(
+    users: list[dict], week_start: str
+) -> io.BytesIO:
+    """週間予定表テンプレートを使用して全メンバーの週間予定を1シートに生成する。
+
+    reports/tpl/週間予定表_テンプレート.xlsx の行4-13をユーザー数分複製し、
+    各ユーザーの予定データを書き込む。
+
+    Args:
+        users: ユーザー情報リスト（id, name を含む）。
+        week_start: 週開始日（'YYYY-MM-DD' 形式）。
+
+    Returns:
+        io.BytesIO: 生成されたExcelファイルのバイトストリーム（先頭にシーク済み）。
+
+    Raises:
+        FileNotFoundError: テンプレートファイルが存在しない場合。
+    """
+    from copy import copy
+    from openpyxl.styles import Font as _Fnt
+
+    wb = openpyxl.load_workbook(str(_SCHEDULE_TPL_PATH))
+    ws = wb["ベース"]
+
+    start = date.fromisoformat(week_start)
+    BLOCK = 10  # 1ユーザー = 10行（AM5行 + PM5行）
+    MAX_COL = 20
+
+    # --- テンプレートブロック（行4-13）の書式を記録 ---
+    tpl_styles: dict[tuple[int, int], dict] = {}
+    for r in range(4, 14):
+        for c in range(1, MAX_COL + 1):
+            src = ws.cell(r, c)
+            tpl_styles[(r - 4, c)] = {
+                "font": copy(src.font),
+                "fill": copy(src.fill),
+                "border": copy(src.border),
+                "alignment": copy(src.alignment),
+                "number_format": src.number_format,
+            }
+
+    tpl_heights: dict[int, float | None] = {}
+    for r in range(4, 14):
+        tpl_heights[r - 4] = ws.row_dimensions[r].height
+
+    # テンプレート内のセル結合を記録（行4-13範囲）
+    tpl_merges: list[tuple[int, int, int, int]] = []
+    for mc in list(ws.merged_cells.ranges):
+        if mc.min_row >= 4 and mc.max_row <= 13:
+            tpl_merges.append((mc.min_row - 4, mc.max_row - 4, mc.min_col, mc.max_col))
+            ws.unmerge_cells(str(mc))
+
+    # 行14以降に残る結合もクリア
+    for mc in list(ws.merged_cells.ranges):
+        if mc.min_row >= 14:
+            ws.unmerge_cells(str(mc))
+
+    # --- ヘッダーの日付を更新 ---
+    ws.cell(1, 4).value = start.strftime("%Y年%m月")
+    date_col_letters = ["D", "G", "J", "M", "P"]
+    for i, col_l in enumerate(date_col_letters):
+        d = start + timedelta(days=i)
+        ws[f"{col_l}2"] = d.strftime("%m/%d")
+
+    # --- テンプレート行4以降をクリア ---
+    for r in range(4, max(ws.max_row + 1, 17)):
+        for c in range(1, MAX_COL + 1):
+            ws.cell(r, c).value = None
+
+    # --- 休暇表示用フォント ---
+    red_font = _Fnt(color="FF0000", bold=True)
+    FULL_DAY_LEAVES = {"1日有休", "特休", "祝日", "その他休み"}
+
+    # --- ユーザーごとにブロックを作成 ---
+    for idx, user in enumerate(users):
+        base_row = 4 + idx * BLOCK
+
+        # 書式を適用
+        for r_off in range(BLOCK):
+            row = base_row + r_off
+            h = tpl_heights.get(r_off)
+            if h is not None:
+                ws.row_dimensions[row].height = h
+            for c in range(1, MAX_COL + 1):
+                cell = ws.cell(row, c)
+                style = tpl_styles.get((r_off, c))
+                if style:
+                    cell.font = style["font"]
+                    cell.fill = style["fill"]
+                    cell.border = style["border"]
+                    cell.alignment = style["alignment"]
+                    cell.number_format = style["number_format"]
+
+        # セル結合を適用
+        for rs, re, cs, ce in tpl_merges:
+            ws.merge_cells(
+                start_row=base_row + rs,
+                end_row=base_row + re,
+                start_column=cs,
+                end_column=ce,
+            )
+
+        # 固定ラベルを書き込み
+        ws.cell(base_row, 1).value = user["name"]
+        ws.cell(base_row, 2).value = "予定/実績"
+        ws.cell(base_row, 3).value = "午前"
+        ws.cell(base_row + 5, 3).value = "午後"
+
+        # スケジュールデータを書き込み
+        schedule = get_weekly_schedule(user["id"], week_start)
+        leave_data = get_weekly_leave(user["id"], week_start)
+
+        for day, (task_col, hours_col) in enumerate(_DAY_COLS):
+            leave = leave_data.get(day, "")
+
+            # ---- 午前セクション（ブロック行0-4） ----
+            am_blocked = leave in FULL_DAY_LEAVES or leave == "AM半休"
+            if leave in FULL_DAY_LEAVES:
+                c = ws.cell(base_row, task_col)
+                c.value = leave
+                c.font = red_font
+            elif leave == "AM半休":
+                c = ws.cell(base_row, task_col)
+                c.value = "AM有休"
+                c.font = red_font
+
+            if not am_blocked:
+                plan_am = schedule.get(day, {}).get("am", [])
+                for i in range(5):
+                    entry = plan_am[i] if i < len(plan_am) else {}
+                    task_name = entry.get("task_name") or ""
+                    hours = entry.get("hours") or 0
+                    if task_name:
+                        ws.cell(base_row + i, task_col).value = task_name
+                    if hours:
+                        ws.cell(base_row + i, hours_col).value = float(hours)
+
+            # ---- 午後セクション（ブロック行5-9） ----
+            pm_blocked = leave in FULL_DAY_LEAVES or leave == "PM半休"
+            if leave == "PM半休":
+                c = ws.cell(base_row + 5, task_col)
+                c.value = "PM有休"
+                c.font = red_font
+
+            if not pm_blocked:
+                plan_pm = schedule.get(day, {}).get("pm", [])
+                for i in range(5):
+                    entry = plan_pm[i] if i < len(plan_pm) else {}
+                    task_name = entry.get("task_name") or ""
+                    hours = entry.get("hours") or 0
+                    if task_name:
+                        ws.cell(base_row + 5 + i, task_col).value = task_name
+                    if hours:
+                        ws.cell(base_row + 5 + i, hours_col).value = float(hours)
+
+    ws.title = "週間予定"
+
+    # 印刷範囲を最終データ行・最終列まで自動設定
+    last_row = 3 + len(users) * BLOCK
+    last_col_letter = get_column_letter(ws.max_column)
+    ws.print_area = f"A1:{last_col_letter}{last_row}"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 def _build_schedule_excel(user: dict, week_start: str, schedule: dict) -> io.BytesIO:
     """週間予定をExcelファイルとして生成しBytesIOで返す（後方互換用）。
 
@@ -469,6 +637,7 @@ def _build_schedule_excel(user: dict, week_start: str, schedule: dict) -> io.Byt
 
 # テンプレートファイルのパス
 _TPL_PATH = Path(__file__).parents[2] / "reports" / "tpl" / "週間予定実績表 .xlsx"
+_SCHEDULE_TPL_PATH = Path(__file__).parents[2] / "reports" / "tpl" / "週間予定表_テンプレート.xlsx"
 
 # 日別の（タスク列番号, 時間列番号）マッピング
 # 月: D(4)merged, F(6) / 火: G(7)merged, I(9) / 水: J(10)merged, L(12)
@@ -1389,10 +1558,7 @@ def export_team_week() -> object:
     week_start = _get_current_week_start()
     login_role: str = session.get("user_role", "")
     login_dept: str = session.get("user_dept", "")
-    if is_master(login_role):
-        users = get_all_users()
-    else:
-        users = get_all_users(dept_filter=login_dept if login_dept else None)
+    users = get_all_users(dept_filter=login_dept if login_dept else None)
 
     if not users:
         flash("対象ユーザーが存在しないためExcelを生成できません", "warning")
@@ -1400,7 +1566,7 @@ def export_team_week() -> object:
 
     dept_label = login_dept if login_dept else "全員"
     try:
-        buf = _build_team_week_excel_v2(users, week_start, dept_label)
+        buf = _build_team_week_from_schedule_tpl(users, week_start)
     except Exception:
         logger.exception("全員週間予定Excel生成中にエラーが発生しました (week=%s)", week_start)
         flash("Excel生成中にエラーが発生しました", "warning")

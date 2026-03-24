@@ -346,7 +346,7 @@ def _migrate_users_from_json(db: sqlite3.Connection) -> None:
 
     row_count = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if row_count > 0:
-        logger.info("usersテーブルにデータが存在するため、移行をスキップします。")
+        logger.debug("usersテーブルにデータが存在するため、移行をスキップします。")
         return
 
     try:
@@ -390,7 +390,7 @@ def init_db(app: Flask) -> None:
     try:
         conn.executescript(_SCHEMA_SQL)
         conn.commit()
-        logger.info("DBスキーマの作成/確認が完了しました。")
+        logger.debug("DBスキーマの作成/確認が完了しました。")
         _migrate_schema(conn)
         _migrate_users_from_json(conn)
     finally:
