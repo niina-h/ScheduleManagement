@@ -473,6 +473,8 @@ def _build_mailto(setting: dict, subject: str, body: str) -> str:
     params: dict[str, str] = {"subject": subject, "body": body}
     if setting.get("cc_address"):
         params["cc"] = setting["cc_address"]
+    if setting.get("bcc_address"):
+        params["bcc"] = setting["bcc_address"]
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
     to = urllib.parse.quote(setting.get("to_address", ""))
     return f"mailto:{to}?{query}"
@@ -560,6 +562,7 @@ def save_address() -> object:
         cc_address=request.form.get("cc_address", "").strip(),
         subject_template=current.get("subject_template", ""),
         body_template=current.get("body_template", ""),
+        bcc_address=request.form.get("bcc_address", "").strip(),
     )
 
     date_str = request.form.get("date_str", "")
@@ -589,6 +592,7 @@ def settings():
                 cc_address=request.form.get(f"{prefix}_cc", "").strip(),
                 subject_template=request.form.get(f"{prefix}_subject", "").strip(),
                 body_template=request.form.get(f"{prefix}_body", "").strip(),
+                bcc_address=request.form.get(f"{prefix}_bcc", "").strip(),
             )
         return redirect(url_for("mail_report_bp.settings"))
 

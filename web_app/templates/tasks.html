@@ -32,7 +32,7 @@
               <th class="sortable" data-col="1" role="button" title="クリックで並び替え">大区分 <span class="sort-icon">⇅</span></th>
               <th class="sortable" data-col="2" role="button" title="クリックで並び替え">中区分 <span class="sort-icon">⇅</span></th>
               <th class="text-center sortable" data-col="3" role="button" title="クリックで並び替え" style="width:90px;">標準時間(h) <span class="sort-icon">⇅</span></th>
-              <th class="text-center" style="width:90px;">順序</th>
+              <th class="text-center" style="width:90px;">順序 <button type="button" id="btn-reset-sort" class="btn btn-link btn-sm p-0 d-none" title="ソート解除して元の順序に戻す">↻</button></th>
               <th class="text-center" style="width:70px;">操作</th>
             </tr>
           </thead>
@@ -44,20 +44,8 @@
               <td class="text-muted small">{{ task.subcategory_name or '—' }}</td>
               <td class="text-center">{{ task.default_hours if task.default_hours else '—' }}</td>
               <td class="text-center">
-                {% if not loop.first %}
-                <form method="post" action="{{ url_for('tasks.move', task_id=task.id, direction='up') }}" class="d-inline">
-                  <button type="submit" class="btn btn-outline-secondary btn-sm px-1" title="上へ">▲</button>
-                </form>
-                {% else %}
-                <span class="btn btn-sm px-1 invisible">▲</span>
-                {% endif %}
-                {% if not loop.last %}
-                <form method="post" action="{{ url_for('tasks.move', task_id=task.id, direction='down') }}" class="d-inline">
-                  <button type="submit" class="btn btn-outline-secondary btn-sm px-1" title="下へ">▼</button>
-                </form>
-                {% else %}
-                <span class="btn btn-sm px-1 invisible">▼</span>
-                {% endif %}
+                <button type="button" class="btn btn-outline-secondary btn-sm px-1 btn-move-up" data-task-id="{{ task.id }}" title="上へ">▲</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm px-1 btn-move-down" data-task-id="{{ task.id }}" title="下へ">▼</button>
               </td>
               <td class="text-center">
                 <form method="post"
@@ -254,6 +242,26 @@
   document.addEventListener('DOMContentLoaded', function () {
     // --- 登録済み作業一覧のソート機能 ---
     var sortState = {};  // {colIndex: 'asc'|'desc'}
+    var isSorted = false;  // ソート中フラグ（▲▼と排他制御）
+
+    var resetSortBtn = document.getElementById('btn-reset-sort');
+
+    function updateMoveButtons() {
+      document.querySelectorAll('.btn-move-up, .btn-move-down').forEach(function(b) {
+        b.disabled = isSorted;
+        b.style.opacity = isSorted ? '0.3' : '1';
+      });
+      if (resetSortBtn) {
+        resetSortBtn.classList.toggle('d-none', !isSorted);
+      }
+    }
+
+    if (resetSortBtn) {
+      resetSortBtn.addEventListener('click', function() {
+        location.reload();  // リロードでDB順に復元（フィルターはsessionStorageで復元）
+      });
+    }
+
     document.querySelectorAll('th.sortable').forEach(function (th) {
       th.style.cursor = 'pointer';
       th.addEventListener('click', function () {
@@ -264,6 +272,7 @@
         var dir = sortState[col] === 'asc' ? 'desc' : 'asc';
         sortState = {};
         sortState[col] = dir;
+        isSorted = true;
         rows.sort(function (a, b) {
           var aCell = a.children[col];
           var bCell = b.children[col];
@@ -282,6 +291,7 @@
         // アイコン更新
         document.querySelectorAll('th.sortable .sort-icon').forEach(function (icon) { icon.textContent = '⇅'; });
         th.querySelector('.sort-icon').textContent = dir === 'asc' ? '▲' : '▼';
+        updateMoveButtons();
       });
     });
     // --- 大区分・中区分フィルター ---
@@ -351,6 +361,47 @@
       if (savedSubcat) filterSubcat.value = savedSubcat;
     }
     applyFilter();  // 初期表示
+
+    // --- 順序変更ボタン（AJAX保存後にリロード、フィルターはsessionStorageで復元） ---
+    function getVisibleRows() {
+      return Array.from(document.querySelectorAll('tbody tr[data-cat]')).filter(function(r) {
+        return r.style.display !== 'none';
+      });
+    }
+
+    document.querySelectorAll('.btn-move-up, .btn-move-down').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (isSorted) return;
+
+        var taskId = parseInt(btn.getAttribute('data-task-id'));
+        var direction = btn.classList.contains('btn-move-up') ? 'up' : 'down';
+        var visibleRows = getVisibleRows();
+        var row = btn.closest('tr');
+        var visIdx = visibleRows.indexOf(row);
+        if (visIdx < 0) return;
+
+        if (direction === 'up' && visIdx === 0) return;
+        if (direction === 'down' && visIdx === visibleRows.length - 1) return;
+
+        var swapRow = direction === 'up' ? visibleRows[visIdx - 1] : visibleRows[visIdx + 1];
+        var swapId = parseInt(swapRow.querySelector('.btn-move-up').getAttribute('data-task-id'));
+
+        // ボタン無効化（二重クリック防止）
+        document.querySelectorAll('.btn-move-up, .btn-move-down').forEach(function(b) { b.disabled = true; });
+
+        // サーバーに保存 → 成功したらリロード（フィルターはsessionStorageで復元）
+        fetch('{{ url_for("tasks.swap_order") }}', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({task_id_a: taskId, task_id_b: swapId})
+        }).then(function(res) {
+          if (res.ok) location.reload();
+        }).catch(function() {
+          document.querySelectorAll('.btn-move-up, .btn-move-down').forEach(function(b) { b.disabled = false; });
+        });
+      });
+    });
 
     var taskNameInput = document.getElementById('task_name');
     var defaultHoursInput = document.getElementById('default_hours');

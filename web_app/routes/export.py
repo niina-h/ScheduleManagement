@@ -1977,14 +1977,11 @@ def download_team_report() -> object:
     next_dow: int = next_date.weekday()
 
     try:
-        wb_tpl = openpyxl.load_workbook(REPORT_TPL)
-        ws_tpl = wb_tpl["日次業務報告"]
+        # テンプレートを直接操作し、同一ワークブック内でシートをコピーする
+        wb = openpyxl.load_workbook(str(REPORT_TPL))
+        ws_tpl = wb["日次業務報告"]
 
-        wb_out = openpyxl.Workbook()
-        # デフォルトシートを削除
-        wb_out.remove(wb_out.active)
-
-        for member in members:
+        for idx, member in enumerate(members):
             schedule: dict = get_weekly_schedule(member["id"], week_start)
             day_sch_m: dict = schedule.get(day_of_week, {"am": [], "pm": []})
             schedule_am: list = day_sch_m.get("am", [])
@@ -1998,11 +1995,16 @@ def download_team_report() -> object:
             next_am: list = next_day_sch_m.get("am", [])
             next_pm: list = next_day_sch_m.get("pm", [])
 
-            # テンプレートシートをコピーしてシート名を設定
-            ws_new = wb_out.copy_worksheet(ws_tpl)
+            if idx == 0:
+                # 最初のメンバーはテンプレートシートをそのまま使用
+                ws_new = ws_tpl
+            else:
+                # 同一ワークブック内でコピー
+                ws_new = wb.copy_worksheet(ws_tpl)
+
             sheet_title: str = member["name"][:10]
             # 同名シート回避
-            existing_titles: list[str] = [s.title for s in wb_out.worksheets]
+            existing_titles: list[str] = [s.title for s in wb.worksheets]
             if sheet_title in existing_titles:
                 for n in range(2, 100):
                     candidate: str = f"{sheet_title}({n})"[:31]
@@ -2019,7 +2021,7 @@ def download_team_report() -> object:
             )
 
         buf = io.BytesIO()
-        wb_out.save(buf)
+        wb.save(buf)
         buf.seek(0)
     except Exception:
         logger.exception(

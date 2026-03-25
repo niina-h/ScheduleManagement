@@ -5,6 +5,7 @@ from flask import (
     Blueprint,
     abort,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -172,6 +173,37 @@ def move(task_id: int, direction: str) -> str:
         update_task_order(tid, user_id, order)
 
     return redirect(url_for("tasks.task_list"))
+
+
+@tasks_bp.route("/swap-order", methods=["POST"])
+def swap_order():
+    """2つの作業のdisplay_orderを入れ替える（AJAX対応・JSON応答）。
+
+    Returns:
+        Response: 成功時は {"ok": true}、失敗時は {"ok": false} のJSON。
+    """
+    redir = _require_login()
+    if redir is not None:
+        return jsonify(ok=False), 401
+
+    user_id: int = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    task_id_a = data.get("task_id_a")
+    task_id_b = data.get("task_id_b")
+    if not task_id_a or not task_id_b:
+        return jsonify(ok=False), 400
+
+    tasks = get_task_master(user_id)
+    order_map = {t["id"]: i for i, t in enumerate(tasks)}
+
+    if task_id_a not in order_map or task_id_b not in order_map:
+        return jsonify(ok=False), 404
+
+    # 2つのタスクのdisplay_orderを入れ替え
+    update_task_order(task_id_a, user_id, order_map[task_id_b])
+    update_task_order(task_id_b, user_id, order_map[task_id_a])
+
+    return jsonify(ok=True)
 
 
 # ---------------------------------------------------------------------------

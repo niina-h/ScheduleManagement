@@ -1704,12 +1704,12 @@ def get_mail_setting(role: str) -> dict:
         role: 役職名（'管理職' または 'マスタ'）
 
     Returns:
-        dict: {role, to_address, cc_address, subject_template, body_template}
+        dict: {role, to_address, cc_address, bcc_address, subject_template, body_template}
               レコードが存在しない場合は空文字列を返す。
     """
     db = get_db()
     row = db.execute(
-        "SELECT role, to_address, cc_address, subject_template, body_template"
+        "SELECT role, to_address, cc_address, bcc_address, subject_template, body_template"
         " FROM mail_settings WHERE role = ?",
         (role,),
     ).fetchone()
@@ -1719,6 +1719,7 @@ def get_mail_setting(role: str) -> dict:
         "role": role,
         "to_address": "",
         "cc_address": "",
+        "bcc_address": "",
         "subject_template": "",
         "body_template": "",
     }
@@ -1730,6 +1731,7 @@ def save_mail_setting(
     cc_address: str,
     subject_template: str,
     body_template: str,
+    bcc_address: str = "",
 ) -> None:
     """指定役職のメール設定を保存する（INSERT OR REPLACE）。
 
@@ -1739,12 +1741,13 @@ def save_mail_setting(
         cc_address: CC宛先（複数はセミコロン区切り）
         subject_template: 件名テンプレート
         body_template: 本文テンプレート
+        bcc_address: BCC宛先（複数はセミコロン区切り）
     """
     db = get_db()
     db.execute(
         "INSERT OR REPLACE INTO mail_settings"
-        " (role, to_address, cc_address, subject_template, body_template)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (role, to_address, cc_address, subject_template, body_template),
+        " (role, to_address, cc_address, bcc_address, subject_template, body_template)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (role, to_address, cc_address, bcc_address, subject_template, body_template),
     )
     db.commit()

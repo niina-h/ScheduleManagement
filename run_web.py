@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+import os
+
+os.environ["FLASK_ENV_LABEL"] = "DEV"
 
 from web_app.app import create_app
 

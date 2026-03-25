@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS mail_settings (
     role TEXT PRIMARY KEY,
     to_address TEXT DEFAULT '',
     cc_address TEXT DEFAULT '',
+    bcc_address TEXT DEFAULT '',
     subject_template TEXT DEFAULT '',
     body_template TEXT DEFAULT ''
 );
@@ -298,11 +299,18 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
                 role TEXT PRIMARY KEY,
                 to_address TEXT DEFAULT '',
                 cc_address TEXT DEFAULT '',
+                bcc_address TEXT DEFAULT '',
                 subject_template TEXT DEFAULT '',
                 body_template TEXT DEFAULT ''
             )
         """)
         logger.info("mail_settings テーブルを作成しました。")
+
+    # mail_settings に bcc_address カラムを追加（なければ）
+    ms_cols = {row[1] for row in db.execute("PRAGMA table_info(mail_settings)").fetchall()}
+    if "bcc_address" not in ms_cols:
+        db.execute("ALTER TABLE mail_settings ADD COLUMN bcc_address TEXT DEFAULT ''")
+        logger.info("mail_settings.bcc_address カラムを追加しました。")
 
     # デフォルトデータ挿入（なければ）
     db.execute("""

@@ -1,6 +1,7 @@
 """web_app/app.py - Flaskアプリケーションファクトリ"""
 from __future__ import annotations
 
+import os
 import secrets
 
 from flask import Flask, redirect, session, url_for, Response
@@ -57,6 +58,7 @@ def create_app() -> Flask:
             "csrf_token": session.get("csrf_token", ""),
             "app_version": APP_VERSION,
             "app_release_date": APP_RELEASE_DATE,
+            "env_label": os.environ.get("FLASK_ENV_LABEL", ""),
         }
 
     @app.route("/")

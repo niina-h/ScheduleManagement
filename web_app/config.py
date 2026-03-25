@@ -5,7 +5,7 @@ import pathlib
 from datetime import timedelta
 
 
-APP_VERSION: str = "1.5.1"
+APP_VERSION: str = "1.5.2"
 APP_RELEASE_DATE: str = "2026-03-25"
 
 # プロジェクトルート

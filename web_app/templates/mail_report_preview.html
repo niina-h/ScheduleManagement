@@ -37,15 +37,20 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="role" value="{{ role }}">
             <input type="hidden" name="date_str" value="{{ date_str }}">
-            <div class="col-sm-5">
+            <div class="col-sm-4">
               <label class="form-label small fw-semibold mb-1">TO</label>
               <input type="text" class="form-control form-control-sm" name="to_address"
                      value="{{ setting.to_address }}" placeholder="a@b.com;c@d.com">
             </div>
-            <div class="col-sm-5">
+            <div class="col-sm-3">
               <label class="form-label small fw-semibold mb-1">CC</label>
               <input type="text" class="form-control form-control-sm" name="cc_address"
                      value="{{ setting.cc_address }}" placeholder="a@b.com;c@d.com">
+            </div>
+            <div class="col-sm-3">
+              <label class="form-label small fw-semibold mb-1">BCC</label>
+              <input type="text" class="form-control form-control-sm" name="bcc_address"
+                     value="{{ setting.bcc_address }}" placeholder="a@b.com;c@d.com">
             </div>
             <div class="col-sm-2">
               <button type="submit" class="btn btn-outline-primary btn-sm w-100">保存</button>

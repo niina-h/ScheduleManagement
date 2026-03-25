@@ -26,6 +26,12 @@
             <input type="text" class="form-control" name="mgr_cc"
                    value="{{ mgr_setting.cc_address }}" placeholder="example@company.com">
           </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">BCC</label>
+            <input type="text" class="form-control" name="mgr_bcc"
+                   value="{{ mgr_setting.bcc_address }}" placeholder="example@company.com">
+            <div class="form-text">BCCに追加する宛先（受信者には表示されません）</div>
+          </div>
           <p class="text-muted small mb-0">
             ※ 件名・本文は固定テンプレートで自動生成されます（設定不要）。
           </p>
@@ -48,6 +54,12 @@
             <label class="form-label fw-semibold">CC</label>
             <input type="text" class="form-control" name="master_cc"
                    value="{{ master_setting.cc_address }}" placeholder="example@company.com">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">BCC</label>
+            <input type="text" class="form-control" name="master_bcc"
+                   value="{{ master_setting.bcc_address }}" placeholder="example@company.com">
+            <div class="form-text">BCCに追加する宛先（受信者には表示されません）</div>
           </div>
           <div class="mb-3">
             <label class="form-label fw-semibold">宛先挨拶文（本文冒頭）</label>
