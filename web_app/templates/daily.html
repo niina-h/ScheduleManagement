@@ -146,13 +146,18 @@
                 <td class="text-center">{{ i + 1 }}</td>
                 <td style="position:relative;">
                   <div class="d-flex align-items-center gap-1">
+                    {% if result_meta %}
+                    {% set am_task_val = r_cell.task_name %}
+                    {% else %}
+                    {% set am_task_val = r_cell.task_name if r_cell.task_name else s_cell.task_name %}
+                    {% endif %}
                     <input type="text" list="task-list"
                            name="result_task_am_{{ i }}"
-                           value="{{ r_cell.task_name if r_cell.task_name else s_cell.task_name }}"
+                           value="{{ am_task_val }}"
                            class="form-control form-control-sm result-task"
                            data-slot="am"
                            data-nav-idx="{{ i * 2 }}"
-                           placeholder="作業名"
+                           placeholder="{{ s_cell.task_name if s_cell.task_name else '作業名' }}"
                            autocomplete="off"
                            {% if am_off %}disabled{% endif %}>
                     {% set dd = r_cell.defer_date if r_cell.defer_date else '' %}
@@ -177,13 +182,18 @@
                   </div>
                 </td>
                 <td>
+                  {% if result_meta %}
+                  {% set am_hours_val = r_cell.hours if (r_cell.task_name or r_cell.defer_date) else '' %}
+                  {% else %}
+                  {% set am_hours_val = s_cell.hours if s_cell.task_name else '' %}
+                  {% endif %}
                   <input type="number" step="0.25" min="0" max="24"
                          name="result_hours_am_{{ i }}"
-                         value="{{ r_cell.hours if (r_cell.task_name or r_cell.defer_date) else (s_cell.hours if s_cell.hours else '') }}"
+                         value="{{ am_hours_val }}"
                          class="form-control form-control-sm result-hours" style="min-width:75px;"
                          data-slot="am"
                          data-nav-idx="{{ i * 2 + 1 }}"
-                         placeholder="h"
+                         placeholder="{{ s_cell.hours if s_cell.hours else 'h' }}"
                          {% if am_off %}disabled{% endif %}>
                 </td>
               </tr>
@@ -199,13 +209,18 @@
                 <td class="text-center">{{ i + 1 }}</td>
                 <td style="position:relative;">
                   <div class="d-flex align-items-center gap-1">
+                    {% if result_meta %}
+                    {% set pm_task_val = r_cell.task_name %}
+                    {% else %}
+                    {% set pm_task_val = r_cell.task_name if r_cell.task_name else s_cell.task_name %}
+                    {% endif %}
                     <input type="text" list="task-list"
                            name="result_task_pm_{{ i }}"
-                           value="{{ r_cell.task_name if r_cell.task_name else s_cell.task_name }}"
+                           value="{{ pm_task_val }}"
                            class="form-control form-control-sm result-task"
                            data-slot="pm"
                            data-nav-idx="{{ (i + 5) * 2 }}"
-                           placeholder="作業名"
+                           placeholder="{{ s_cell.task_name if s_cell.task_name else '作業名' }}"
                            autocomplete="off"
                            {% if pm_off %}disabled{% endif %}>
                     {% set dd = r_cell.defer_date if r_cell.defer_date else '' %}
@@ -230,13 +245,18 @@
                   </div>
                 </td>
                 <td>
+                  {% if result_meta %}
+                  {% set pm_hours_val = r_cell.hours if (r_cell.task_name or r_cell.defer_date) else '' %}
+                  {% else %}
+                  {% set pm_hours_val = s_cell.hours if s_cell.task_name else '' %}
+                  {% endif %}
                   <input type="number" step="0.25" min="0" max="24"
                          name="result_hours_pm_{{ i }}"
-                         value="{{ r_cell.hours if (r_cell.task_name or r_cell.defer_date) else (s_cell.hours if s_cell.hours else '') }}"
+                         value="{{ pm_hours_val }}"
                          class="form-control form-control-sm result-hours" style="min-width:75px;"
                          data-slot="pm"
                          data-nav-idx="{{ (i + 5) * 2 + 1 }}"
-                         placeholder="h"
+                         placeholder="{{ s_cell.hours if s_cell.hours else 'h' }}"
                          {% if pm_off %}disabled{% endif %}>
                 </td>
               </tr>

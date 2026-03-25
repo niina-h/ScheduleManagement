@@ -302,11 +302,7 @@ document.querySelectorAll('.task-input, .hours-input').forEach(inp => {
 // 休暇セレクト: 当日は常に無効、過去日は実績ありの場合のみ無効
 document.querySelectorAll('.leave-select').forEach(sel => {
     if (!sel.dataset.date) return;
-    if (sel.dataset.date === TODAY) {
-        // 当日は常に無効（背景白）
-        sel.disabled = true;
-        sel.style.backgroundColor = '#ffffff';
-    } else if (sel.dataset.date < TODAY) {
+    if (sel.dataset.date < TODAY) {
         // 過去日: 実績がある場合のみ無効
         const dayIdx = parseInt(sel.dataset.day);
         const hasResult = WEEK_RESULTS[dayIdx] && WEEK_RESULTS[dayIdx].has_result;

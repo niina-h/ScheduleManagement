@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import secrets
 
-from flask import Flask, redirect, session, url_for
+from flask import Flask, redirect, session, url_for, Response
 
 from .config import Config, APP_VERSION, APP_RELEASE_DATE
 from .database import close_db, init_db
@@ -35,6 +35,14 @@ def create_app() -> Flask:
     app.register_blueprint(daily_bp)
     app.register_blueprint(help_bp)
     app.register_blueprint(mail_report_bp)
+
+    @app.after_request
+    def _no_cache(response: Response) -> Response:
+        """HTMLレスポンスのブラウザキャッシュを無効化する。"""
+        if "text/html" in response.content_type:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+        return response
 
     @app.before_request
     def _ensure_csrf_token() -> None:

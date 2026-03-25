@@ -209,11 +209,15 @@ def _build_master_body(
             "scheduled_tasks": scheduled_tasks,
         })
 
-    # 全メンバーの標準時間合計（作業率・実績率計算用）
-    total_std_hours = sum(
-        float(md["member"].get("std_hours") or 8.0)
-        for md in member_data
-    )
+    # 全メンバーの予定時間合計（週間スケジュールの入力時間）
+    total_planned_hours = 0.0
+    for md in member_data:
+        schedule_data = get_weekly_schedule(md["member"]["id"], week_start_str)
+        for slot in ("am", "pm"):
+            for item in schedule_data.get(target_dow, {}).get(slot, []):
+                h = float(item.get("hours", 0.0))
+                if item.get("task_name", "").strip() and h > 0:
+                    total_planned_hours += h
 
     # 計画/突発/リスケ の時間集計
     plan_hours = 0.0
@@ -235,11 +239,14 @@ def _build_master_body(
                 else:
                     sudden_hours += hours
 
-    # 内訳%は総実績時間ベース、実績%は内訳の合計
-    plan_rate = int(plan_hours / total_actual_hours * 100) if total_actual_hours > 0 else 0
-    sudden_rate = int(sudden_hours / total_actual_hours * 100) if total_actual_hours > 0 else 0
-    resc_rate = int(resc_hours / total_actual_hours * 100) if total_actual_hours > 0 else 0
-    jisseki_rate = plan_rate + sudden_rate + resc_rate
+    # 予定時間ベース（実績% = 計画% + 突発% + リスケ%）
+    if total_planned_hours > 0:
+        plan_rate = round(plan_hours / total_planned_hours * 100)
+        sudden_rate = round(sudden_hours / total_planned_hours * 100)
+        resc_rate = round(resc_hours / total_planned_hours * 100)
+        jisseki_rate = plan_rate + sudden_rate + resc_rate
+    else:
+        plan_rate = sudden_rate = resc_rate = jisseki_rate = 0
 
     # タスク別時間集計（同名タスクは合算）: {(cat_name, subcat_name, task_name): hours}
     task_hours: dict[tuple[str, str, str], float] = {}
@@ -280,7 +287,7 @@ def _build_master_body(
             matched: list[str] = []
             for (c, s, t), h in task_hours.items():
                 if c == cat_name and s == subcat_name:
-                    rate = int(h / total_std_hours * 100) if total_std_hours > 0 else 0
+                    rate = int(h / total_planned_hours * 100) if total_planned_hours > 0 else 0
                     matched.append(f"{t} {rate}%")
             if matched:
                 content_lines.append(f"  {subcat_name}　{'、'.join(matched)}")
@@ -291,7 +298,7 @@ def _build_master_body(
     other_tasks: list[str] = []
     for (c, s, t), h in task_hours.items():
         if c == "その他":
-            rate = int(h / total_std_hours * 100) if total_std_hours > 0 else 0
+            rate = int(h / total_planned_hours * 100) if total_planned_hours > 0 else 0
             other_tasks.append(f"{t} {rate}%")
     if other_tasks:
         content_lines.append(f"・その他")
@@ -352,23 +359,28 @@ def _build_master_body(
     ]
     ai_section = "\n".join(ai_lines) if ai_lines else "  （AI開発作業なし）"
 
-    # ＜次回予定＞: マスタ自身の翌稼働日予定
+    # ＜次回予定＞: マスタ自身の翌稼働日予定（定例作業は除外）
     next_day = _next_workday(target_date)
     next_dow = next_day.weekday()
     next_week_start = (next_day - timedelta(days=next_dow)).isoformat()
     next_schedule_data = get_weekly_schedule(login_id, next_week_start)
+    # マスタ自身の区分マップを取得
+    master_md = next((md for md in member_data if md["member"]["id"] == login_id), None)
+    master_tcm = master_md["task_cat_map"] if master_md else {}
     next_seen_list: list[str] = []
     for slot in ("am", "pm"):
         for item in next_schedule_data.get(next_dow, {}).get(slot, []):
             t = item.get("task_name", "").strip()
             if t and t not in next_seen_list:
-                next_seen_list.append(t)
+                if master_tcm.get(t, {}).get("subcategory_name") != "定例作業":
+                    next_seen_list.append(t)
     next_schedule = "\n".join(f"・{t}" for t in next_seen_list) if next_seen_list else "（予定未入力）"
 
     # 本文組み立て
     parts: list[str] = []
     if greeting.strip():
         parts.append(greeting.strip())
+        parts.append("")
     parts.extend([
         f"お疲れ様です。{dept}の業務報告となります。",
         "",

@@ -10,7 +10,19 @@
 
     <!-- 登録済み作業一覧 -->
     <div class="card shadow-sm mb-4">
-      <div class="card-header bg-light fw-semibold">登録済み作業一覧</div>
+      <div class="card-header bg-light fw-semibold d-flex align-items-center gap-2 flex-wrap">
+        <span>登録済み作業一覧</span>
+        <select id="filter-category" class="form-select form-select-sm" style="width:auto;min-width:120px;">
+          <option value="">大区分：すべて</option>
+          {% for cat in categories %}
+          <option value="{{ cat.name }}">{{ cat.name }}</option>
+          {% endfor %}
+        </select>
+        <select id="filter-subcategory" class="form-select form-select-sm" style="width:auto;min-width:120px;">
+          <option value="">中区分：すべて</option>
+        </select>
+        <span id="filter-count" class="text-muted small ms-auto"></span>
+      </div>
       <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
         {% if task_master %}
         <table class="table table-hover mb-0">
@@ -26,7 +38,7 @@
           </thead>
           <tbody>
             {% for task in task_master %}
-            <tr>
+            <tr data-cat="{{ task.category_name or '' }}" data-subcat="{{ task.subcategory_name or '' }}">
               <td class="ps-3">{{ task.task_name }}</td>
               <td class="text-muted small">{{ task.category_name or '—' }}</td>
               <td class="text-muted small">{{ task.subcategory_name or '—' }}</td>
@@ -272,6 +284,74 @@
         th.querySelector('.sort-icon').textContent = dir === 'asc' ? '▲' : '▼';
       });
     });
+    // --- 大区分・中区分フィルター ---
+    var filterCat = document.getElementById('filter-category');
+    var filterSubcat = document.getElementById('filter-subcategory');
+    var filterCount = document.getElementById('filter-count');
+    var taskRows = document.querySelectorAll('tbody tr[data-cat]');
+
+    // 中区分の全選択肢を大区分ごとに収集
+    var subcatByCat = {};
+    taskRows.forEach(function(row) {
+      var cat = row.getAttribute('data-cat');
+      var sub = row.getAttribute('data-subcat');
+      if (cat && sub) {
+        if (!subcatByCat[cat]) subcatByCat[cat] = new Set();
+        subcatByCat[cat].add(sub);
+      }
+    });
+
+    function updateSubcatOptions() {
+      var selectedCat = filterCat.value;
+      filterSubcat.innerHTML = '<option value="">中区分：すべて</option>';
+      if (selectedCat && subcatByCat[selectedCat]) {
+        Array.from(subcatByCat[selectedCat]).sort(function(a,b){ return a.localeCompare(b,'ja'); }).forEach(function(name) {
+          var opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          filterSubcat.appendChild(opt);
+        });
+      }
+    }
+
+    function applyFilter() {
+      var catVal = filterCat.value;
+      var subVal = filterSubcat.value;
+      var shown = 0;
+      taskRows.forEach(function(row) {
+        var rowCat = row.getAttribute('data-cat');
+        var rowSub = row.getAttribute('data-subcat');
+        var visible = true;
+        if (catVal && rowCat !== catVal) visible = false;
+        if (subVal && rowSub !== subVal) visible = false;
+        row.style.display = visible ? '' : 'none';
+        if (visible) shown++;
+      });
+      filterCount.textContent = (catVal || subVal) ? shown + ' / ' + taskRows.length + ' 件' : taskRows.length + ' 件';
+    }
+
+    filterCat.addEventListener('change', function() {
+      updateSubcatOptions();
+      filterSubcat.value = '';
+      sessionStorage.setItem('taskFilterCat', filterCat.value);
+      sessionStorage.removeItem('taskFilterSubcat');
+      applyFilter();
+    });
+    filterSubcat.addEventListener('change', function() {
+      sessionStorage.setItem('taskFilterSubcat', filterSubcat.value);
+      applyFilter();
+    });
+
+    // sessionStorageから前回の選択を復元
+    var savedCat = sessionStorage.getItem('taskFilterCat');
+    var savedSubcat = sessionStorage.getItem('taskFilterSubcat');
+    if (savedCat) {
+      filterCat.value = savedCat;
+      updateSubcatOptions();
+      if (savedSubcat) filterSubcat.value = savedSubcat;
+    }
+    applyFilter();  // 初期表示
+
     var taskNameInput = document.getElementById('task_name');
     var defaultHoursInput = document.getElementById('default_hours');
     var catSelect = document.getElementById('add_category_id');

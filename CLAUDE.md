@@ -12,6 +12,7 @@
 | 技術 | Python / Flask / SQLite / Bootstrap 5 / openpyxl |
 | 起動 | `python run_web.py` |
 | URL  | http://localhost:5000 |
+| TOP画面 | 週間予定画面（ログイン後のデフォルト画面） |
 
 ---
 
