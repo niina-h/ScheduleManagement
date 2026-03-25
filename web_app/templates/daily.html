@@ -764,9 +764,11 @@ document.querySelectorAll('.result-task').forEach(inp => {
 
         if (!taskInput || taskInput.disabled) continue;
 
-        // 全フィールドを空にする（保存後のリロードで予定値が表示される）
-        taskInput.value  = '';
-        hoursInput.value = '';
+        // 予定値をコピーして反映（予定なしの場合は空）
+        const schedTask  = taskInput.placeholder || '';
+        const schedHours = hoursInput.placeholder || '';
+        taskInput.value  = (schedTask === '作業名') ? '' : schedTask;
+        hoursInput.value = (schedHours === 'h') ? '' : schedHours;
         hoursInput.step  = '0.25';
 
         // リスケ解除

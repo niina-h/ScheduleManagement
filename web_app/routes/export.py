@@ -1531,7 +1531,7 @@ def export_my() -> object:
     schedule = get_weekly_schedule(user["id"], week_start)
     buf = _build_schedule_excel(user, week_start, schedule)
 
-    filename = f"schedule_{user['name']}_{week_start}.xlsx"
+    filename = f"schedule_{user['name']}_{date.today().isoformat()}.xlsx"
     return send_file(
         buf,
         as_attachment=True,
@@ -1618,14 +1618,18 @@ def export_user(user_id: int) -> object:
     if not can_access_user(login_user, dict(user)):
         abort(403)
 
+    mode: str = request.args.get("mode", "plan")
+    if mode not in ("plan", "result"):
+        mode = "plan"
+
     try:
-        buf = _build_schedule_excel_from_tpl(user, week_start, mode="plan")
+        buf = _build_schedule_excel_from_tpl(user, week_start, mode=mode)
     except Exception:
         logger.exception("テンプレートExcel生成に失敗しました。フォールバック出力を使用します (user_id=%d)", user_id)
         schedule = get_weekly_schedule(user["id"], week_start)
         buf = _build_schedule_excel(user, week_start, schedule)
 
-    filename = f"週間予定実績表_{user['name']}_{week_start}.xlsx"
+    filename = f"週間予定実績表_{user['name']}_{date.today().isoformat()}.xlsx"
     return send_file(
         buf,
         as_attachment=True,
@@ -1683,7 +1687,7 @@ def export_multi_week() -> object:
         wb.save(buf)
         buf.seek(0)
 
-    filename = f"週間予定実績表_{user['name']}_{week_start}.xlsx"
+    filename = f"週間予定実績表_{user['name']}_{date.today().isoformat()}.xlsx"
     return send_file(
         buf,
         as_attachment=True,

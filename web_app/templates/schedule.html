@@ -43,7 +43,7 @@
 
   {% if has_data %}
   <a id="excel-export-link"
-     href="{{ url_for('export_bp.export_multi_week') }}?week={{ week_start }}&mode=result"
+     href="{% if is_admin_view is defined and is_admin_view %}{{ url_for('export_bp.export_user', user_id=target_user_id) }}?week={{ week_start }}&mode=result{% else %}{{ url_for('export_bp.export_multi_week') }}?week={{ week_start }}&mode=result{% endif %}"
      class="btn btn-outline-success btn-sm"
      onclick="isDirty = false;">
     📥 Excelダウンロード（前週・今週・来週）

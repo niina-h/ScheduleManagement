@@ -5,8 +5,8 @@ import pathlib
 from datetime import timedelta
 
 
-APP_VERSION: str = "1.4.0"
-APP_RELEASE_DATE: str = "2026-03-24"
+APP_VERSION: str = "1.5.1"
+APP_RELEASE_DATE: str = "2026-03-25"
 
 # プロジェクトルート
 _BASE_DIR: pathlib.Path = pathlib.Path(__file__).parent.parent

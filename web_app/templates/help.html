@@ -9,7 +9,9 @@
   <li class="nav-item"><button class="nav-link {% if page_name == 'index' or page_name == 'login' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-login" type="button">ログイン</button></li>
   <li class="nav-item"><button class="nav-link {% if page_name == 'schedule' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-schedule" type="button">週間予定</button></li>
   <li class="nav-item"><button class="nav-link {% if page_name == 'daily' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-daily" type="button">日次実績</button></li>
+  <li class="nav-item"><button class="nav-link {% if page_name == 'tasks' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-tasks" type="button">作業登録</button></li>
   <li class="nav-item"><button class="nav-link {% if page_name == 'export' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-export" type="button">Excel出力</button></li>
+  <li class="nav-item"><button class="nav-link {% if page_name == 'mail_report' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-mail" type="button">メール日報</button></li>
   <li class="nav-item"><button class="nav-link {% if page_name == 'admin' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-admin" type="button">管理者機能</button></li>
   <li class="nav-item"><button class="nav-link {% if page_name == 'version' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-version" type="button">バージョン</button></li>
 </ul>
@@ -67,6 +69,11 @@
         <li>時間は <strong>0.25時間（15分）単位</strong> で入力してください。</li>
         <li>「保存」ボタンで実績を保存します。保存後、週間予定の「📊 実績」ボタンに反映されます。</li>
       </ol>
+      <div class="alert alert-info py-2 small">
+        💡 <strong>予定値の自動反映</strong><br>
+        実績が未登録の場合、予定の作業名・時間が自動的に実績欄に反映されます。そのまま保存すれば予定通りの実績として登録されます。<br>
+        一度保存した後は、保存済みの実績値のみ表示されます（予定値は薄灰色のプレースホルダーとして参考表示）。
+      </div>
       <div class="alert alert-warning py-2 small">⚠️ 実績は当日のみ編集可能です。過去の実績は管理者のみ修正できます。</div>
 
       <h6 class="mt-3">📅 リスケ（予定していたが全く作業できなかった場合）</h6>
@@ -93,7 +100,34 @@
 
       <h6 class="mt-3">実績クリアボタン</h6>
       <ul>
-        <li>「実績クリア」を押すと入力内容をすべて空にして保存します（振り返り・対策・上司コメントは保持されます）。</li>
+        <li>「実績クリア」を押すと実績を予定の値に戻して保存します。予定通りの状態から再編集できます（振り返り・対策・上司コメントは保持されます）。</li>
+      </ul>
+    </div></div>
+  </div>
+
+  <!-- 作業登録 -->
+  <div class="tab-pane fade {% if page_name == 'tasks' %}show active{% endif %}" id="tab-tasks">
+    <div class="card"><div class="card-body">
+      <h5 class="card-title">📝 作業登録の使い方</h5>
+      <h6>作業の登録</h6>
+      <ol>
+        <li>ナビバーの「作業登録」からアクセスします。</li>
+        <li>作業名を入力し、大区分・中区分を選択します（任意）。</li>
+        <li>デフォルト作業時間を設定すると、週間予定で自動入力されます（任意）。</li>
+        <li>「追加」ボタンで登録します。</li>
+      </ol>
+      <h6 class="mt-3">登録済み作業一覧</h6>
+      <ul>
+        <li>登録した作業がテーブルで一覧表示されます。</li>
+        <li><strong>大区分・中区分フィルター</strong>：テーブル上部のプルダウンで絞り込みできます。フィルター選択は削除・並び替え後も保持されます。</li>
+        <li><strong>列ソート</strong>：テーブルヘッダーをクリックすると昇順・降順で並び替えできます。</li>
+        <li><strong>並び順の変更</strong>：▲▼ボタンで表示順を変更できます。この順序が週間予定の入力候補の順番に反映されます。</li>
+        <li><strong>削除</strong>：不要な作業は削除ボタンで削除できます。</li>
+      </ul>
+      <h6 class="mt-3">大区分・中区分の管理</h6>
+      <ul>
+        <li>管理職・マスタ権限のユーザーは作業登録画面から大区分・中区分を追加・削除できます。</li>
+        <li>大区分を削除すると、その配下の中区分もすべて削除されます。</li>
       </ul>
     </div></div>
   </div>
@@ -109,6 +143,30 @@
         <li><strong>実績モード</strong>（📊 実績）で出力すると実績入力済みの日は実績値で記載されます。</li>
       </ol>
       <div class="alert alert-info py-2 small">💡 出力前に「📋 予定」「📊 実績」ボタンで表示を切り替えると、その内容でExcelが出力されます。</div>
+    </div></div>
+  </div>
+
+  <!-- メール日報 -->
+  <div class="tab-pane fade {% if page_name == 'mail_report' %}show active{% endif %}" id="tab-mail">
+    <div class="card"><div class="card-body">
+      <h5 class="card-title">📧 メール日報の使い方</h5>
+      <h6>基本操作</h6>
+      <ol>
+        <li>日次実績画面の「📧 メール日報」ボタンからアクセスします。</li>
+        <li>当日の実績を元にメール本文が自動生成されます。</li>
+        <li>内容を確認し、必要に応じて編集してください。</li>
+        <li>「メール送信」ボタンでOutlookからメール送信します。</li>
+      </ol>
+      <h6 class="mt-3">日報の内容</h6>
+      <ul>
+        <li><strong>本日の実績</strong>：実績入力済みの作業が達成率とともに表示されます。達成率は予定時間に対する実績時間の割合です。</li>
+        <li><strong>翌営業日の予定</strong>：翌営業日の週間予定が表示されます（定例作業は除外）。</li>
+        <li><strong>振り返り・対策</strong>：日次実績で入力した内容が反映されます。</li>
+      </ul>
+      <h6 class="mt-3">メール設定</h6>
+      <ul>
+        <li>管理画面からメール送信先（TO/CC）を設定できます。</li>
+      </ul>
     </div></div>
   </div>
 
@@ -161,7 +219,37 @@
         </thead>
         <tbody>
           <tr>
-            <td><span class="badge bg-primary">1.3.0</span></td>
+            <td><span class="badge bg-primary">1.5.1</span></td>
+            <td>2026-03-25</td>
+            <td>
+              メール日報の本文末尾にログインユーザー名を自動挿入<br>
+              管理者がメンバー切替中にExcel出力するとエラーになる不具合を修正<br>
+              Excelダウンロードのファイル名を出力日の日付に変更<br>
+              実績クリア時に予定値をコピーして編集可能な状態に戻すよう修正
+            </td>
+          </tr>
+          <tr>
+            <td><span class="badge bg-secondary">1.5.0</span></td>
+            <td>2026-03-25</td>
+            <td>
+              作業一覧に大区分・中区分フィルター機能追加（選択状態を保持）<br>
+              日次実績の予定値自動反映を改善（未保存時は予定値をセット、保存後はDB値のみ表示）<br>
+              メール日報の達成率を予定時間ベースに変更、定例作業を翌日予定から除外<br>
+              ブラウザキャッシュ無効化によるデータ表示の安定化<br>
+              本番デプロイ用バッチファイル整備（プログラムのみ / フルデプロイ / サーバー管理）
+            </td>
+          </tr>
+          <tr>
+            <td><span class="badge bg-secondary">1.4.0</span></td>
+            <td>2026-03-24</td>
+            <td>
+              本番環境デプロイ（waitress対応）<br>
+              SECRET_KEY永続化（セッション維持の安定化）<br>
+              当日有休の予定入力制限を解除
+            </td>
+          </tr>
+          <tr>
+            <td><span class="badge bg-secondary">1.3.0</span></td>
             <td>2026-03-23</td>
             <td>
               メンバー全員エクスポートを週間予定表テンプレート形式に変更<br>

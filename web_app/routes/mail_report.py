@@ -124,7 +124,9 @@ def _build_mgr_self_body(login_user: dict, target_date: date) -> tuple[str, str]
         f"{next_schedule}\n"
         "\n"
         "以上になります。\n"
-        "ご確認のほど、よろしくお願いいたします。"
+        "ご確認のほど、よろしくお願いいたします。\n"
+        "\n"
+        f"{login_user.get('name', '')}"
     )
 
     return subject, body
@@ -404,6 +406,8 @@ def _build_master_body(
         next_schedule,
         "",
         "以上になります。ご確認のほど、よろしくお願いいたします。",
+        "",
+        login_user.get("name", ""),
     ])
     return "\n".join(parts)
 
