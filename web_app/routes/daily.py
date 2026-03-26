@@ -126,6 +126,10 @@ def daily_today() -> Any:
         return redirect(url_for("auth.login"))
 
     today = _ensure_weekday(date.today())
+    # ユーザー切り替え中はuser_idを引き継ぐ
+    req_user_id = request.args.get("user_id", "").strip()
+    if req_user_id:
+        return redirect(url_for("daily_bp.daily_view", date_str=today.isoformat()) + f"?user_id={req_user_id}")
     return redirect(url_for("daily_bp.daily_view", date_str=today.isoformat()))
 
 
@@ -301,6 +305,9 @@ def daily_save() -> Any:
         date_str: str = raw_date
     except ValueError:
         flash("不正な日付が指定されました", "warning")
+        form_uid = request.form.get("target_user_id", "").strip()
+        if form_uid:
+            return redirect(url_for("daily_bp.daily_today") + f"?user_id={form_uid}")
         return redirect(url_for("daily_bp.daily_today"))
 
     # 対象ユーザーIDの決定
@@ -439,9 +446,13 @@ def resolve_carryover(carryover_id: int) -> Any:
         return redirect(url_for("auth.login"))
 
     date_str: str = request.form.get("date_str", date.today().isoformat())
+    form_user_id: str = request.form.get("target_user_id", "").strip()
+    target_uid: int = int(form_user_id) if form_user_id else int(session["user_id"])
     from ..models import resolve_carryover_by_id
-    resolve_carryover_by_id(int(session["user_id"]), carryover_id)
+    resolve_carryover_by_id(target_uid, carryover_id)
     flash("繰り越しを解決済みにしました", "success")
+    if target_uid != int(session["user_id"]):
+        return redirect(url_for("daily_bp.daily_view", date_str=date_str) + f"?user_id={target_uid}")
     return redirect(url_for("daily_bp.daily_view", date_str=date_str))
 
 

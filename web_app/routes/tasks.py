@@ -17,6 +17,8 @@ from ..models import (
     add_task,
     delete_task,
     get_task_master,
+    get_user_by_id,
+    get_accessible_users,
     update_task_order,
     get_all_categories,
     get_all_subcategories,
@@ -25,6 +27,7 @@ from ..models import (
     delete_category,
     delete_subcategory,
 )
+from ..auth_helpers import is_privileged, can_access_user
 
 tasks_bp = Blueprint("tasks", __name__, url_prefix="/tasks")
 
@@ -42,6 +45,37 @@ def _require_login() -> None:
     return None
 
 
+def _resolve_target_user_id() -> int:
+    """管理職・マスタのユーザー切り替えを考慮して対象ユーザーIDを返す。
+
+    GETパラメータまたはフォームの user_id を確認し、
+    権限チェック後に対象ユーザーIDを返す。権限不足は403。
+
+    Returns:
+        int: 操作対象のユーザーID。
+    """
+    login_user_id: int = int(session["user_id"])
+    req_user_id = request.args.get("user_id", "") or request.form.get("target_user_id", "")
+    req_user_id = req_user_id.strip()
+    if req_user_id and is_privileged(session.get("user_role", "")):
+        try:
+            target_user_id = int(req_user_id)
+        except ValueError:
+            return login_user_id
+        target = get_user_by_id(target_user_id)
+        if target is None:
+            abort(404)
+        login_user_dict = {
+            "id": login_user_id,
+            "role": session.get("user_role", ""),
+            "dept": session.get("user_dept", ""),
+        }
+        if not can_access_user(login_user_dict, dict(target)):
+            abort(403)
+        return target_user_id
+    return login_user_id
+
+
 @tasks_bp.route("/", endpoint="task_list")
 def task_list() -> str:
     """作業マスタ一覧ページを表示する。
@@ -55,13 +89,24 @@ def task_list() -> str:
     if redir is not None:
         return redir
 
-    user_id: int = session["user_id"]
-    user_name: str = session["user_name"]
+    target_user_id: int = _resolve_target_user_id()
+    login_user_id: int = int(session["user_id"])
     login_role: str = session.get("user_role", "")
-    task_master = get_task_master(user_id)
-    # 全ユーザーに区分データを渡す（登録フォームで使用）
+    is_admin_view: bool = target_user_id != login_user_id
+
+    target_user = get_user_by_id(target_user_id)
+    user_name: str = target_user["name"] if target_user else session["user_name"]
+
+    task_master = get_task_master(target_user_id)
     categories = get_all_categories()
     all_subcategories = get_all_subcategories()
+
+    # 管理職・マスタ用: ユーザー切り替えリスト
+    all_users: list[dict] = []
+    if is_privileged(login_role):
+        login_dept: str = session.get("user_dept", "")
+        all_users = get_accessible_users(login_user_id, login_role, login_dept)
+
     return render_template(
         "tasks.html",
         task_master=task_master,
@@ -69,6 +114,9 @@ def task_list() -> str:
         login_role=login_role,
         categories=categories,
         all_subcategories=all_subcategories,
+        all_users=all_users,
+        target_user_id=target_user_id,
+        is_admin_view=is_admin_view,
     )
 
 
@@ -85,10 +133,12 @@ def add() -> str:
     if redir is not None:
         return redir
 
+    target_user_id: int = _resolve_target_user_id()
+
     task_name: str = request.form.get("task_name", "").strip()
     if not task_name:
         flash("作業名を入力してください", "warning")
-        return redirect(url_for("tasks.task_list"))
+        return redirect(url_for("tasks.task_list", user_id=target_user_id))
 
     # デフォルト作業時間を取得・バリデートする
     try:
@@ -106,15 +156,14 @@ def add() -> str:
     except ValueError:
         subcategory_id = None
 
-    user_id: int = session["user_id"]
-    success: bool = add_task(user_id, task_name, default_hours, category_id, subcategory_id)
+    success: bool = add_task(target_user_id, task_name, default_hours, category_id, subcategory_id)
 
     if success:
         flash(f"「{task_name}」を追加しました", "success")
     else:
         flash("その作業名はすでに登録されています", "warning")
 
-    return redirect(url_for("tasks.task_list"))
+    return redirect(url_for("tasks.task_list", user_id=target_user_id))
 
 
 @tasks_bp.route("/delete/<int:task_id>", methods=["POST"])
@@ -131,9 +180,9 @@ def delete(task_id: int) -> str:
     if redir is not None:
         return redir
 
-    user_id: int = session["user_id"]
-    delete_task(task_id, user_id)
-    return redirect(url_for("tasks.task_list"))
+    target_user_id: int = _resolve_target_user_id()
+    delete_task(task_id, target_user_id)
+    return redirect(url_for("tasks.task_list", user_id=target_user_id))
 
 
 @tasks_bp.route("/move/<int:task_id>/<direction>", methods=["POST"])
@@ -151,28 +200,28 @@ def move(task_id: int, direction: str) -> str:
     if redir is not None:
         return redir
 
-    user_id: int = session["user_id"]
-    tasks = get_task_master(user_id)
+    target_user_id: int = _resolve_target_user_id()
+    tasks = get_task_master(target_user_id)
 
     # 対象タスクのインデックスを取得
     idx = next((i for i, t in enumerate(tasks) if t["id"] == task_id), None)
     if idx is None:
-        return redirect(url_for("tasks.task_list"))
+        return redirect(url_for("tasks.task_list", user_id=target_user_id))
 
     if direction == "up" and idx > 0:
         swap_idx = idx - 1
     elif direction == "down" and idx < len(tasks) - 1:
         swap_idx = idx + 1
     else:
-        return redirect(url_for("tasks.task_list"))
+        return redirect(url_for("tasks.task_list", user_id=target_user_id))
 
     # 表示順を入れ替える（現在のdisplay_orderを基準に連番で振り直し）
     task_ids = [t["id"] for t in tasks]
     task_ids[idx], task_ids[swap_idx] = task_ids[swap_idx], task_ids[idx]
     for order, tid in enumerate(task_ids):
-        update_task_order(tid, user_id, order)
+        update_task_order(tid, target_user_id, order)
 
-    return redirect(url_for("tasks.task_list"))
+    return redirect(url_for("tasks.task_list", user_id=target_user_id))
 
 
 @tasks_bp.route("/swap-order", methods=["POST"])
@@ -186,22 +235,34 @@ def swap_order():
     if redir is not None:
         return jsonify(ok=False), 401
 
-    user_id: int = session["user_id"]
     data = request.get_json(silent=True) or {}
+    target_uid = data.get("target_user_id") or int(session["user_id"])
     task_id_a = data.get("task_id_a")
     task_id_b = data.get("task_id_b")
     if not task_id_a or not task_id_b:
         return jsonify(ok=False), 400
 
-    tasks = get_task_master(user_id)
+    # 権限チェック（他ユーザー操作時）
+    login_user_id = int(session["user_id"])
+    if target_uid != login_user_id:
+        if not is_privileged(session.get("user_role", "")):
+            return jsonify(ok=False), 403
+        target = get_user_by_id(target_uid)
+        if target is None:
+            return jsonify(ok=False), 404
+        login_dict = {"id": login_user_id, "role": session.get("user_role", ""), "dept": session.get("user_dept", "")}
+        if not can_access_user(login_dict, dict(target)):
+            return jsonify(ok=False), 403
+
+    tasks = get_task_master(target_uid)
     order_map = {t["id"]: i for i, t in enumerate(tasks)}
 
     if task_id_a not in order_map or task_id_b not in order_map:
         return jsonify(ok=False), 404
 
     # 2つのタスクのdisplay_orderを入れ替え
-    update_task_order(task_id_a, user_id, order_map[task_id_b])
-    update_task_order(task_id_b, user_id, order_map[task_id_a])
+    update_task_order(task_id_a, target_uid, order_map[task_id_b])
+    update_task_order(task_id_b, target_uid, order_map[task_id_a])
 
     return jsonify(ok=True)
 

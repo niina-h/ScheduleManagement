@@ -8,6 +8,7 @@ help_bp = Blueprint("help_bp", __name__)
 # 許可されたページ名のセット（パストラバーサル対策）
 _VALID_PAGES: frozenset[str] = frozenset({
     "index", "login", "schedule", "daily", "admin", "export", "version",
+    "tasks", "mail_report", "project_tasks",
 })
 
 

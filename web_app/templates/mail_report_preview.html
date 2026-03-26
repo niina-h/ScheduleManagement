@@ -83,18 +83,16 @@
         </div>
       </div>
       <div class="d-flex gap-2 mb-4">
-        <a href="{{ mailto_url }}" class="btn btn-primary">📨 Outlookで開く</a>
-        <button type="button" class="btn btn-outline-secondary copy-btn" data-body="{{ body | e }}">📋 本文をコピー</button>
+        <a href="{{ mailto_url }}" class="btn btn-primary mailto-btn" data-body="{{ body | e }}">📨 Outlookで開く</a>
+        <button type="button" class="btn btn-outline-secondary copy-btn" data-body="{{ body | e }}">📋 本文をコピー（テキスト）</button>
         {% if session.user_role == 'マスタ' %}
         <a href="{{ url_for('mail_report_bp.settings') }}" class="btn btn-outline-warning btn-sm ms-auto">⚙ メール設定</a>
         {% endif %}
       </div>
-      {% if prefix == 'master' %}
-      <div class="alert alert-light border small text-muted mb-4">
-        💡 <strong>フォントについて：</strong>「Outlookで開く」で作成されるメールのフォントは、Outlookの既定フォント設定に従います。
-        游ゴシック 11pt にするには Outlook の「ファイル → オプション → メール → 新しいメッセージを作成する → フォント」で設定してください。
+      <div class="alert alert-info border small mb-4">
+        💡 <strong>使い方：</strong>「Outlookで開く」をクリック → 件名・宛先・署名が設定された新規メールが開きます。<br>
+        本文（游ゴシック 11pt 書式付き）は自動でコピーされるので、本文欄で <kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けてください。
       </div>
-      {% endif %}
     </div>
     {% endfor %}
 
@@ -127,17 +125,117 @@
       btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
     });
 
-    // 本文コピー
+    // ---------- クリップボード書き込み（HTTP対応） ----------
+    // Clipboard API が使えない環境（HTTP）では execCommand フォールバック
+    function copyHtmlToClipboard(body, callback) {
+      var escaped = body.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      var htmlBody = '<pre style="font-family: \'游ゴシック\', \'Yu Gothic\', sans-serif; font-size: 11pt; line-height: 1.6; white-space: pre-wrap; margin: 0;">' + escaped + '</pre>';
+
+      // 方法1: Clipboard API（HTTPS / localhost）
+      if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+        try {
+          var htmlBlob = new Blob([htmlBody], {type: 'text/html'});
+          var textBlob = new Blob([body], {type: 'text/plain'});
+          var item = new ClipboardItem({'text/html': htmlBlob, 'text/plain': textBlob});
+          navigator.clipboard.write([item]).then(callback).catch(function () {
+            fallbackCopy(htmlBody, body, callback);
+          });
+          return;
+        } catch (e) { /* フォールバックへ */ }
+      }
+      fallbackCopy(htmlBody, body, callback);
+    }
+
+    function fallbackCopy(html, text, callback) {
+      // 方法2: execCommand で書式付きコピー
+      var container = document.createElement('div');
+      container.innerHTML = html;
+      container.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+      document.body.appendChild(container);
+      var range = document.createRange();
+      range.selectNodeContents(container);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      try {
+        document.execCommand('copy');
+        if (callback) callback();
+      } catch (e) {
+        // 方法3: 最終手段 — テキストのみ
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:-9999px;';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (callback) callback();
+      }
+      sel.removeAllRanges();
+      document.body.removeChild(container);
+    }
+
+    function copyTextToClipboard(text, callback) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(callback).catch(function () {
+          fallbackTextCopy(text, callback);
+        });
+        return;
+      }
+      fallbackTextCopy(text, callback);
+    }
+
+    function fallbackTextCopy(text, callback) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px;';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (callback) callback();
+    }
+
+    // 「Outlookで開く」クリック時: 書式付き本文を自動コピー → mailto で新規メール（本文空＝署名保持）
+    document.querySelectorAll('.mailto-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        var body = btn.dataset.body;
+        copyHtmlToClipboard(body, function () {
+          showToast('書式付き本文をコピーしました。Outlookの本文欄で Ctrl+V で貼り付けてください。');
+        });
+        // mailto: リンクはデフォルト動作で開く（本文なし＝署名が保持される）
+      });
+    });
+
+    // プレーンテキストコピー
     document.querySelectorAll('.copy-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var body = btn.dataset.body;
-        navigator.clipboard.writeText(body).then(function () {
+        copyTextToClipboard(body, function () {
           var orig = btn.textContent;
           btn.textContent = '✅ コピーしました';
           setTimeout(function () { btn.textContent = orig; }, 2000);
         });
       });
     });
+
+    // トースト通知
+    function showToast(msg) {
+      var toast = document.getElementById('copyToast');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'copyToast';
+        toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#198754;color:#fff;padding:12px 24px;border-radius:8px;font-size:0.9rem;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);transition:opacity 0.5s;';
+        document.body.appendChild(toast);
+      }
+      toast.textContent = msg;
+      toast.style.opacity = '1';
+      toast.style.display = 'block';
+      setTimeout(function () {
+        toast.style.opacity = '0';
+        setTimeout(function () { toast.style.display = 'none'; }, 500);
+      }, 4000);
+    }
   });
 </script>
 {% endblock %}

@@ -137,10 +137,10 @@ def get_accessible_users(login_id: int, login_role: str, login_dept: str) -> lis
         list[dict]: アクセス可能なユーザーリスト。
     """
     if login_role == "マスタ":
-        # マスタは自分自身＋同一部署全員（他マスタ除く）を返す
-        all_dept = get_all_users(dept_filter=login_dept if login_dept else None)
-        others = [u for u in all_dept if u.get("role") != "マスタ"]
-        self_user = next((u for u in all_dept if u.get("id") == login_id), None)
+        # マスタは自分自身＋全部署全員（他マスタ除く）を返す
+        all_users = get_all_users()
+        others = [u for u in all_users if u.get("role") != "マスタ"]
+        self_user = next((u for u in all_users if u.get("id") == login_id), None)
         if self_user and not any(u.get("id") == login_id for u in others):
             return [self_user] + others
         return others
@@ -1159,25 +1159,26 @@ def get_all_users_daily_status(
         dept_filter: 部署名でフィルタリングする場合に指定。None の場合は全部署。
 
     Returns:
-        list[dict]: [{id, name, dept, role, has_result:bool, filled_slots:int}]
-                    filled_slots は hours > 0 の枠数
+        list[dict]: [{id, name, dept, role, has_result:bool, filled_slots:int, updated_at:str|None}]
+                    filled_slots は hours > 0 の枠数、updated_at は最終更新日時
     """
     db = get_db()
     if dept_filter:
         users = db.execute(
-            "SELECT id, name, dept, role FROM users WHERE dept = ? ORDER BY name ASC",
+            "SELECT id, name, dept, role FROM users WHERE dept = ? ORDER BY display_order ASC, id ASC",
             (dept_filter,),
         ).fetchall()
     else:
         users = db.execute(
-            "SELECT id, name, dept, role FROM users ORDER BY name ASC"
+            "SELECT id, name, dept, role FROM users ORDER BY display_order ASC, id ASC"
         ).fetchall()
 
     result: list[dict] = []
     for user in users:
         row = db.execute(
             "SELECT COUNT(*) AS cnt, "
-            "SUM(CASE WHEN hours > 0.0 THEN 1 ELSE 0 END) AS filled "
+            "SUM(CASE WHEN hours > 0.0 THEN 1 ELSE 0 END) AS filled, "
+            "MAX(updated_at) AS last_updated "
             "FROM daily_result "
             "WHERE user_id = ? AND date = ?",
             (user["id"], date_str),
@@ -1192,6 +1193,7 @@ def get_all_users_daily_status(
                 "role": user["role"],
                 "has_result": total > 0,
                 "filled_slots": int(filled),
+                "updated_at": row["last_updated"],
             }
         )
     return result
@@ -1750,4 +1752,214 @@ def save_mail_setting(
         " VALUES (?, ?, ?, ?, ?, ?)",
         (role, to_address, cc_address, bcc_address, subject_template, body_template),
     )
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# プロジェクトタスク管理
+# ---------------------------------------------------------------------------
+
+# 状態の選択肢（表示順）
+PROJECT_TASK_STATUSES: list[str] = ["未着手", "着手", "順調", "遅れ", "完了", "停止"]
+
+
+def _calc_progress(status: str, start_date: str, end_date: str,
+                    current_progress: int, delay_days: int = 0) -> int:
+    """状態と期間から進捗率を自動計算する。
+
+    Args:
+        status: タスク状態
+        start_date: 開始日（YYYY-MM-DD）
+        end_date: 終了日（YYYY-MM-DD）
+        current_progress: 現在の進捗率（停止時に保持する値）
+        delay_days: 遅延日数（「遅れ」状態で使用）
+
+    Returns:
+        int: 進捗率（0〜100+）
+    """
+    if status == "未着手":
+        return 0
+    if status == "着手":
+        return 10
+    if status == "完了":
+        return 100
+    if status == "停止":
+        return current_progress
+
+    # 順調 / 遅れ: 経過日ベースで自動計算
+    try:
+        sd = date.fromisoformat(start_date)
+        ed = date.fromisoformat(end_date)
+    except ValueError:
+        return current_progress
+
+    total_days = (ed - sd).days
+    if total_days <= 0:
+        return 100
+
+    elapsed = (date.today() - sd).days
+
+    if status == "順調":
+        rate = int(elapsed / total_days * 100)
+        return max(0, min(rate, 95))
+
+    # 遅れ: (経過日数 - 遅延日数) ÷ 全期間 × 100
+    effective_elapsed = max(0, elapsed - delay_days)
+    rate = int(effective_elapsed / total_days * 100)
+    return max(0, rate)
+
+
+def get_all_project_tasks() -> list[dict]:
+    """全プロジェクトタスクを大区分・中区分の表示順で取得する。
+
+    Returns:
+        list[dict]: プロジェクトタスク一覧
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT pt.*, "
+        "  tc.name AS category_name, tc.display_order AS cat_order, "
+        "  ts.name AS subcategory_name, ts.display_order AS subcat_order "
+        "FROM project_task pt "
+        "LEFT JOIN task_category tc ON pt.category_id = tc.id "
+        "LEFT JOIN task_subcategory ts ON pt.subcategory_id = ts.id "
+        "ORDER BY tc.display_order, ts.display_order, pt.display_order"
+    ).fetchall()
+    result: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        # 進捗率を自動再計算（順調・遅れの場合）
+        d["progress"] = _calc_progress(
+            d["status"], d["start_date"], d["end_date"],
+            d["progress"], d.get("delay_days", 0) or 0,
+        )
+        result.append(d)
+    return result
+
+
+def get_project_task_by_id(task_id: int) -> dict | None:
+    """IDでプロジェクトタスクを取得する。
+
+    Args:
+        task_id: タスクID
+
+    Returns:
+        dict | None: タスク情報。見つからなければ None
+    """
+    db = get_db()
+    row = db.execute(
+        "SELECT pt.*, "
+        "  tc.name AS category_name, ts.name AS subcategory_name "
+        "FROM project_task pt "
+        "LEFT JOIN task_category tc ON pt.category_id = tc.id "
+        "LEFT JOIN task_subcategory ts ON pt.subcategory_id = ts.id "
+        "WHERE pt.id = ?",
+        (task_id,),
+    ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["progress"] = _calc_progress(
+        d["status"], d["start_date"], d["end_date"],
+        d["progress"], d.get("delay_days", 0) or 0,
+    )
+    return d
+
+
+def add_project_task(
+    category_id: int | None,
+    subcategory_id: int | None,
+    task_name: str,
+    description: str,
+    start_date: str,
+    end_date: str,
+    status: str,
+    progress: int,
+    delay_days: int,
+    created_by: int,
+    updated_by: str,
+) -> int:
+    """プロジェクトタスクを追加する。
+
+    Args:
+        category_id: 大区分ID
+        subcategory_id: 中区分ID
+        task_name: タスク名
+        description: 対応内容
+        start_date: 開始日
+        end_date: 終了日
+        status: 状態
+        progress: 進捗率（手動指定時）
+        delay_days: 遅延日数
+        created_by: 作成者ユーザーID
+        updated_by: 更新者名
+
+    Returns:
+        int: 新規タスクID
+    """
+    db = get_db()
+    calc_progress = _calc_progress(status, start_date, end_date, progress, delay_days)
+    max_order = db.execute("SELECT COALESCE(MAX(display_order), 0) FROM project_task").fetchone()[0]
+    cur = db.execute(
+        "INSERT INTO project_task "
+        "(category_id, subcategory_id, task_name, description, start_date, end_date, "
+        " status, delay_days, progress, display_order, created_by, updated_by) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (category_id, subcategory_id, task_name, description, start_date, end_date,
+         status, delay_days, calc_progress, max_order + 1, created_by, updated_by),
+    )
+    db.commit()
+    return cur.lastrowid
+
+
+def update_project_task(
+    task_id: int,
+    category_id: int | None,
+    subcategory_id: int | None,
+    task_name: str,
+    description: str,
+    start_date: str,
+    end_date: str,
+    status: str,
+    progress: int,
+    delay_days: int,
+    updated_by: str,
+) -> None:
+    """プロジェクトタスクを更新する。
+
+    Args:
+        task_id: タスクID
+        category_id: 大区分ID
+        subcategory_id: 中区分ID
+        task_name: タスク名
+        description: 対応内容
+        start_date: 開始日
+        end_date: 終了日
+        status: 状態
+        progress: 進捗率（手動指定時）
+        delay_days: 遅延日数
+        updated_by: 更新者名
+    """
+    db = get_db()
+    calc_progress = _calc_progress(status, start_date, end_date, progress, delay_days)
+    db.execute(
+        "UPDATE project_task SET "
+        "category_id=?, subcategory_id=?, task_name=?, description=?, "
+        "start_date=?, end_date=?, status=?, delay_days=?, progress=?, "
+        "updated_at=datetime('now','localtime'), updated_by=? "
+        "WHERE id=?",
+        (category_id, subcategory_id, task_name, description,
+         start_date, end_date, status, delay_days, calc_progress, updated_by, task_id),
+    )
+    db.commit()
+
+
+def delete_project_task(task_id: int) -> None:
+    """プロジェクトタスクを削除する。
+
+    Args:
+        task_id: タスクID
+    """
+    db = get_db()
+    db.execute("DELETE FROM project_task WHERE id = ?", (task_id,))
     db.commit()

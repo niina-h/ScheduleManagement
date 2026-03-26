@@ -53,13 +53,13 @@ def can_access_user(login_user: dict, target_user: dict) -> bool:
     role: str = login_user.get("role", "")
     if not is_privileged(role):
         return False
-    # マスタは自分自身＋同一部署のマスタ以外全員にアクセス可（担当設定に関係なし）
+    # マスタは自分自身＋全部署のマスタ以外全員にアクセス可
     if role == "マスタ":
         if target_user.get("id") == login_user.get("id"):
             return True
         if target_user.get("role", "") == "マスタ":
             return False
-        return (login_user.get("dept") or "") == (target_user.get("dept") or "")
+        return True
     # 管理職: manager_id が設定されていれば自分のIDと一致するか確認
     target_manager_id = target_user.get("manager_id")
     if target_manager_id is not None:

@@ -21,6 +21,7 @@
         <a class="btn btn-outline-light btn-sm" href="{{ url_for('schedule.weekly') }}">週間予定</a>
         <a class="btn btn-outline-light btn-sm" href="{{ url_for('tasks.task_list') }}">作業登録</a>
         {% if session.user_role == '管理職' or session.user_role == 'マスタ' %}
+        <a class="btn btn-outline-info btn-sm" href="{{ url_for('project_tasks_bp.task_list') }}">タスク管理</a>
         <a class="btn btn-warning btn-sm" href="{{ url_for('admin_bp.dashboard') }}">管理</a>
         {% endif %}
         <a class="btn btn-outline-light btn-sm" href="{{ url_for('help_bp.help_page') }}">❓ ヘルプ</a>

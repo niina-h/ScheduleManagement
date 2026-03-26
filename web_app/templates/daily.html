@@ -19,7 +19,7 @@
     次日 ▶
   </a>
   <a class="btn btn-outline-primary btn-sm ms-2"
-     href="{{ url_for('daily_bp.daily_today') }}">今日</a>
+     href="{{ url_for('daily_bp.daily_today') }}{% if is_admin_view is defined and is_admin_view %}?user_id={{ target_user.id }}{% endif %}">今日</a>
   {% if (session.user_role == '管理職' or session.user_role == 'マスタ') and all_users %}
   <div class="input-group input-group-sm ms-auto" style="width:auto;">
     <span class="input-group-text">切り替え：</span>
@@ -499,6 +499,7 @@
       style="display:none;">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="date_str" value="{{ date_str }}">
+  <input type="hidden" name="target_user_id" value="{{ target_user.id }}">
 </form>
 {% endfor %}
 

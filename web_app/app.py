@@ -27,6 +27,7 @@ def create_app() -> Flask:
     from .routes.daily import daily_bp
     from .routes.help import help_bp
     from .routes.mail_report import mail_report_bp
+    from .routes.project_tasks import project_tasks_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(schedule_bp)
@@ -36,6 +37,7 @@ def create_app() -> Flask:
     app.register_blueprint(daily_bp)
     app.register_blueprint(help_bp)
     app.register_blueprint(mail_report_bp)
+    app.register_blueprint(project_tasks_bp)
 
     @app.after_request
     def _no_cache(response: Response) -> Response:

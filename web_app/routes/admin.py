@@ -12,6 +12,7 @@ from flask import (
     Blueprint,
     abort,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -495,6 +496,20 @@ def reorder_users() -> str:
     update_users_order(user_ids)
     flash("ユーザーの並び順を保存しました", "success")
     return _redirect_dashboard()
+
+
+@admin_bp.route("/api/daily_status")
+def api_daily_status():
+    """本日の実績入力状況をJSON形式で返すAPIエンドポイント（ポーリング用）。
+
+    Returns:
+        Response: {items: [{id, name, dept, role, has_result, filled_slots, updated_at}]}
+    """
+    login_dept: str = session.get("user_dept", "")
+    dept_filter: str | None = login_dept if login_dept else None
+    today_str: str = date.today().isoformat()
+    daily_status = get_all_users_daily_status(today_str, dept_filter=dept_filter)
+    return jsonify(items=daily_status, date=today_str)
 
 
 @admin_bp.route("/logs")

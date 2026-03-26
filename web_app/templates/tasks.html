@@ -6,7 +6,16 @@
 <div class="row justify-content-center">
   <div class="col-lg-8">
 
-    <h4 class="mb-4 fw-bold">作業マスタ管理 - {{ user_name }}</h4>
+    <div class="d-flex align-items-center gap-3 mb-4">
+      <h4 class="fw-bold mb-0">作業マスタ管理 - {{ user_name }}</h4>
+      {% if all_users | length > 0 %}
+      <select id="user-switch" class="form-select form-select-sm" style="width:auto;min-width:180px;">
+        {% for u in all_users %}
+        <option value="{{ u.id }}" {% if u.id == target_user_id %}selected{% endif %}>{{ u.name }}{% if u.id == session.user_id %} (自分){% endif %}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+    </div>
 
     <!-- 登録済み作業一覧 -->
     <div class="card shadow-sm mb-4">
@@ -52,6 +61,7 @@
                       action="{{ url_for('tasks.delete', task_id=task.id) }}"
                       class="d-inline"
                       onsubmit="return confirm('「{{ task.task_name }}」を削除しますか？');">
+                  <input type="hidden" name="target_user_id" value="{{ target_user_id }}">
                   <button type="submit" class="btn btn-outline-danger btn-sm">削除</button>
                 </form>
               </td>
@@ -74,6 +84,7 @@
           {{ all_subcategories | tojson }}
         </script>
         <form method="post" action="{{ url_for('tasks.add') }}">
+          <input type="hidden" name="target_user_id" value="{{ target_user_id }}">
           <div class="input-group">
             <select class="form-select" id="add_category_id" name="category_id" style="max-width:160px;">
               <option value="">大区分</option>
@@ -244,6 +255,14 @@
     var sortState = {};  // {colIndex: 'asc'|'desc'}
     var isSorted = false;  // ソート中フラグ（▲▼と排他制御）
 
+    // --- ユーザー切り替え ---
+    var userSwitch = document.getElementById('user-switch');
+    if (userSwitch) {
+      userSwitch.addEventListener('change', function() {
+        window.location.href = '{{ url_for("tasks.task_list") }}?user_id=' + userSwitch.value;
+      });
+    }
+
     var resetSortBtn = document.getElementById('btn-reset-sort');
 
     function updateMoveButtons() {
@@ -394,7 +413,7 @@
         fetch('{{ url_for("tasks.swap_order") }}', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({task_id_a: taskId, task_id_b: swapId})
+          body: JSON.stringify({task_id_a: taskId, task_id_b: swapId, target_user_id: {{ target_user_id }}})
         }).then(function(res) {
           if (res.ok) location.reload();
         }).catch(function() {

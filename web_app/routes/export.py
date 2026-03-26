@@ -21,6 +21,7 @@ from ..models import (
     get_user_by_id,
     get_weekly_leave,
     get_weekly_schedule,
+    save_weekly_schedule,
 )
 from ..auth_helpers import is_privileged, is_master, can_access_user
 
@@ -716,6 +717,11 @@ def _fill_schedule_tpl_sheet(
         if not am_blocked:
             plan_am = schedule.get(day, {}).get("am", [])
             result_am = day_result.get("am", []) if has_result else []
+            # 予定タスク名セット（スロット位置に依存しない突発判定用）
+            plan_am_tasks: set[str] = {
+                (e.get("task_name") or "").strip()
+                for e in plan_am if (e.get("task_name") or "").strip()
+            }
             row_offset = 0
             for i in range(5):
                 p = plan_am[i] if i < len(plan_am) else {}
@@ -730,8 +736,8 @@ def _fill_schedule_tpl_sheet(
                         # リスケ: rows 14-18 へ（負数時間）
                         neg_h = result_h if result_h <= 0 else -(plan_h or result_h)
                         reschedule_tasks.append((result_task, neg_h))
-                    elif result_task and not plan_task:
-                        # 突発: AM スロットにそのまま「突発: 」を先頭に付けて表示
+                    elif result_task and result_task.strip() not in plan_am_tasks:
+                        # 突発: AM全体の予定に存在しないタスク
                         row = 4 + row_offset
                         ws.cell(row=row, column=task_col).value = f"【突発】{result_task}"
                         ws.cell(row=row, column=hours_col).value = float(result_h or 0)
@@ -761,6 +767,11 @@ def _fill_schedule_tpl_sheet(
         if not pm_blocked:
             plan_pm = schedule.get(day, {}).get("pm", [])
             result_pm = day_result.get("pm", []) if has_result else []
+            # 予定タスク名セット（スロット位置に依存しない突発判定用）
+            plan_pm_tasks: set[str] = {
+                (e.get("task_name") or "").strip()
+                for e in plan_pm if (e.get("task_name") or "").strip()
+            }
             row_offset = 0
             for i in range(5):
                 p = plan_pm[i] if i < len(plan_pm) else {}
@@ -774,8 +785,8 @@ def _fill_schedule_tpl_sheet(
                     if result_defer and result_task:
                         neg_h = result_h if result_h <= 0 else -(plan_h or result_h)
                         reschedule_tasks.append((result_task, neg_h))
-                    elif result_task and not plan_task:
-                        # 突発: PM スロットにそのまま「突発: 」を先頭に付けて表示
+                    elif result_task and result_task.strip() not in plan_pm_tasks:
+                        # 突発: PM全体の予定に存在しないタスク
                         row = 9 + row_offset
                         ws.cell(row=row, column=task_col).value = f"【突発】{result_task}"
                         ws.cell(row=row, column=hours_col).value = float(result_h or 0)
@@ -2038,3 +2049,234 @@ def download_team_report() -> object:
         download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+# ============================================================
+# インポート機能（マスタ権限のみ）
+# ============================================================
+
+def _import_task_col(day: int) -> int:
+    """曜日インデックス(0-4)からタスク名列番号を返す。
+
+    Args:
+        day: 曜日インデックス（0=月〜4=金）
+
+    Returns:
+        int: タスク名の列番号
+    """
+    return 4 + day * 3
+
+
+def _import_time_col(day: int) -> int:
+    """曜日インデックス(0-4)から時間列番号を返す。
+
+    Args:
+        day: 曜日インデックス（0=月〜4=金）
+
+    Returns:
+        int: 時間の列番号
+    """
+    return 6 + day * 3
+
+
+def _parse_schedule_sheet(ws: openpyxl.worksheet.worksheet.Worksheet, week_monday: date) -> dict:
+    """Excelシートから週間予定データを解析する。
+
+    テンプレート構造:
+      Row 1 C4: 月曜日の日にち
+      Row 2 C1: 氏名
+      Row 4-8: 午前スロット1-5（各日: task_col=タスク名, time_col=時間）
+      Row 9-13: 午後スロット1-5
+
+    4行目（AM1）にタスク名がない日はスキップする。
+
+    Args:
+        ws: openpyxlのワークシート
+        week_monday: 週の月曜日
+
+    Returns:
+        dict: {
+            'user_name': str,
+            'schedule': {day(0-4): {'am': [{task_name, hours}×5], 'pm': [同]}},
+            'skipped_days': list[int],
+            'imported_days': list[int],
+        }
+    """
+    # 氏名取得（B2:C3 マージセル → A2 or B2 に値がある場合も）
+    user_name: str = ""
+    for col in (2, 3, 1):
+        v = ws.cell(row=2, column=col).value
+        if v and str(v).strip():
+            user_name = str(v).strip()
+            break
+    # A1 にも氏名が入る場合がある
+    if not user_name:
+        v = ws.cell(row=1, column=1).value
+        if v and str(v).strip() and str(v).strip() != "氏名":
+            user_name = str(v).strip()
+
+    schedule: dict = {}
+    skipped_days: list[int] = []
+    imported_days: list[int] = []
+
+    for day in range(5):
+        task_col = _import_task_col(day)
+        time_col = _import_time_col(day)
+
+        # 4行目（AM1）に値がなければスキップ
+        am1_task = ws.cell(row=4, column=task_col).value
+        if not am1_task or not str(am1_task).strip():
+            skipped_days.append(day)
+            continue
+
+        imported_days.append(day)
+        am_slots: list[dict] = []
+        pm_slots: list[dict] = []
+
+        # 午前: Row 4-8
+        for i in range(5):
+            row = 4 + i
+            task = ws.cell(row=row, column=task_col).value
+            hours = ws.cell(row=row, column=time_col).value
+            am_slots.append({
+                "task_name": str(task).strip() if task else "",
+                "hours": float(hours) if hours and str(hours).strip() else 0.0,
+            })
+
+        # 午後: Row 9-13
+        for i in range(5):
+            row = 9 + i
+            task = ws.cell(row=row, column=task_col).value
+            hours = ws.cell(row=row, column=time_col).value
+            pm_slots.append({
+                "task_name": str(task).strip() if task else "",
+                "hours": float(hours) if hours and str(hours).strip() else 0.0,
+            })
+
+        schedule[day] = {"am": am_slots, "pm": pm_slots}
+
+    return {
+        "user_name": user_name,
+        "schedule": schedule,
+        "skipped_days": skipped_days,
+        "imported_days": imported_days,
+    }
+
+
+@export_bp.route("/import", methods=["GET", "POST"])
+def import_schedule():
+    """週間予定Excelインポート画面・処理（マスタ権限のみ）。
+
+    GET: インポート画面を表示
+    POST: アップロードされたExcelファイルから週間予定を取り込む
+
+    Returns:
+        str: インポート画面またはリダイレクト
+    """
+    from flask import render_template
+
+    if "user_id" not in session:
+        return redirect(url_for("auth.login"))
+    if not is_master(session.get("user_role", "")):
+        abort(403)
+
+    if request.method == "GET":
+        all_users = get_all_users()
+        return render_template(
+            "import_schedule.html",
+            all_users=all_users,
+            csrf_token=session.get("csrf_token", ""),
+        )
+
+    # POST: CSRF検証
+    import secrets
+    token = request.form.get("csrf_token", "")
+    if not secrets.compare_digest(token, session.get("csrf_token", "")):
+        abort(400)
+
+    # ファイル取得
+    file = request.files.get("excel_file")
+    if not file or not file.filename:
+        flash("ファイルを選択してください", "warning")
+        return redirect(url_for("export_bp.import_schedule"))
+
+    if not file.filename.endswith(".xlsx"):
+        flash(".xlsx形式のファイルを選択してください", "warning")
+        return redirect(url_for("export_bp.import_schedule"))
+
+    # 対象ユーザーID
+    target_user_id_str = request.form.get("target_user_id", "").strip()
+    if not target_user_id_str:
+        flash("対象ユーザーを選択してください", "warning")
+        return redirect(url_for("export_bp.import_schedule"))
+
+    try:
+        target_user_id = int(target_user_id_str)
+    except ValueError:
+        flash("ユーザーIDが不正です", "warning")
+        return redirect(url_for("export_bp.import_schedule"))
+
+    target_user = get_user_by_id(target_user_id)
+    if target_user is None:
+        flash("対象ユーザーが見つかりません", "warning")
+        return redirect(url_for("export_bp.import_schedule"))
+
+    # 週開始日（月曜日）
+    week_start_str = request.form.get("week_start", "").strip()
+    if not week_start_str:
+        flash("週開始日を入力してください", "warning")
+        return redirect(url_for("export_bp.import_schedule"))
+
+    try:
+        week_date = date.fromisoformat(week_start_str)
+    except ValueError:
+        flash("日付形式が不正です（YYYY-MM-DD）", "warning")
+        return redirect(url_for("export_bp.import_schedule"))
+
+    # 月曜日に丸める
+    week_monday = _get_monday(week_date)
+    week_start = week_monday.isoformat()
+
+    # Excel解析
+    try:
+        wb = openpyxl.load_workbook(file, data_only=True)
+        ws = wb[wb.sheetnames[0]]
+        parsed = _parse_schedule_sheet(ws, week_monday)
+    except Exception as e:
+        logger.exception("Excelインポート解析エラー")
+        flash(f"Excelファイルの解析に失敗しました: {e}", "warning")
+        return redirect(url_for("export_bp.import_schedule"))
+
+    if not parsed["imported_days"]:
+        flash("取り込み可能なデータがありませんでした（全日の4行目が空です）", "warning")
+        return redirect(url_for("export_bp.import_schedule"))
+
+    # 既存データとマージ（スキップ日は既存データを維持）
+    existing = get_weekly_schedule(target_user_id, week_start)
+    merged_data: dict = {}
+    for day in range(5):
+        if day in parsed["schedule"]:
+            merged_data[day] = parsed["schedule"][day]
+        else:
+            merged_data[day] = existing.get(day, {"am": [{"task_name": "", "hours": 0.0}] * 5,
+                                                   "pm": [{"task_name": "", "hours": 0.0}] * 5})
+
+    # 保存
+    login_user = get_user_by_id(int(session["user_id"]))
+    updater_name: str = login_user["name"] if login_user else ""
+    save_weekly_schedule(target_user_id, week_start, merged_data, updated_by=updater_name)
+
+    day_names = ["月", "火", "水", "木", "金"]
+    imported_str = "・".join(day_names[d] for d in parsed["imported_days"])
+    skipped_str = "・".join(day_names[d] for d in parsed["skipped_days"]) if parsed["skipped_days"] else "なし"
+
+    flash(
+        f"「{target_user['name']}」の週間予定（{week_start}週）を取り込みました。"
+        f" 取込: {imported_str}曜 / スキップ: {skipped_str}",
+        "success",
+    )
+    logger.info(
+        "Excelインポート完了: user_id=%d week=%s days=%s by=%s",
+        target_user_id, week_start, parsed["imported_days"], updater_name,
+    )
+    return redirect(url_for("export_bp.import_schedule"))

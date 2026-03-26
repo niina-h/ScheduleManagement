@@ -1,15 +1,18 @@
 """管理職日報メール画面・設定ルート。"""
 from __future__ import annotations
 
+import html as html_mod
 import urllib.parse
 from datetime import date, timedelta
+from email.mime.text import MIMEText
 
-from flask import Blueprint, abort, redirect, render_template, request, session, url_for
+from flask import Blueprint, Response, abort, redirect, render_template, request, session, url_for
 
 from ..auth_helpers import is_privileged, is_master
 from ..models import (
     get_accessible_users,
     get_all_categories,
+    get_all_project_tasks,
     get_all_subcategories,
     get_daily_result,
     get_daily_comment,
@@ -250,8 +253,14 @@ def _build_master_body(
     else:
         plan_rate = sudden_rate = resc_rate = jisseki_rate = 0
 
-    # タスク別時間集計（同名タスクは合算）: {(cat_name, subcat_name, task_name): hours}
-    task_hours: dict[tuple[str, str, str], float] = {}
+    def _fmt_h(h: float) -> str:
+        """時間を整数 or 小数1桁で表示する。"""
+        return str(int(h)) if h == int(h) else f"{h:.1f}"
+
+    # 日次実績の時間集計（中区分単位）: {subcategory_name: hours}
+    daily_subcat_hours: dict[str, float] = {}
+    # 計画外時間（中区分単位）
+    daily_subcat_unplanned: dict[str, float] = {}
     for md in member_data:
         for slot in ("am", "pm"):
             for item in md["result"].get(slot, []):
@@ -260,51 +269,59 @@ def _build_master_body(
                 if not task or hours == 0.0:
                     continue
                 cat_info = md["task_cat_map"].get(task, {})
-                cat = cat_info.get("category_name") or ""
                 subcat = cat_info.get("subcategory_name") or ""
-                if not cat:
-                    cat = "その他"
-                    subcat = ""
-                key = (cat, subcat, task)
-                task_hours[key] = task_hours.get(key, 0.0) + hours
+                daily_subcat_hours[subcat] = daily_subcat_hours.get(subcat, 0.0) + hours
+                if not int(item.get("is_carryover", 0)) and task not in md["scheduled_tasks"]:
+                    daily_subcat_unplanned[subcat] = daily_subcat_unplanned.get(subcat, 0.0) + hours
 
-    # 全大区分・中区分をマスタから取得（全表示用）
+    # 業務内容セクション（project_task ベース）
+    project_tasks = get_all_project_tasks()
+    # 全大区分・中区分をマスタから取得
     all_cats = get_all_categories()
     all_subcats = get_all_subcategories()
-    # cat_id → cat_name マップ
     cat_id_name: dict[int, str] = {c["id"]: c["name"] for c in all_cats}
-    # cat_name → [subcat_name] の順序付きマップ
     cat_subcats_ordered: dict[str, list[str]] = {c["name"]: [] for c in all_cats}
+    subcat_id_name: dict[int, str] = {}
     for s in all_subcats:
         cname = cat_id_name.get(s["category_id"], "")
+        subcat_id_name[s["id"]] = s["name"]
         if cname and cname in cat_subcats_ordered:
             cat_subcats_ordered[cname].append(s["name"])
 
-    # 業務内容セクション（全大区分・中区分を表示、該当タスクがあれば%付き）
-    content_lines: list[str] = ["業務内容 / 対応内容"]
+    # project_task を (cat_name, subcat_name) でグループ化
+    pt_by_subcat: dict[tuple[str, str], list[dict]] = {}
+    for pt in project_tasks:
+        cname = pt.get("category_name") or "その他"
+        sname = pt.get("subcategory_name") or ""
+        pt_by_subcat.setdefault((cname, sname), []).append(pt)
+
+    content_lines: list[str] = ["業務内容\t対応内容\t本日達成\t実入力\t計画外"]
     for cat_name in cat_subcats_ordered:
         content_lines.append(f"・{cat_name}")
         for subcat_name in cat_subcats_ordered[cat_name]:
-            # この中区分に該当するタスクを収集
-            matched: list[str] = []
-            for (c, s, t), h in task_hours.items():
-                if c == cat_name and s == subcat_name:
-                    rate = int(h / total_planned_hours * 100) if total_planned_hours > 0 else 0
-                    matched.append(f"{t} {rate}%")
-            if matched:
-                content_lines.append(f"  {subcat_name}　{'、'.join(matched)}")
+            pts = pt_by_subcat.get((cat_name, subcat_name), [])
+            sub_h = daily_subcat_hours.get(subcat_name, 0.0)
+            sub_unp = daily_subcat_unplanned.get(subcat_name, 0.0)
+            if pts:
+                # タスク名と対応内容を結合
+                descs: list[str] = []
+                for pt in pts:
+                    desc = pt.get("description", "").strip()
+                    if desc:
+                        descs.append(f"{pt['task_name']}　{desc}")
+                    else:
+                        descs.append(pt["task_name"])
+                tasks_str = "、".join(descs)
+                # 進捗率はproject_taskの最大値を表示
+                max_progress = max(pt["progress"] for pt in pts)
+                line = f"　　{subcat_name}　{tasks_str}　[{max_progress}%]"
+                if sub_h > 0:
+                    line += f"　{_fmt_h(sub_h)}"
+                if sub_unp > 0:
+                    line += f"　{_fmt_h(sub_unp)}"
+                content_lines.append(line)
             else:
-                content_lines.append(f"  {subcat_name}")
-
-    # 「その他」（区分なしタスク）があれば末尾に追加
-    other_tasks: list[str] = []
-    for (c, s, t), h in task_hours.items():
-        if c == "その他":
-            rate = int(h / total_planned_hours * 100) if total_planned_hours > 0 else 0
-            other_tasks.append(f"{t} {rate}%")
-    if other_tasks:
-        content_lines.append(f"・その他")
-        content_lines.append(f"  {'、'.join(other_tasks)}")
+                content_lines.append(f"　　{subcat_name}")
 
     # メンバー AM/PM サマリ（定例作業は除外、両方なしなら重複表示しない）
     member_lines: list[str] = []
@@ -386,9 +403,8 @@ def _build_master_body(
     parts.extend([
         f"お疲れ様です。{dept}の業務報告となります。",
         "",
-        "□予定：100%（作業計画：100%）",
-        f"■実績：{jisseki_rate}%（計画：{plan_rate}%　突発：{sudden_rate}%　リスケ：{resc_rate}%　）",
-        "",
+        f"□予定：100%（作業計画：100%）\t\t{_fmt_h(total_planned_hours)}",
+        f"■実績：{jisseki_rate}%（計画：{plan_rate}%　突発：{sudden_rate}%　リスケ：{resc_rate}%）\t{_fmt_h(total_actual_hours)}\t{_fmt_h(sudden_hours)}",
         "\n".join(content_lines),
         "",
         "\n".join(member_lines),
@@ -459,18 +475,20 @@ def _build_member_reports(login_user: dict, date_str: str) -> str:
     return "\n".join(lines)
 
 
-def _build_mailto(setting: dict, subject: str, body: str) -> str:
+def _build_mailto(setting: dict, subject: str, *, include_body: str = "") -> str:
     """mailto: URLを組み立てる。
 
     Args:
-        setting: メール設定 dict（to_address, cc_address を含む）
+        setting: メール設定 dict（to_address, cc_address, bcc_address を含む）
         subject: メール件名
-        body: メール本文
+        include_body: 本文（空文字列の場合は本文なし＝署名が保持される）
 
     Returns:
         str: mailto: スキームのURL文字列
     """
-    params: dict[str, str] = {"subject": subject, "body": body}
+    params: dict[str, str] = {"subject": subject}
+    if include_body:
+        params["body"] = include_body
     if setting.get("cc_address"):
         params["cc"] = setting["cc_address"]
     if setting.get("bcc_address"):
@@ -478,6 +496,85 @@ def _build_mailto(setting: dict, subject: str, body: str) -> str:
     query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
     to = urllib.parse.quote(setting.get("to_address", ""))
     return f"mailto:{to}?{query}"
+
+
+def _build_eml(setting: dict, subject: str, body: str) -> str:
+    """HTML形式の.emlファイルコンテンツを生成する。
+
+    フォントを游ゴシック 11ptで統一したHTMLメールを生成。
+    Outlookで開いた際にフォントが統一される。
+
+    Args:
+        setting: メール設定 dict（to_address, cc_address, bcc_address を含む）
+        subject: メール件名
+        body: メール本文（プレーンテキスト）
+
+    Returns:
+        str: .emlファイルの文字列
+    """
+    escaped = html_mod.escape(body)
+    html_body = (
+        '<html><head><meta charset="utf-8"></head>'
+        '<body style="font-family: \'游ゴシック\', \'Yu Gothic\', sans-serif; font-size: 11pt; line-height: 1.6;">'
+        f'<pre style="font-family: \'游ゴシック\', \'Yu Gothic\', sans-serif; font-size: 11pt; '
+        f'white-space: pre-wrap; margin: 0;">{escaped}</pre>'
+        '</body></html>'
+    )
+    msg = MIMEText(html_body, "html", "utf-8")
+    msg["Subject"] = subject
+    msg["To"] = setting.get("to_address", "")
+    if setting.get("cc_address"):
+        msg["Cc"] = setting["cc_address"]
+    if setting.get("bcc_address"):
+        msg["Bcc"] = setting["bcc_address"]
+    return msg.as_string()
+
+
+@mail_report_bp.route("/download_eml")
+def download_eml():
+    """メール内容を.emlファイルとしてダウンロードする。
+
+    Outlookで開くとHTMLメールとして表示され、フォントが統一される。
+
+    Returns:
+        Response: .emlファイルのダウンロードレスポンス
+    """
+    redir = _require_privileged()
+    if redir:
+        return redir
+
+    raw_date = request.args.get("date", "").strip()
+    role_type = request.args.get("type", "mgr")
+    if role_type not in ("mgr", "master"):
+        role_type = "mgr"
+    try:
+        target_date = date.fromisoformat(raw_date)
+    except ValueError:
+        target_date = date.today()
+
+    login_user = get_user_by_id(int(session["user_id"]))
+    if not login_user:
+        abort(404)
+
+    if role_type == "master":
+        setting = get_mail_setting("マスタ")
+        dept = login_user.get("dept", "")
+        members = get_accessible_users(login_user["id"], login_user["role"], dept)
+        subject = _build_master_subject(dept, target_date)
+        greeting = setting.get("body_template", "")
+        body = _build_master_body(login_user, target_date, members, greeting)
+    else:
+        setting = get_mail_setting("管理職")
+        subject, body = _build_mgr_self_body(login_user, target_date)
+
+    eml_content = _build_eml(setting, subject, body)
+    filename = f"daily_report_{target_date.isoformat()}_{role_type}.eml"
+
+    return Response(
+        eml_content,
+        mimetype="message/rfc822",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @mail_report_bp.route("/preview")
@@ -509,7 +606,7 @@ def preview():
 
     # 管理職用: 固定テンプレート
     mgr_subject, mgr_body = _build_mgr_self_body(login_user, target_date)
-    mgr_mailto = _build_mailto(mgr_setting, mgr_subject, mgr_body)
+    mgr_mailto = _build_mailto(mgr_setting, mgr_subject)
 
     # マスタ用: 動的生成（件名は曜日で自動判定、本文は大区分・中区分グループ化）
     dept = login_user.get("dept", "")
@@ -517,7 +614,7 @@ def preview():
     master_subject = _build_master_subject(dept, target_date)
     master_greeting = master_setting.get("body_template", "")
     master_body = _build_master_body(login_user, target_date, members, master_greeting)
-    master_mailto = _build_mailto(master_setting, master_subject, master_body)
+    master_mailto = _build_mailto(master_setting, master_subject)
 
     return render_template(
         "mail_report_preview.html",

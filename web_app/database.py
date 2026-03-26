@@ -128,6 +128,24 @@ CREATE TABLE IF NOT EXISTS mail_settings (
     subject_template TEXT DEFAULT '',
     body_template TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS project_task (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category_id INTEGER REFERENCES task_category(id) ON DELETE SET NULL,
+    subcategory_id INTEGER REFERENCES task_subcategory(id) ON DELETE SET NULL,
+    task_name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT '未着手',
+    delay_days INTEGER DEFAULT 0,
+    progress INTEGER DEFAULT 0,
+    display_order INTEGER DEFAULT 0,
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_by TEXT DEFAULT ''
+);
 """
 
 # users.json のパス
@@ -311,6 +329,34 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
     if "bcc_address" not in ms_cols:
         db.execute("ALTER TABLE mail_settings ADD COLUMN bcc_address TEXT DEFAULT ''")
         logger.info("mail_settings.bcc_address カラムを追加しました。")
+
+    # project_task テーブルを作成（なければ）
+    tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "project_task" not in tables:
+        db.execute("""CREATE TABLE IF NOT EXISTS project_task (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER REFERENCES task_category(id) ON DELETE SET NULL,
+            subcategory_id INTEGER REFERENCES task_subcategory(id) ON DELETE SET NULL,
+            task_name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT '未着手',
+            progress INTEGER DEFAULT 0,
+            display_order INTEGER DEFAULT 0,
+            created_by INTEGER REFERENCES users(id),
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_by TEXT DEFAULT ''
+        )""")
+        logger.info("project_task テーブルを作成しました。")
+
+    # project_task に delay_days カラムを追加（なければ）
+    if "project_task" in tables:
+        pt_cols = {row[1] for row in db.execute("PRAGMA table_info(project_task)").fetchall()}
+        if "delay_days" not in pt_cols:
+            db.execute("ALTER TABLE project_task ADD COLUMN delay_days INTEGER DEFAULT 0")
+            logger.info("project_task.delay_days カラムを追加しました。")
 
     # デフォルトデータ挿入（なければ）
     db.execute("""

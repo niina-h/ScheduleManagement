@@ -7,6 +7,7 @@
   <h4 class="mb-0 fw-bold">管理者ダッシュボード</h4>
   <div class="d-flex gap-2">
     {% if session.user_role == 'マスタ' %}
+    <a href="{{ url_for('export_bp.import_schedule') }}" class="btn btn-outline-success btn-sm">📥 予定インポート</a>
     <a href="{{ url_for('mail_report_bp.settings') }}" class="btn btn-outline-warning btn-sm">⚙ メール設定</a>
     {% endif %}
     <a href="{{ url_for('admin_bp.operation_logs') }}" class="btn btn-outline-secondary">操作ログ</a>
@@ -67,6 +68,61 @@
               </a>
             </td>
           </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== セクション: 本日の実績入力状況 ===== -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-info text-white fw-semibold d-flex align-items-center justify-content-between">
+    <span>本日の実績入力状況（{{ today_str }}）</span>
+    <span class="badge bg-light text-dark" id="daily-status-timer">自動更新: 30秒</span>
+  </div>
+  <div class="card-body p-0" id="daily-status-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-secondary">
+          <tr>
+            <th class="ps-3">名前</th>
+            <th>部署</th>
+            <th class="text-center">入力状況</th>
+            <th class="text-center">入力枠数</th>
+            <th class="text-center">最終更新</th>
+            <th class="text-center">操作</th>
+          </tr>
+        </thead>
+        <tbody id="daily-status-tbody">
+          {% for ds in daily_status %}
+          {% if ds.role != 'マスタ' %}
+          <tr>
+            <td class="ps-3 fw-semibold">{{ ds.name }}</td>
+            <td>{{ ds.dept or '-' }}</td>
+            <td class="text-center">
+              {% if ds.filled_slots > 0 %}
+              <span class="badge bg-success">入力済</span>
+              {% else %}
+              <span class="badge bg-warning text-dark">未入力</span>
+              {% endif %}
+            </td>
+            <td class="text-center">{{ ds.filled_slots }}</td>
+            <td class="text-center text-muted small">
+              {% if ds.updated_at %}
+              {{ ds.updated_at[11:16] if ds.updated_at|length > 16 else ds.updated_at }}
+              {% else %}
+              -
+              {% endif %}
+            </td>
+            <td class="text-center">
+              <a href="{{ url_for('daily_bp.daily_today') }}?user_id={{ ds.id }}"
+                 class="btn btn-outline-primary btn-sm" title="実績を確認・コメント入力">
+                実績確認
+              </a>
+            </td>
+          </tr>
+          {% endif %}
           {% endfor %}
         </tbody>
       </table>
@@ -502,6 +558,75 @@ function saveOrder() {
   });
   form.submit();
 }
+
+/* === 本日の実績入力状況 自動更新 === */
+(function() {
+  const POLL_INTERVAL = 30000; // 30秒
+  const tbody = document.getElementById('daily-status-tbody');
+  const timerBadge = document.getElementById('daily-status-timer');
+  if (!tbody) return;
+
+  let countdown = POLL_INTERVAL / 1000;
+  let countdownTimer = null;
+
+  function startCountdown() {
+    countdown = POLL_INTERVAL / 1000;
+    if (countdownTimer) clearInterval(countdownTimer);
+    countdownTimer = setInterval(function() {
+      countdown--;
+      if (timerBadge) timerBadge.textContent = '自動更新: ' + countdown + '秒';
+    }, 1000);
+  }
+
+  function escapeHtml(text) {
+    var map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
+    return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+  }
+
+  function formatTime(updatedAt) {
+    if (!updatedAt || updatedAt.length < 16) return '-';
+    return updatedAt.substring(11, 16);
+  }
+
+  function refreshDailyStatus() {
+    fetch('{{ url_for("admin_bp.api_daily_status") }}')
+      .then(function(res) {
+        if (!res.ok) { return Promise.reject('HTTP ' + res.status); }
+        return res.json();
+      })
+      .then(function(data) {
+        var html = '';
+        var items = data.items || [];
+        for (var i = 0; i < items.length; i++) {
+          var ds = items[i];
+          if (ds.role === 'マスタ') continue;
+          html += '<tr>';
+          html += '<td class="ps-3 fw-semibold">' + escapeHtml(ds.name) + '</td>';
+          html += '<td>' + escapeHtml(ds.dept || '-') + '</td>';
+          if (ds.filled_slots > 0) {
+            html += '<td class="text-center"><span class="badge bg-success">入力済</span></td>';
+          } else {
+            html += '<td class="text-center"><span class="badge bg-warning text-dark">未入力</span></td>';
+          }
+          html += '<td class="text-center">' + parseInt(ds.filled_slots) + '</td>';
+          html += '<td class="text-center text-muted small">' + escapeHtml(formatTime(ds.updated_at)) + '</td>';
+          html += '<td class="text-center">';
+          html += '<a href="{{ url_for("daily_bp.daily_today") }}?user_id=' + parseInt(ds.id) + '"';
+          html += ' class="btn btn-outline-primary btn-sm" title="実績を確認・コメント入力">実績確認</a>';
+          html += '</td></tr>';
+        }
+        tbody.innerHTML = html;
+        startCountdown();
+      })
+      .catch(function(err) {
+        console.error('実績状況の更新に失敗:', err);
+        startCountdown();
+      });
+  }
+
+  startCountdown();
+  setInterval(refreshDailyStatus, POLL_INTERVAL);
+})();
 
 function submitDeptUpdate(deptId) {
   const name = document.getElementById('dept-name-' + deptId).value.trim();

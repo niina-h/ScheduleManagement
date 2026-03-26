@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}週間予定インポート - 予定管理システム{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+
+    <div class="d-flex align-items-center justify-content-between mb-4">
+      <h4 class="mb-0 fw-bold">週間予定 Excelインポート</h4>
+      <a href="{{ url_for('admin_bp.dashboard') }}" class="btn btn-outline-secondary btn-sm">← ダッシュボードへ戻る</a>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-primary text-white fw-semibold">Excelファイルから週間予定を取り込む</div>
+      <div class="card-body">
+        <div class="alert alert-info small mb-3">
+          <strong>取り込みルール：</strong>
+          <ul class="mb-0 mt-1">
+            <li>「週間予定表_テンプレート.xlsx」形式のファイルをアップロードしてください</li>
+            <li>各曜日の4行目（午前1枠目）に値がない日はスキップされ、既存データが維持されます</li>
+            <li>取り込み対象の曜日は、既存データを上書きします</li>
+            <li>この機能はマスタ権限のみ使用可能です</li>
+          </ul>
+        </div>
+
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('export_bp.import_schedule') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">対象ユーザー <span class="text-danger">*</span></label>
+            <select name="target_user_id" class="form-select" required>
+              <option value="">-- 選択してください --</option>
+              {% for u in all_users %}
+              <option value="{{ u.id }}">{{ u.name }}（{{ u.dept or '-' }} / {{ u.role }}）</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">週開始日（月曜日） <span class="text-danger">*</span></label>
+            <input type="date" name="week_start" class="form-control" required
+                   placeholder="YYYY-MM-DD">
+            <div class="form-text">月曜日でなくても自動的にその週の月曜日に補正されます</div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Excelファイル（.xlsx） <span class="text-danger">*</span></label>
+            <input type="file" name="excel_file" class="form-control" accept=".xlsx" required>
+          </div>
+
+          <div class="d-flex justify-content-end">
+            <button type="submit" class="btn btn-primary"
+                    onclick="return confirm('週間予定データを取り込みます。対象曜日の既存データは上書きされます。よろしいですか？')">
+              取り込み実行
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
