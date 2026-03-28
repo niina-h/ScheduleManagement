@@ -2,13 +2,19 @@
 {% block title %}タスク管理 - 予定管理システム{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-lg-11">
+  <div class="col-lg-12">
 
     <div class="d-flex align-items-center justify-content-between mb-3">
-      <h5 class="fw-bold mb-0">📋 タスク管理</h5>
-      <button class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#addForm">＋ タスク追加</button>
+      <h5 class="fw-bold mb-0">タスク管理</h5>
+      <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_tasks_bp.gantt') }}">ガントチャート</a>
+        {% if privileged %}
+        <button class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#addForm">＋ タスク追加</button>
+        {% endif %}
+      </div>
     </div>
 
+    {% if privileged %}
     {# ── 追加フォーム（折りたたみ） ── #}
     <div class="collapse mb-3" id="addForm">
       <div class="card shadow-sm">
@@ -17,7 +23,7 @@
           <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div class="row g-2">
-              <div class="col-md-3">
+              <div class="col-md-2">
                 <label class="form-label small fw-semibold">大区分</label>
                 <select name="category_id" class="form-select form-select-sm" id="add-cat">
                   <option value="">（なし）</option>
@@ -26,7 +32,7 @@
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-2">
                 <label class="form-label small fw-semibold">中区分</label>
                 <select name="subcategory_id" class="form-select form-select-sm" id="add-subcat">
                   <option value="">（なし）</option>
@@ -35,13 +41,31 @@
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-2">
                 <label class="form-label small fw-semibold">タスク名 <span class="text-danger">*</span></label>
                 <input type="text" name="task_name" class="form-control form-control-sm" required>
               </div>
-              <div class="col-md-3">
+              <div class="col-md-2">
                 <label class="form-label small fw-semibold">対応内容</label>
                 <input type="text" name="description" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-1">
+                <label class="form-label small fw-semibold">担当者1</label>
+                <select name="assigned_to" class="form-select form-select-sm">
+                  <option value="">--</option>
+                  {% for u in users %}
+                  <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-1">
+                <label class="form-label small fw-semibold">担当者2</label>
+                <select name="assigned_to_2" class="form-select form-select-sm">
+                  <option value="">--</option>
+                  {% for u in users %}
+                  <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
+                  {% endfor %}
+                </select>
               </div>
               <div class="col-md-2">
                 <label class="form-label small fw-semibold">開始日 <span class="text-danger">*</span></label>
@@ -59,15 +83,21 @@
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold">遅延日数</label>
+              <div class="col-md-1">
+                <label class="form-label small fw-semibold">遅延日</label>
                 <input type="number" name="delay_days" class="form-control form-control-sm" value="0" min="0">
               </div>
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold">進捗率（手動）</label>
-                <input type="number" name="progress" class="form-control form-control-sm" value="0" min="0" max="100">
+              <div class="col-md-1">
+                <label class="form-label small fw-semibold">進捗%</label>
+                <input type="number" name="progress" class="form-control form-control-sm" value="0" min="0" max="200">
               </div>
-              <div class="col-md-2 d-flex align-items-end">
+              <div class="col-md-1 d-flex align-items-end">
+                <div class="form-check">
+                  <input type="checkbox" name="is_milestone" class="form-check-input" id="add-milestone" value="1">
+                  <label class="form-check-label small" for="add-milestone">MS</label>
+                </div>
+              </div>
+              <div class="col-md-1 d-flex align-items-end">
                 <button type="submit" class="btn btn-primary btn-sm w-100">追加</button>
               </div>
             </div>
@@ -75,104 +105,147 @@
         </div>
       </div>
     </div>
+    {% endif %}
 
-    {# ── タスク一覧（大区分でグループ化） ── #}
-    {% set ns = namespace(current_cat='', current_subcat='') %}
+    {# ── タスク一覧テーブル（一括保存フォーム） ── #}
+    {% set ns = namespace(current_cat='') %}
     <div class="card shadow-sm">
+      {% if privileged %}
+      <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% endif %}
       <div class="card-body p-0">
+        <div style="max-height: 70vh; overflow-y: auto;">
         <table class="table table-sm table-hover mb-0">
-          <thead class="table-light">
+          <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
             <tr>
-              <th style="width:12%">大区分</th>
-              <th style="width:10%">中区分</th>
-              <th style="width:14%">タスク名</th>
-              <th style="width:18%">対応内容</th>
-              <th style="width:8%">開始日</th>
-              <th style="width:8%">終了日</th>
+              <th style="width:7%">中区分</th>
+              <th style="width:13%">タスク名</th>
+              <th style="width:11%">対応内容</th>
+              <th style="width:8%">担当者</th>
+              <th style="width:5%">開始日</th>
+              <th style="width:5%">終了日</th>
               <th style="width:7%">状態</th>
-              <th style="width:5%">遅延</th>
-              <th style="width:7%">進捗率</th>
-              <th style="width:13%">操作</th>
+              <th style="width:3%">遅延</th>
+              <th style="width:5%">進捗</th>
+              <th style="width:10%">進捗バー</th>
+              <th style="width:3%">MS</th>
+              {% if privileged %}<th style="width:3%">削除</th>{% endif %}
             </tr>
           </thead>
           <tbody>
             {% for t in tasks %}
-            {# 大区分セパレータ #}
             {% if (t.category_name or '（なし）') != ns.current_cat %}
               {% set ns.current_cat = t.category_name or '（なし）' %}
-              {% set ns.current_subcat = '' %}
               <tr class="table-secondary">
-                <td colspan="10" class="fw-bold">・{{ ns.current_cat }}</td>
+                <td colspan="{{ 12 if privileged else 11 }}" class="fw-bold">{{ ns.current_cat }}</td>
               </tr>
             {% endif %}
-            <tr>
-              <td></td>
+            <tr{% if t.is_milestone %} class="table-warning"{% endif %}>
+              {% if privileged %}
+              <input type="hidden" form="bulkForm" name="task_id" value="{{ t.id }}">
+              <input type="hidden" form="bulkForm" name="category_id_{{ t.id }}" value="{{ t.category_id or '' }}">
+              <input type="hidden" form="bulkForm" name="subcategory_id_{{ t.id }}" value="{{ t.subcategory_id or '' }}">
               <td class="small text-muted">{{ t.subcategory_name or '' }}</td>
+              <td><input type="text" form="bulkForm" name="task_name_{{ t.id }}" value="{{ t.task_name }}" class="form-control form-control-sm"></td>
+              <td><input type="text" form="bulkForm" name="description_{{ t.id }}" value="{{ t.description or '' }}" class="form-control form-control-sm"></td>
               <td>
-                <form method="post" action="{{ url_for('project_tasks_bp.update_task', task_id=t.id) }}" class="edit-form" id="form-{{ t.id }}">
+                <select form="bulkForm" name="assigned_to_{{ t.id }}" class="form-select form-select-sm">
+                  <option value="">--</option>
+                  {% for u in users %}
+                  <option value="{{ u.id }}" {% if t.assigned_to == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+                  {% endfor %}
+                </select>
+                <select form="bulkForm" name="assigned_to_2_{{ t.id }}" class="form-select form-select-sm mt-1">
+                  <option value="">--</option>
+                  {% for u in users %}
+                  <option value="{{ u.id }}" {% if t.assigned_to_2 == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td><input type="date" form="bulkForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}" class="form-control form-control-sm px-1" style="min-width:0;font-size:0.75rem;"></td>
+              <td><input type="date" form="bulkForm" name="end_date_{{ t.id }}" value="{{ t.end_date }}" class="form-control form-control-sm px-1" style="min-width:0;font-size:0.75rem;"></td>
+              <td>
+                <select form="bulkForm" name="status_{{ t.id }}" data-tid="{{ t.id }}" class="form-select form-select-sm js-status
+                  {% if t.status == '完了' %}text-success
+                  {% elif t.status == '遅れ' %}text-danger
+                  {% elif t.status == '停止' %}text-secondary{% endif %}">
+                  {% for s in statuses %}
+                  <option value="{{ s }}" {% if t.status == s %}selected{% endif %}>{{ s }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td><input type="number" form="bulkForm" name="delay_days_{{ t.id }}" value="{{ t.delay_days or 0 }}" min="0" class="form-control form-control-sm" style="width:55px"></td>
+              <td>
+                <div class="d-flex align-items-center gap-1">
+                  <input type="number" form="bulkForm" name="progress_{{ t.id }}" data-tid="{{ t.id }}" value="{{ t.progress }}" min="0" max="200" class="form-control form-control-sm js-progress" style="width:55px">
+                  <span class="small">%</span>
+                </div>
+              </td>
+              {% else %}
+              <td class="small text-muted">{{ t.subcategory_name or '' }}</td>
+              <td class="small">{{ t.task_name }}</td>
+              <td class="small">{{ t.description or '' }}</td>
+              <td class="small">{{ t.assigned_name or '' }}</td>
+              <td class="small">{{ t.start_date }}</td>
+              <td class="small">{{ t.end_date }}</td>
+              <td class="small
+                {% if t.status == '完了' %} text-success
+                {% elif t.status == '遅れ' %} text-danger
+                {% elif t.status == '停止' %} text-secondary{% endif %}">{{ t.status }}</td>
+              <td class="small">{{ t.delay_days or 0 }}日</td>
+              <td class="small">{{ t.progress }}%</td>
+              {% endif %}
+              <td>
+                <div class="progress" style="height:16px;">
+                  <div id="bar-{{ t.id }}" class="progress-bar
+                    {% if t.progress >= 100 %}bg-success{% elif t.status == '遅れ' %}bg-danger{% elif t.progress > 0 %}bg-primary{% else %}bg-secondary{% endif %}"
+                    style="width:{{ [t.progress, 100]|min }}%">
+                    <small>{{ t.progress }}%</small>
+                  </div>
+                </div>
+              </td>
+              <td class="text-center">
+                {% if privileged %}
+                  <input type="checkbox" form="bulkForm" name="is_milestone_{{ t.id }}" class="form-check-input" value="1" {% if t.is_milestone %}checked{% endif %}>
+                {% else %}
+                  {% if t.is_milestone %}◆{% endif %}
+                {% endif %}
+              </td>
+              {% if privileged %}
+              <td class="text-center">
+                <form method="post" action="{{ url_for('project_tasks_bp.delete_task', task_id=t.id) }}" class="d-inline"
+                      onsubmit="return confirm('「{{ t.task_name }}」を削除しますか？')">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                  <input type="hidden" name="category_id" value="{{ t.category_id or '' }}">
-                  <input type="hidden" name="subcategory_id" value="{{ t.subcategory_id or '' }}">
-                  <input type="text" name="task_name" value="{{ t.task_name }}" class="form-control form-control-sm">
-              </td>
-              <td>
-                  <input type="text" name="description" value="{{ t.description or '' }}" class="form-control form-control-sm">
-              </td>
-              <td>
-                  <input type="date" name="start_date" value="{{ t.start_date }}" class="form-control form-control-sm">
-              </td>
-              <td>
-                  <input type="date" name="end_date" value="{{ t.end_date }}" class="form-control form-control-sm">
-              </td>
-              <td>
-                  <select name="status" class="form-select form-select-sm
-                    {% if t.status == '完了' %}text-success{% endif %}
-                    {% if t.status == '遅れ' %}text-danger{% endif %}
-                    {% if t.status == '停止' %}text-secondary{% endif %}">
-                    {% for s in statuses %}
-                    <option value="{{ s }}" {% if t.status == s %}selected{% endif %}>{{ s }}</option>
-                    {% endfor %}
-                  </select>
-              </td>
-              <td>
-                  <div class="d-flex align-items-center gap-1">
-                    <input type="number" name="delay_days" value="{{ t.delay_days or 0 }}" min="0" class="form-control form-control-sm" style="width:55px">
-                    <span class="small">日</span>
-                  </div>
-              </td>
-              <td>
-                  <div class="d-flex align-items-center gap-1">
-                    <input type="number" name="progress" value="{{ t.progress }}" min="0" max="200" class="form-control form-control-sm" style="width:60px">
-                    <span class="small">%</span>
-                  </div>
-              </td>
-              <td>
-                  <div class="d-flex gap-1">
-                    <button type="submit" class="btn btn-outline-primary btn-sm">保存</button>
+                  <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1">✕</button>
                 </form>
-                    <form method="post" action="{{ url_for('project_tasks_bp.delete_task', task_id=t.id) }}" class="d-inline"
-                          onsubmit="return confirm('「{{ t.task_name }}」を削除しますか？')">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                      <button type="submit" class="btn btn-outline-danger btn-sm">削除</button>
-                    </form>
-                  </div>
               </td>
+              {% endif %}
             </tr>
             {% endfor %}
             {% if not tasks %}
-            <tr><td colspan="10" class="text-center text-muted py-3">タスクが登録されていません</td></tr>
+            <tr><td colspan="{{ 12 if privileged else 11 }}" class="text-center text-muted py-3">
+              {% if privileged %}タスクが登録されていません{% else %}割り当てられたタスクはありません{% endif %}
+            </td></tr>
             {% endif %}
           </tbody>
         </table>
+        </div>
       </div>
+      {% if privileged and tasks %}
+      <div class="card-footer d-flex justify-content-end">
+        <button type="submit" form="bulkForm" class="btn btn-primary btn-sm">一括保存</button>
+      </div>
+      {% endif %}
+      {% if privileged %}
+      </form>
+      {% endif %}
     </div>
 
-    {# 進捗バー凡例 #}
     <div class="mt-3 small text-muted">
-      <strong>状態と進捗率の関係：</strong>
-      未着手＝0% / 着手＝10% / 順調＝経過日ベース自動計算（上限95%） / 遅れ＝経過日ベース（超過あり） / 完了＝100% / 停止＝凍結<br>
-      「遅れ」状態では遅延日数を入力すると、進捗率＝（経過日数−遅延日数）÷全体日数×100 で自動計算されます。<br>
-      手動で進捗率を入力した場合、「順調」「遅れ」では次回表示時に自動再計算されます。
+      <strong>状態：</strong>
+      未着手＝0% / 着手＝10% / 順調 / 遅れ / 完了＝100% / 停止＝凍結
+      　<strong>MS</strong>＝マイルストーン（◆）
     </div>
 
   </div>
@@ -181,17 +254,14 @@
 
 {% block scripts %}
 <script>
-  // 大区分選択時に中区分をフィルタリング
-  document.addEventListener('DOMContentLoaded', function () {
-    var catSelect = document.getElementById('add-cat');
-    var subcatSelect = document.getElementById('add-subcat');
-    if (!catSelect || !subcatSelect) return;
-
+document.addEventListener('DOMContentLoaded', function () {
+  /* 大区分→中区分連動 */
+  var catSelect = document.getElementById('add-cat');
+  var subcatSelect = document.getElementById('add-subcat');
+  if (catSelect && subcatSelect) {
     var allOptions = Array.from(subcatSelect.querySelectorAll('option[data-cat]'));
-
     catSelect.addEventListener('change', function () {
       var catId = catSelect.value;
-      // リセット
       subcatSelect.innerHTML = '<option value="">（なし）</option>';
       allOptions.forEach(function (opt) {
         if (!catId || opt.dataset.cat === catId) {
@@ -199,6 +269,52 @@
         }
       });
     });
+  }
+
+  /* 状態→進捗率の自動マッピング */
+  var STATUS_PROGRESS = { '未着手': 0, '着手': 10, '完了': 100 };
+
+  function updateBar(tid) {
+    var progInput = document.querySelector('.js-progress[data-tid="' + tid + '"]');
+    var bar = document.getElementById('bar-' + tid);
+    var statusSel = document.querySelector('.js-status[data-tid="' + tid + '"]');
+    if (!progInput || !bar) return;
+    var val = Math.max(0, Math.min(parseInt(progInput.value) || 0, 100));
+    bar.style.width = val + '%';
+    bar.querySelector('small').textContent = val + '%';
+    /* バー色更新 */
+    bar.className = 'progress-bar';
+    var st = statusSel ? statusSel.value : '';
+    if (val >= 100) bar.classList.add('bg-success');
+    else if (st === '遅れ') bar.classList.add('bg-danger');
+    else if (val > 0) bar.classList.add('bg-primary');
+    else bar.classList.add('bg-secondary');
+  }
+
+  /* 状態変更 → 進捗%自動更新 + バー更新 */
+  document.querySelectorAll('.js-status').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var tid = sel.dataset.tid;
+      var status = sel.value;
+      if (status in STATUS_PROGRESS) {
+        var progInput = document.querySelector('.js-progress[data-tid="' + tid + '"]');
+        if (progInput) progInput.value = STATUS_PROGRESS[status];
+      }
+      /* 状態色クラス更新 */
+      sel.className = 'form-select form-select-sm js-status';
+      if (status === '完了') sel.classList.add('text-success');
+      else if (status === '遅れ') sel.classList.add('text-danger');
+      else if (status === '停止') sel.classList.add('text-secondary');
+      updateBar(tid);
+    });
   });
+
+  /* 進捗%入力 → バーリアルタイム更新 */
+  document.querySelectorAll('.js-progress').forEach(function (inp) {
+    inp.addEventListener('input', function () {
+      updateBar(inp.dataset.tid);
+    });
+  });
+});
 </script>
 {% endblock %}

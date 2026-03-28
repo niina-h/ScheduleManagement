@@ -37,13 +37,13 @@ def get_all_users(dept_filter: str | None = None) -> list[dict]:
     db = get_db()
     if dept_filter is not None:
         rows = db.execute(
-            "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id "
+            "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id, last_name, first_name "
             "FROM users WHERE dept = ? ORDER BY display_order ASC, id ASC",
             (dept_filter,),
         ).fetchall()
     else:
         rows = db.execute(
-            "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id "
+            "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id, last_name, first_name "
             "FROM users ORDER BY display_order ASC, id ASC"
         ).fetchall()
     return [dict(row) for row in rows]
@@ -270,6 +270,8 @@ def add_user(
     role: str,
     dept: str,
     std_hours: float,
+    last_name: str = "",
+    first_name: str = "",
 ) -> bool:
     """
     ユーザーを追加する。
@@ -277,24 +279,29 @@ def add_user(
     std_hours_am / std_hours_pm は互換性のため std_hours / 2 を設定する。
 
     Args:
-        name: ユーザー名
+        name: ユーザー表示名（姓＋名）
         role: ロール
         dept: 部署
         std_hours: 1日あたりの標準勤務時間
+        last_name: 姓
+        first_name: 名
 
     Returns:
         bool: 追加成功時True、重複時False
     """
     db = get_db()
+    if not last_name:
+        last_name = name
     try:
-        # 新規ユーザーは全表示で最後尾に配置（display_order の最大値 + 1）
         max_order = db.execute(
             "SELECT COALESCE(MAX(display_order), 0) FROM users"
         ).fetchone()[0]
         db.execute(
-            "INSERT INTO users (name, role, dept, std_hours_am, std_hours_pm, std_hours, display_order) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, role, dept, std_hours / 2, std_hours / 2, std_hours, max_order + 1),
+            "INSERT INTO users (name, role, dept, std_hours_am, std_hours_pm, std_hours, "
+            " display_order, last_name, first_name) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, role, dept, std_hours / 2, std_hours / 2, std_hours,
+             max_order + 1, last_name, first_name),
         )
         db.commit()
         return True
@@ -309,8 +316,10 @@ def update_user(
     role: str,
     dept: str,
     std_hours: float,
+    last_name: str = "",
+    first_name: str = "",
 ) -> bool:
-    """ユーザーの全情報（名前・役職・部署・基本勤務時間）を更新する。
+    """ユーザーの全情報（名前・役職・部署・基本勤務時間・姓名）を更新する。
 
     名前が他ユーザーと重複する場合は False を返す。
 
@@ -320,16 +329,22 @@ def update_user(
         role: 新しい役職
         dept: 新しい部署
         std_hours: 新しい1日あたりの基本勤務時間
+        last_name: 姓
+        first_name: 名
 
     Returns:
         bool: 更新成功時 True、名前重複などエラー時 False
     """
     db = get_db()
+    if not last_name:
+        last_name = name
     try:
         db.execute(
             "UPDATE users SET name = ?, role = ?, dept = ?, "
-            "std_hours = ?, std_hours_am = ?, std_hours_pm = ? WHERE id = ?",
-            (name, role, dept, std_hours, std_hours / 2, std_hours / 2, user_id),
+            "std_hours = ?, std_hours_am = ?, std_hours_pm = ?, "
+            "last_name = ?, first_name = ? WHERE id = ?",
+            (name, role, dept, std_hours, std_hours / 2, std_hours / 2,
+             last_name, first_name, user_id),
         )
         db.commit()
         return True
@@ -1760,81 +1775,60 @@ def save_mail_setting(
 # ---------------------------------------------------------------------------
 
 # 状態の選択肢（表示順）
-PROJECT_TASK_STATUSES: list[str] = ["未着手", "着手", "順調", "遅れ", "完了", "停止"]
+PROJECT_TASK_STATUSES: list[str] = [
+    "未着手", "着手", "順調", "遅れ", "完了", "停止",
+]
 
 
-def _calc_progress(status: str, start_date: str, end_date: str,
-                    current_progress: int, delay_days: int = 0) -> int:
-    """状態と期間から進捗率を自動計算する。
+def _normalize_progress(status: str, progress: int) -> int:
+    """状態に応じた進捗率の正規化（手動入力を尊重する）。
+
+    未着手→0、完了→100 のみ強制。それ以外はユーザー入力値をそのまま返す。
 
     Args:
         status: タスク状態
-        start_date: 開始日（YYYY-MM-DD）
-        end_date: 終了日（YYYY-MM-DD）
-        current_progress: 現在の進捗率（停止時に保持する値）
-        delay_days: 遅延日数（「遅れ」状態で使用）
+        progress: ユーザーが入力した進捗率
 
     Returns:
-        int: 進捗率（0〜100+）
+        int: 正規化された進捗率
     """
     if status == "未着手":
         return 0
-    if status == "着手":
-        return 10
     if status == "完了":
         return 100
-    if status == "停止":
-        return current_progress
-
-    # 順調 / 遅れ: 経過日ベースで自動計算
-    try:
-        sd = date.fromisoformat(start_date)
-        ed = date.fromisoformat(end_date)
-    except ValueError:
-        return current_progress
-
-    total_days = (ed - sd).days
-    if total_days <= 0:
-        return 100
-
-    elapsed = (date.today() - sd).days
-
-    if status == "順調":
-        rate = int(elapsed / total_days * 100)
-        return max(0, min(rate, 95))
-
-    # 遅れ: (経過日数 - 遅延日数) ÷ 全期間 × 100
-    effective_elapsed = max(0, elapsed - delay_days)
-    rate = int(effective_elapsed / total_days * 100)
-    return max(0, rate)
+    return max(0, progress)
 
 
-def get_all_project_tasks() -> list[dict]:
-    """全プロジェクトタスクを大区分・中区分の表示順で取得する。
+def get_all_project_tasks(assigned_to: int | None = None) -> list[dict]:
+    """プロジェクトタスクを大区分・中区分の表示順で取得する。
+
+    Args:
+        assigned_to: 指定時はそのユーザーに割り当てられたタスクのみ返す。
+                     None の場合は全タスクを返す。
 
     Returns:
         list[dict]: プロジェクトタスク一覧
     """
     db = get_db()
-    rows = db.execute(
+    query = (
         "SELECT pt.*, "
         "  tc.name AS category_name, tc.display_order AS cat_order, "
-        "  ts.name AS subcategory_name, ts.display_order AS subcat_order "
+        "  ts.name AS subcategory_name, ts.display_order AS subcat_order, "
+        "  u1.name AS assigned_name, u1.last_name AS assigned_last_name, "
+        "  u2.name AS assigned_name_2, u2.last_name AS assigned_last_name_2 "
         "FROM project_task pt "
         "LEFT JOIN task_category tc ON pt.category_id = tc.id "
         "LEFT JOIN task_subcategory ts ON pt.subcategory_id = ts.id "
-        "ORDER BY tc.display_order, ts.display_order, pt.display_order"
-    ).fetchall()
-    result: list[dict] = []
-    for r in rows:
-        d = dict(r)
-        # 進捗率を自動再計算（順調・遅れの場合）
-        d["progress"] = _calc_progress(
-            d["status"], d["start_date"], d["end_date"],
-            d["progress"], d.get("delay_days", 0) or 0,
-        )
-        result.append(d)
-    return result
+        "LEFT JOIN users u1 ON pt.assigned_to = u1.id "
+        "LEFT JOIN users u2 ON pt.assigned_to_2 = u2.id "
+    )
+    params: tuple = ()
+    if assigned_to is not None:
+        query += "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?) "
+        params = (assigned_to, assigned_to)
+    query += "ORDER BY tc.display_order, ts.display_order, pt.display_order"
+    rows = db.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_project_task_by_id(task_id: int) -> dict | None:
@@ -1849,21 +1843,20 @@ def get_project_task_by_id(task_id: int) -> dict | None:
     db = get_db()
     row = db.execute(
         "SELECT pt.*, "
-        "  tc.name AS category_name, ts.name AS subcategory_name "
+        "  tc.name AS category_name, ts.name AS subcategory_name, "
+        "  u1.name AS assigned_name, u1.last_name AS assigned_last_name, "
+        "  u2.name AS assigned_name_2, u2.last_name AS assigned_last_name_2 "
         "FROM project_task pt "
         "LEFT JOIN task_category tc ON pt.category_id = tc.id "
         "LEFT JOIN task_subcategory ts ON pt.subcategory_id = ts.id "
+        "LEFT JOIN users u1 ON pt.assigned_to = u1.id "
+        "LEFT JOIN users u2 ON pt.assigned_to_2 = u2.id "
         "WHERE pt.id = ?",
         (task_id,),
     ).fetchone()
     if not row:
         return None
-    d = dict(row)
-    d["progress"] = _calc_progress(
-        d["status"], d["start_date"], d["end_date"],
-        d["progress"], d.get("delay_days", 0) or 0,
-    )
-    return d
+    return dict(row)
 
 
 def add_project_task(
@@ -1878,6 +1871,9 @@ def add_project_task(
     delay_days: int,
     created_by: int,
     updated_by: str,
+    assigned_to: int | None = None,
+    assigned_to_2: int | None = None,
+    is_milestone: int = 0,
 ) -> int:
     """プロジェクトタスクを追加する。
 
@@ -1893,20 +1889,25 @@ def add_project_task(
         delay_days: 遅延日数
         created_by: 作成者ユーザーID
         updated_by: 更新者名
+        assigned_to: 担当者1ユーザーID
+        assigned_to_2: 担当者2ユーザーID
+        is_milestone: マイルストーンフラグ（1=マイルストーン）
 
     Returns:
         int: 新規タスクID
     """
     db = get_db()
-    calc_progress = _calc_progress(status, start_date, end_date, progress, delay_days)
+    calc_progress = _normalize_progress(status, progress)
     max_order = db.execute("SELECT COALESCE(MAX(display_order), 0) FROM project_task").fetchone()[0]
     cur = db.execute(
         "INSERT INTO project_task "
-        "(category_id, subcategory_id, task_name, description, start_date, end_date, "
-        " status, delay_days, progress, display_order, created_by, updated_by) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (category_id, subcategory_id, task_name, description, start_date, end_date,
-         status, delay_days, calc_progress, max_order + 1, created_by, updated_by),
+        "(category_id, subcategory_id, task_name, description, assigned_to, assigned_to_2, "
+        " is_milestone, start_date, end_date, status, delay_days, progress, "
+        " display_order, created_by, updated_by) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (category_id, subcategory_id, task_name, description, assigned_to, assigned_to_2,
+         is_milestone, start_date, end_date, status, delay_days, calc_progress,
+         max_order + 1, created_by, updated_by),
     )
     db.commit()
     return cur.lastrowid
@@ -1924,6 +1925,9 @@ def update_project_task(
     progress: int,
     delay_days: int,
     updated_by: str,
+    assigned_to: int | None = None,
+    assigned_to_2: int | None = None,
+    is_milestone: int = 0,
 ) -> None:
     """プロジェクトタスクを更新する。
 
@@ -1939,17 +1943,22 @@ def update_project_task(
         progress: 進捗率（手動指定時）
         delay_days: 遅延日数
         updated_by: 更新者名
+        assigned_to: 担当者1ユーザーID
+        assigned_to_2: 担当者2ユーザーID
+        is_milestone: マイルストーンフラグ（1=マイルストーン）
     """
     db = get_db()
-    calc_progress = _calc_progress(status, start_date, end_date, progress, delay_days)
+    calc_progress = _normalize_progress(status, progress)
     db.execute(
         "UPDATE project_task SET "
         "category_id=?, subcategory_id=?, task_name=?, description=?, "
-        "start_date=?, end_date=?, status=?, delay_days=?, progress=?, "
+        "assigned_to=?, assigned_to_2=?, is_milestone=?, start_date=?, end_date=?, "
+        "status=?, delay_days=?, progress=?, "
         "updated_at=datetime('now','localtime'), updated_by=? "
         "WHERE id=?",
         (category_id, subcategory_id, task_name, description,
-         start_date, end_date, status, delay_days, calc_progress, updated_by, task_id),
+         assigned_to, assigned_to_2, is_milestone, start_date, end_date,
+         status, delay_days, calc_progress, updated_by, task_id),
     )
     db.commit()
 
@@ -1963,3 +1972,102 @@ def delete_project_task(task_id: int) -> None:
     db = get_db()
     db.execute("DELETE FROM project_task WHERE id = ?", (task_id,))
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# ダッシュボード用ヘルパー関数
+# ---------------------------------------------------------------------------
+
+
+def get_task_progress_summary(user_id: int | None = None) -> dict:
+    """指定ユーザーのプロジェクトタスク進捗サマリーを取得する。
+
+    既存の get_all_project_tasks を利用してタスクを取得し、
+    Python 側でステータス別件数・遅延件数・平均進捗率を集計する。
+
+    Args:
+        user_id: 集計対象のユーザーID。None の場合は全タスクを集計する。
+
+    Returns:
+        dict: 以下のキーを持つ辞書。
+            - total_count (int): タスク総数
+            - completed_count (int): 完了タスク数
+            - delayed_count (int): 遅延タスク数（status=="遅れ" or delay_days>0）
+            - avg_progress (float): 平均進捗率（0.0〜100.0）
+            - status_breakdown (dict[str, int]): ステータス別件数
+            - tasks (list[dict]): 個別タスク情報
+    """
+    tasks: list[dict] = get_all_project_tasks(assigned_to=user_id)
+
+    # ステータス別件数を全ステータスキーで初期化
+    status_breakdown: dict[str, int] = {s: 0 for s in PROJECT_TASK_STATUSES}
+
+    completed_count: int = 0
+    delayed_count: int = 0
+    total_progress: float = 0.0
+
+    for task in tasks:
+        status: str = task.get("status", "")
+        if status in status_breakdown:
+            status_breakdown[status] += 1
+
+        if status == "完了":
+            completed_count += 1
+
+        # 遅延判定: status が「遅れ」、または delay_days > 0
+        delay_days: int = task.get("delay_days", 0) or 0
+        if status == "遅れ" or delay_days > 0:
+            delayed_count += 1
+
+        total_progress += float(task.get("progress", 0) or 0)
+
+    total_count: int = len(tasks)
+    avg_progress: float = round(total_progress / total_count, 1) if total_count > 0 else 0.0
+
+    return {
+        "total_count": total_count,
+        "completed_count": completed_count,
+        "delayed_count": delayed_count,
+        "avg_progress": avg_progress,
+        "status_breakdown": status_breakdown,
+        "tasks": tasks,
+    }
+
+
+def get_accessible_users_for_dashboard(
+    login_user_id: int, login_role: str, login_dept: str
+) -> list[dict]:
+    """ダッシュボードでログインユーザーが閲覧可能なユーザー一覧を返す。
+
+    役職に応じたアクセス範囲:
+        - 一般ユーザー: 空リスト（自分のみ閲覧のため一覧不要）
+        - 管理職: manager_id が login_user_id のユーザー＋自分自身
+        - マスタ: 同一部署の全ユーザー（dept_filter=login_dept）
+
+    Args:
+        login_user_id: ログインユーザーのID。
+        login_role: ログインユーザーの役職。
+        login_dept: ログインユーザーの部署。
+
+    Returns:
+        list[dict]: 閲覧可能なユーザー一覧。各要素は {id, name, dept} を含む。
+    """
+    if login_role == "マスタ":
+        dept_f = login_dept if login_dept else None
+        all_users = get_all_users(dept_filter=dept_f)
+        return [{"id": u["id"], "name": u["name"], "dept": u.get("dept", "")} for u in all_users]
+
+    if login_role == "管理職":
+        direct_reports = get_direct_reports(login_user_id)
+        result: list[dict] = []
+        # 自分自身を先頭に追加
+        self_user = get_user_by_id(login_user_id)
+        if self_user:
+            result.append({"id": self_user["id"], "name": self_user["name"], "dept": self_user.get("dept", "")})
+        for u in direct_reports:
+            if u["id"] != login_user_id:
+                result.append({"id": u["id"], "name": u["name"], "dept": u.get("dept", "")})
+        return result
+
+    # 一般ユーザー: 空リスト
+    return []

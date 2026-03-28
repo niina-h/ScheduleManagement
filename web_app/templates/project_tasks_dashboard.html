@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% block title %}進捗ダッシュボード - 予定管理システム{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h5 class="fw-bold mb-0">進捗ダッシュボード</h5>
+      <div class="d-flex gap-2 align-items-center">
+        {% if privileged and selectable_users %}
+        <select id="userSelect" class="form-select form-select-sm" style="width:180px;">
+          {% for u in selectable_users %}
+          <option value="{{ u.id }}" {% if u.id == selected_user_id %}selected{% endif %}>{{ u.name }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <span class="fw-semibold">{{ selected_user_name }}</span>
+        {% endif %}
+        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('project_tasks_bp.task_list') }}">一覧に戻る</a>
+      </div>
+    </div>
+
+    {# ── カード1: サマリー指標 ── #}
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-md-3">
+        <div class="card shadow-sm text-center">
+          <div class="card-body py-2">
+            <div class="text-muted small">全タスク</div>
+            <div class="fs-3 fw-bold" id="statTotal">{{ summary.total_count }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card shadow-sm text-center border-success">
+          <div class="card-body py-2">
+            <div class="text-muted small">完了</div>
+            <div class="fs-3 fw-bold text-success" id="statCompleted">{{ summary.completed_count }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card shadow-sm text-center border-danger">
+          <div class="card-body py-2">
+            <div class="text-muted small">遅れ</div>
+            <div class="fs-3 fw-bold text-danger" id="statDelayed">{{ summary.delayed_count }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card shadow-sm text-center border-primary">
+          <div class="card-body py-2">
+            <div class="text-muted small">全体進捗率</div>
+            <div class="fs-3 fw-bold text-primary" id="statAvgProgress">{{ "%.0f"|format(summary.avg_progress) }}%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── カード2: グラフエリア ── #}
+    <div class="row g-3 mb-3">
+      <div class="col-md-4">
+        <div class="card shadow-sm">
+          <div class="card-header bg-light fw-semibold small">ステータス別内訳</div>
+          <div class="card-body" style="height:280px;">
+            <canvas id="statusChart"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-8">
+        <div class="card shadow-sm">
+          <div class="card-header bg-light fw-semibold small d-flex justify-content-between align-items-center">
+            <span>タスク別 進捗率</span>
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" id="hideCompleted">
+              <label class="form-check-label small" for="hideCompleted">完了を非表示</label>
+            </div>
+          </div>
+          <div class="card-body p-2" style="overflow-y:auto; max-height:280px;">
+            <canvas id="taskChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── カード3: 遅れ・注意タスク一覧 ── #}
+    <div class="card shadow-sm">
+      <div class="card-header bg-danger text-white fw-semibold small">遅れ・注意タスク</div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0" id="delayTable">
+          <thead class="table-light">
+            <tr>
+              <th>タスク名</th>
+              <th>大区分</th>
+              <th>期限</th>
+              <th class="text-center">進捗</th>
+              <th class="text-center">遅延日</th>
+              <th>状態</th>
+            </tr>
+          </thead>
+          <tbody id="delayTbody">
+            {% set delayed_tasks = summary.tasks | selectattr('status', 'equalto', '遅れ') | list + summary.tasks | selectattr('delay_days', 'gt', 0) | list %}
+            {% set seen_ids = [] %}
+            {% for t in summary.tasks if t.status == '遅れ' or (t.delay_days and t.delay_days > 0) %}
+            <tr>
+              <td class="small fw-semibold">{{ t.task_name }}</td>
+              <td class="small text-muted">{{ t.category_name or '' }}</td>
+              <td class="small">{{ t.end_date }}</td>
+              <td class="text-center">
+                <div class="progress" style="height:14px;min-width:60px;">
+                  <div class="progress-bar bg-danger" style="width:{{ [t.progress, 100]|min }}%">
+                    <small>{{ t.progress }}%</small>
+                  </div>
+                </div>
+              </td>
+              <td class="text-center"><span class="badge bg-danger">{{ t.delay_days or 0 }}日</span></td>
+              <td class="small text-danger fw-bold">{{ t.status }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted py-3">遅れタスクはありません</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script type="application/json" id="chartData">{{ chart_json | tojson }}</script>
+<script>
+(function () {
+  var chartData = JSON.parse(document.getElementById('chartData').textContent);
+  var statusChart = null;
+  var taskChart = null;
+
+  function initStatusChart(data) {
+    var ctx = document.getElementById('statusChart').getContext('2d');
+    if (statusChart) statusChart.destroy();
+    statusChart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: data.status_labels,
+        datasets: [{
+          data: data.status_counts,
+          backgroundColor: data.status_colors,
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'right', labels: { font: { size: 11 } } }
+        }
+      }
+    });
+  }
+
+  function initTaskChart(data, hideCompleted) {
+    var ctx = document.getElementById('taskChart').getContext('2d');
+    if (taskChart) taskChart.destroy();
+
+    var names = [];
+    var progresses = [];
+    var colors = [];
+    for (var i = 0; i < data.task_names.length; i++) {
+      if (hideCompleted && data.task_statuses[i] === '完了') continue;
+      var n = data.task_names[i];
+      names.push(n.length > 18 ? n.substring(0, 16) + '…' : n);
+      progresses.push(data.task_progresses[i]);
+      colors.push(data.task_colors[i]);
+    }
+
+    /* キャンバス高さを動的調整 */
+    var barH = Math.max(200, names.length * 28);
+    document.getElementById('taskChart').parentElement.style.maxHeight = Math.max(280, barH + 20) + 'px';
+    document.getElementById('taskChart').style.height = barH + 'px';
+
+    taskChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: names,
+        datasets: [{
+          data: progresses,
+          backgroundColor: colors,
+          borderWidth: 0,
+          barThickness: 18,
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { min: 0, max: 100, ticks: { callback: function (v) { return v + '%'; } } },
+          y: { ticks: { font: { size: 10 } } }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (ctx) { return ctx.parsed.x + '%'; }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  /* 初期描画 */
+  initStatusChart(chartData);
+  initTaskChart(chartData, false);
+
+  /* 完了非表示トグル */
+  var hideCheck = document.getElementById('hideCompleted');
+  if (hideCheck) {
+    hideCheck.addEventListener('change', function () {
+      initTaskChart(chartData, hideCheck.checked);
+    });
+  }
+
+  /* ユーザー切替 */
+  var userSelect = document.getElementById('userSelect');
+  if (userSelect) {
+    userSelect.addEventListener('change', function () {
+      var uid = userSelect.value;
+      fetch('{{ url_for("project_tasks_bp.progress_dashboard_api") }}?user_id=' + uid)
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          chartData = data.chart_json;
+          var s = data.summary;
+
+          /* サマリー更新 */
+          document.getElementById('statTotal').textContent = s.total_count;
+          document.getElementById('statCompleted').textContent = s.completed_count;
+          document.getElementById('statDelayed').textContent = s.delayed_count;
+          document.getElementById('statAvgProgress').textContent = Math.round(s.avg_progress) + '%';
+
+          /* グラフ再描画 */
+          initStatusChart(chartData);
+          initTaskChart(chartData, hideCheck ? hideCheck.checked : false);
+
+          /* 遅れテーブル再描画 */
+          var tbody = document.getElementById('delayTbody');
+          var html = '';
+          var delayed = (s.tasks || []).filter(function (t) {
+            return t.status === '遅れ' || (t.delay_days && t.delay_days > 0);
+          });
+          if (delayed.length === 0) {
+            html = '<tr><td colspan="6" class="text-center text-muted py-3">遅れタスクはありません</td></tr>';
+          } else {
+            delayed.forEach(function (t) {
+              html += '<tr>';
+              html += '<td class="small fw-semibold">' + esc(t.task_name) + '</td>';
+              html += '<td class="small text-muted">' + esc(t.category_name || '') + '</td>';
+              html += '<td class="small">' + esc(t.end_date) + '</td>';
+              html += '<td class="text-center"><div class="progress" style="height:14px;min-width:60px;"><div class="progress-bar bg-danger" style="width:' + Math.min(t.progress, 100) + '%"><small>' + t.progress + '%</small></div></div></td>';
+              html += '<td class="text-center"><span class="badge bg-danger">' + (t.delay_days || 0) + '日</span></td>';
+              html += '<td class="small text-danger fw-bold">' + esc(t.status) + '</td>';
+              html += '</tr>';
+            });
+          }
+          tbody.innerHTML = html;
+        })
+        .catch(function (err) { console.error('ダッシュボード更新エラー:', err); });
+    });
+  }
+
+  function esc(s) {
+    var d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+  }
+})();
+</script>
+{% endblock %}

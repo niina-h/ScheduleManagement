@@ -35,5 +35,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+# デバッグ・テストデータ
+debug/
+
 # Claude Codeローカル設定
 .claude/

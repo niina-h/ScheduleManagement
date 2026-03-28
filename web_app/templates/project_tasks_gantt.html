@@ -1,0 +1,571 @@
+{% extends "base.html" %}
+{% block title %}ガントチャート - 予定管理システム{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h5 class="fw-bold mb-0">ガントチャート</h5>
+      <div class="d-flex gap-2 align-items-center">
+        <button class="btn btn-outline-secondary btn-sm" id="ganttPrev">◀ 前へ</button>
+        <span class="fw-semibold" id="ganttRange" style="min-width:200px; text-align:center;"></span>
+        <button class="btn btn-outline-secondary btn-sm" id="ganttNext">次へ ▶</button>
+        <button class="btn btn-outline-dark btn-sm ms-2" id="toggleAll" title="全グループ開閉">全開閉</button>
+        <a class="btn btn-outline-primary btn-sm ms-2" href="{{ url_for('project_tasks_bp.task_list') }}">一覧に戻る</a>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body p-2" style="overflow-x: auto; overflow-y: auto; max-height: 80vh;">
+        <canvas id="ganttCanvas"></canvas>
+      </div>
+    </div>
+
+    <div class="mt-2 small text-muted d-flex gap-4 flex-wrap">
+      <span><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#93c5fd,#3b82f6);border-radius:3px;vertical-align:middle;"></span> 予定期間</span>
+      <span><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#6ee7b7,#10b981);border-radius:3px;vertical-align:middle;"></span> 進捗（実績）</span>
+      <span><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#fca5a5,#ef4444);border-radius:3px;vertical-align:middle;"></span> 遅延</span>
+      <span><span style="display:inline-block;width:14px;height:14px;background:#a78bfa;border:1px solid #7c3aed;vertical-align:middle;transform:rotate(45deg);"></span> マイルストーン</span>
+      <span>｜<span style="color:#dc3545;">赤線</span> = 今日</span>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var tasks = {{ gantt_json | safe }};
+  var DISPLAY_DAYS = 26;
+  var PRIVILEGED = {{ 'true' if privileged else 'false' }};
+  var CSRF_TOKEN = '{{ csrf_token }}';
+  var UPDATE_URL = '{{ url_for("project_tasks_bp.gantt_update_dates", task_id=0) }}';
+
+  /* ── 大区分でグループ化 ── */
+  var categoryOrder = [];
+  var categoryMap = {};
+  tasks.forEach(function (t) {
+    var cat = t.category || '（未分類）';
+    if (!categoryMap[cat]) { categoryMap[cat] = []; categoryOrder.push(cat); }
+    categoryMap[cat].push(t);
+  });
+
+  var collapsed = {};
+  categoryOrder.forEach(function (c) { collapsed[c] = false; });
+
+  var today = new Date();
+  var dayOfWeek = today.getDay();
+  var daysToThisMon = dayOfWeek === 0 ? 6 : (dayOfWeek - 1);
+  var thisMonday = new Date(today);
+  thisMonday.setDate(today.getDate() - daysToThisMon);
+  var startDate = new Date(thisMonday);
+  startDate.setDate(thisMonday.getDate() - 7);
+
+  document.getElementById('ganttPrev').addEventListener('click', function () {
+    startDate.setDate(startDate.getDate() - 7); drawGantt();
+  });
+  document.getElementById('ganttNext').addEventListener('click', function () {
+    startDate.setDate(startDate.getDate() + 7); drawGantt();
+  });
+  document.getElementById('toggleAll').addEventListener('click', function () {
+    var anyOpen = categoryOrder.some(function (c) { return !collapsed[c]; });
+    categoryOrder.forEach(function (c) { collapsed[c] = anyOpen; });
+    drawGantt();
+  });
+
+  var dpr = window.devicePixelRatio || 1;
+  var canvas = document.getElementById('ganttCanvas');
+  var catClickAreas = [];
+  var barAreas = [];
+  var dragState = null;
+  var EDGE_PX = 8;
+
+  function getBarAt(mx, my) {
+    for (var i = 0; i < barAreas.length; i++) {
+      var b = barAreas[i];
+      if (my >= b.barY && my <= b.barY + b.barH && mx >= b.barX && mx <= b.barX + b.barW) {
+        var onLeft = mx <= b.barX + EDGE_PX;
+        var onRight = mx >= b.barX + b.barW - EDGE_PX;
+        return { bar: b, edge: onLeft ? 'left' : (onRight ? 'right' : 'middle') };
+      }
+    }
+    return null;
+  }
+
+  function dateToStr(d) {
+    var y = d.getFullYear();
+    var m = ('0' + (d.getMonth() + 1)).slice(-2);
+    var dd = ('0' + d.getDate()).slice(-2);
+    return y + '-' + m + '-' + dd;
+  }
+
+  canvas.addEventListener('mousedown', function (e) {
+    if (!PRIVILEGED) return;
+    var rect = canvas.getBoundingClientRect();
+    var mx = e.clientX - rect.left;
+    var my = e.clientY - rect.top;
+    var hit = getBarAt(mx, my);
+    if (!hit) return;
+    e.preventDefault();
+    dragState = {
+      task: hit.bar.task, edge: hit.edge,
+      origStart: hit.bar.task.start, origEnd: hit.bar.task.end,
+      startX: mx, dayWidth: hit.bar.dayWidth
+    };
+    canvas.style.cursor = hit.edge === 'middle' ? 'grabbing' : 'col-resize';
+  });
+
+  canvas.addEventListener('mousemove', function (e) {
+    var rect = canvas.getBoundingClientRect();
+    var mx = e.clientX - rect.left;
+    var my = e.clientY - rect.top;
+
+    if (dragState) {
+      var dx = mx - dragState.startX;
+      var dayDelta = Math.round(dx / dragState.dayWidth);
+      var origS = new Date(dragState.origStart + 'T00:00:00');
+      var origE = new Date(dragState.origEnd + 'T00:00:00');
+      if (dragState.edge === 'left') {
+        var newS = new Date(origS); newS.setDate(origS.getDate() + dayDelta);
+        if (newS <= origE) { dragState.task.start = dateToStr(newS); dragState.task.end = dragState.origEnd; }
+      } else if (dragState.edge === 'right') {
+        var newE = new Date(origE); newE.setDate(origE.getDate() + dayDelta);
+        if (newE >= origS) { dragState.task.end = dateToStr(newE); dragState.task.start = dragState.origStart; }
+      } else {
+        var newS2 = new Date(origS); newS2.setDate(origS.getDate() + dayDelta);
+        var newE2 = new Date(origE); newE2.setDate(origE.getDate() + dayDelta);
+        dragState.task.start = dateToStr(newS2); dragState.task.end = dateToStr(newE2);
+      }
+      drawGantt();
+      return;
+    }
+
+    /* カーソル形状 */
+    var hit = getBarAt(mx, my);
+    if (hit && PRIVILEGED) {
+      canvas.style.cursor = hit.edge === 'middle' ? 'grab' : 'col-resize';
+      return;
+    }
+    var onCat = false;
+    for (var i = 0; i < catClickAreas.length; i++) {
+      var a = catClickAreas[i];
+      if (my >= a.y && my < a.y + a.h && mx < a.maxX) { onCat = true; break; }
+    }
+    canvas.style.cursor = onCat ? 'pointer' : 'default';
+  });
+
+  canvas.addEventListener('mouseup', function () {
+    if (!dragState) return;
+    var task = dragState.task;
+    var changed = (task.start !== dragState.origStart || task.end !== dragState.origEnd);
+    dragState = null;
+    canvas.style.cursor = 'default';
+
+    if (changed) {
+      var url = UPDATE_URL.replace(/\/0(\/?)$/, '/' + task.id + '$1');
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
+        body: JSON.stringify({ start_date: task.start, end_date: task.end })
+      }).then(function (r) {
+        if (!r.ok) { alert('保存に失敗しました（' + r.status + '）'); location.reload(); }
+      }).catch(function () { alert('通信エラー'); location.reload(); });
+    }
+  });
+
+  /* マウスがキャンバス外に出た場合もドラッグ終了 */
+  canvas.addEventListener('mouseleave', function () {
+    if (dragState) {
+      dragState.task.start = dragState.origStart;
+      dragState.task.end = dragState.origEnd;
+      dragState = null;
+      drawGantt();
+    }
+  });
+
+  canvas.addEventListener('click', function (e) {
+    var rect = canvas.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    var y = e.clientY - rect.top;
+    for (var i = 0; i < catClickAreas.length; i++) {
+      var a = catClickAreas[i];
+      if (y >= a.y && y < a.y + a.h && x < a.maxX) {
+        collapsed[a.cat] = !collapsed[a.cat]; drawGantt(); return;
+      }
+    }
+  });
+
+  function fmtDate(d) { return (d.getMonth() + 1) + '/' + d.getDate(); }
+
+  /* ── グラデーション・影ユーティリティ ── */
+  function barGradient(ctx, x, y, h, color1, color2) {
+    var g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, color1); g.addColorStop(1, color2);
+    return g;
+  }
+
+  function drawGantt() {
+    var ctx = canvas.getContext('2d');
+    catClickAreas = [];
+    barAreas = [];
+
+    var endDate = new Date(startDate);
+    endDate.setDate(startDate.getDate() + DISPLAY_DAYS - 1);
+    document.getElementById('ganttRange').textContent =
+      startDate.getFullYear() + '年 ' + fmtDate(startDate) + ' 〜 ' + fmtDate(endDate);
+
+    var nameColW = 200, assignColW = 70;
+    var leftMargin = nameColW + assignColW;
+    var rowHeight = 28, catRowHeight = 30, headerHeight = 46;
+    var containerWidth = canvas.parentElement.clientWidth - 20;
+    var dayWidth = Math.max(18, Math.floor((containerWidth - leftMargin) / DISPLAY_DAYS));
+    var totalWidth = leftMargin + DISPLAY_DAYS * dayWidth + 2;
+
+    var totalRowHeight = 0;
+    categoryOrder.forEach(function (cat) {
+      totalRowHeight += catRowHeight;
+      if (!collapsed[cat]) totalRowHeight += categoryMap[cat].length * rowHeight;
+    });
+    var totalHeight = headerHeight + totalRowHeight + 10;
+
+    canvas.width = totalWidth * dpr;
+    canvas.height = totalHeight * dpr;
+    canvas.style.width = totalWidth + 'px';
+    canvas.style.height = totalHeight + 'px';
+    ctx.scale(dpr, dpr);
+
+    /* 全体白背景 */
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, totalWidth, totalHeight);
+
+    var WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
+
+    /* ヘッダー背景（グラデーション） */
+    var hdrGrad = ctx.createLinearGradient(0, 0, 0, headerHeight);
+    hdrGrad.addColorStop(0, '#f1f5f9'); hdrGrad.addColorStop(1, '#e2e8f0');
+    ctx.fillStyle = hdrGrad;
+    ctx.fillRect(0, 0, totalWidth, headerHeight);
+
+    /* 日付ヘッダー + グリッド（土日は淡い背景） */
+    var prevMonth = -1;
+    for (var di = 0; di < DISPLAY_DAYS; di++) {
+      var dt = new Date(startDate);
+      dt.setDate(startDate.getDate() + di);
+      var x = leftMargin + di * dayWidth;
+      var dow = dt.getDay();
+      var dayNum = dt.getDate();
+      var mon = dt.getMonth();
+
+      /* 土日背景 */
+      if (dow === 0 || dow === 6) {
+        ctx.fillStyle = dow === 0 ? 'rgba(239,68,68,0.06)' : 'rgba(59,130,246,0.06)';
+        ctx.fillRect(x, headerHeight, dayWidth, totalHeight - headerHeight);
+        /* ヘッダー部分も薄く */
+        ctx.fillStyle = dow === 0 ? 'rgba(239,68,68,0.08)' : 'rgba(59,130,246,0.08)';
+        ctx.fillRect(x, 0, dayWidth, headerHeight);
+      }
+
+      /* 月境界線 */
+      if (mon !== prevMonth && prevMonth !== -1) {
+        ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, totalHeight); ctx.stroke();
+      }
+      prevMonth = mon;
+
+      /* 日付文字 */
+      ctx.fillStyle = dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : '#475569';
+      ctx.textAlign = 'center';
+      ctx.font = '9px "游ゴシック", "Yu Gothic", "メイリオ", sans-serif';
+      if (dayNum === 1 || di === 0) {
+        ctx.fillText((mon + 1) + '/' + dayNum, x + dayWidth / 2, 27);
+      } else {
+        ctx.fillText(dayNum, x + dayWidth / 2, 27);
+      }
+      ctx.font = '8px "游ゴシック", "Yu Gothic", sans-serif';
+      ctx.fillText(WEEKDAY_JA[dow], x + dayWidth / 2, 39);
+
+      /* グリッド縦線 */
+      ctx.strokeStyle = '#f0f0f0'; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(x, headerHeight); ctx.lineTo(x, totalHeight); ctx.stroke();
+    }
+
+    /* ヘッダー下線 */
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, headerHeight); ctx.lineTo(totalWidth, headerHeight); ctx.stroke();
+
+    /* 今日の縦線 */
+    var todayOffset = Math.floor((today - startDate) / 86400000);
+    if (todayOffset >= 0 && todayOffset < DISPLAY_DAYS) {
+      var todayX = leftMargin + (todayOffset + 0.5) * dayWidth;
+      /* 薄い背景ハイライト */
+      ctx.fillStyle = 'rgba(239,68,68,0.08)';
+      ctx.fillRect(leftMargin + todayOffset * dayWidth, headerHeight, dayWidth, totalHeight - headerHeight);
+      /* 破線 */
+      ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath(); ctx.moveTo(todayX, headerHeight); ctx.lineTo(todayX, totalHeight); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    var rangeStart = new Date(startDate); rangeStart.setHours(0, 0, 0, 0);
+    var rangeEnd = new Date(endDate); rangeEnd.setHours(23, 59, 59, 999);
+
+    /* 項目名 / 担当 の区切り罫線 */
+    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(nameColW, 0); ctx.lineTo(nameColW, totalHeight); ctx.stroke();
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(leftMargin, 0); ctx.lineTo(leftMargin, totalHeight); ctx.stroke();
+
+    /* 列見出し */
+    ctx.fillStyle = hdrGrad;
+    ctx.fillRect(0, 0, leftMargin, headerHeight);
+    ctx.fillStyle = '#334155'; ctx.textAlign = 'center';
+    ctx.font = 'bold 11px "游ゴシック", "Yu Gothic", sans-serif';
+    ctx.fillText('項目名', nameColW / 2, 28);
+    ctx.fillText('担当', nameColW + assignColW / 2, 28);
+    /* 列見出し内の罫線 */
+    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(nameColW, 0); ctx.lineTo(nameColW, headerHeight); ctx.stroke();
+
+    /* ── カテゴリ別タスク描画 ── */
+    var currentY = headerHeight;
+
+    categoryOrder.forEach(function (cat) {
+      var taskList = categoryMap[cat];
+      var isOpen = !collapsed[cat];
+      var y = currentY;
+
+      /* カテゴリヘッダー行（左側のみ色付き、右側は白） */
+      var catGrad = ctx.createLinearGradient(0, y, 0, y + catRowHeight);
+      catGrad.addColorStop(0, '#e8edf3'); catGrad.addColorStop(1, '#dde3ec');
+      ctx.fillStyle = catGrad;
+      ctx.fillRect(0, y, leftMargin, catRowHeight);
+      /* ガントエリアは白 */
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(leftMargin, y, totalWidth - leftMargin, catRowHeight);
+
+      /* 下線 */
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, y + catRowHeight); ctx.lineTo(totalWidth, y + catRowHeight); ctx.stroke();
+
+      /* 項目名/担当 罫線 */
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(nameColW, y); ctx.lineTo(nameColW, y + catRowHeight); ctx.stroke();
+
+      /* 開閉アイコン（三角形） */
+      var iconX = 12;
+      var iconCY = y + catRowHeight / 2;
+      ctx.fillStyle = '#64748b';
+      ctx.beginPath();
+      if (isOpen) {
+        ctx.moveTo(iconX, iconCY - 4); ctx.lineTo(iconX + 10, iconCY - 4); ctx.lineTo(iconX + 5, iconCY + 4);
+      } else {
+        ctx.moveTo(iconX, iconCY - 5); ctx.lineTo(iconX + 8, iconCY); ctx.lineTo(iconX, iconCY + 5);
+      }
+      ctx.closePath(); ctx.fill();
+
+      /* カテゴリ名 */
+      ctx.font = 'bold 11px "游ゴシック", "Yu Gothic", sans-serif';
+      ctx.fillStyle = '#1e293b'; ctx.textAlign = 'left';
+      ctx.fillText(cat + ' (' + taskList.length + ')', iconX + 16, iconCY + 4);
+
+      catClickAreas.push({ cat: cat, y: y, h: catRowHeight, maxX: leftMargin });
+      currentY += catRowHeight;
+      if (!isOpen) return;
+
+      /* ── 子タスク描画 ── */
+      taskList.forEach(function (task, ti) {
+        var ty = currentY;
+        var midY = ty + rowHeight / 2;
+
+        /* 交互背景（全幅白ベース） */
+        ctx.fillStyle = (ti % 2 === 0) ? '#ffffff' : '#f8fafc';
+        ctx.fillRect(0, ty, totalWidth, rowHeight);
+
+        /* 土日背景を再描画（行の上に重ねる） */
+        for (var wdi = 0; wdi < DISPLAY_DAYS; wdi++) {
+          var wdt = new Date(startDate); wdt.setDate(startDate.getDate() + wdi);
+          var wdow = wdt.getDay();
+          if (wdow === 0 || wdow === 6) {
+            ctx.fillStyle = wdow === 0 ? 'rgba(239,68,68,0.04)' : 'rgba(59,130,246,0.04)';
+            ctx.fillRect(leftMargin + wdi * dayWidth, ty, dayWidth, rowHeight);
+          }
+        }
+
+        /* 行区切り線 */
+        ctx.strokeStyle = '#f1f5f9'; ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(0, ty + rowHeight); ctx.lineTo(totalWidth, ty + rowHeight); ctx.stroke();
+
+        /* 項目名/担当の区切り罫線 */
+        ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(nameColW, ty); ctx.lineTo(nameColW, ty + rowHeight); ctx.stroke();
+
+        /* 項目名 */
+        var nameX = 14;
+        ctx.fillStyle = task.is_milestone ? '#7c3aed' : '#1e293b';
+        ctx.textAlign = 'left';
+        ctx.font = task.is_milestone
+          ? 'bold 10px "游ゴシック", "Yu Gothic", sans-serif'
+          : '10px "游ゴシック", "Yu Gothic", sans-serif';
+        var nameLabel = task.is_milestone ? '◆ ' + task.name : task.name;
+        var maxNameW = nameColW - nameX - 8;
+        if (ctx.measureText(nameLabel).width > maxNameW) {
+          while (nameLabel.length > 1 && ctx.measureText(nameLabel + '…').width > maxNameW) {
+            nameLabel = nameLabel.substring(0, nameLabel.length - 1);
+          }
+          nameLabel += '…';
+        }
+        ctx.fillText(nameLabel, nameX, midY + 4);
+
+        /* 担当者 */
+        if (task.assigned) {
+          ctx.fillStyle = '#64748b';
+          ctx.font = '10px "游ゴシック", "Yu Gothic", sans-serif';
+          var assignLabel = task.assigned;
+          if (ctx.measureText(assignLabel).width > assignColW - 10) {
+            while (assignLabel.length > 1 && ctx.measureText(assignLabel + '…').width > assignColW - 10) {
+              assignLabel = assignLabel.substring(0, assignLabel.length - 1);
+            }
+            assignLabel += '…';
+          }
+          ctx.fillText(assignLabel, nameColW + 6, midY + 4);
+        }
+        ctx.font = '10px "游ゴシック", "Yu Gothic", sans-serif';
+
+        var taskStart = new Date(task.start + 'T00:00:00');
+        var taskEnd = new Date(task.end + 'T00:00:00');
+
+        /* マイルストーン（ひし形） */
+        if (task.is_milestone) {
+          var msOffset = Math.floor((taskStart - rangeStart) / 86400000);
+          if (msOffset >= 0 && msOffset < DISPLAY_DAYS) {
+            var msx = leftMargin + (msOffset + 0.5) * dayWidth;
+            var msSize = 9;
+            /* 影 */
+            ctx.shadowColor = 'rgba(124,58,237,0.3)'; ctx.shadowBlur = 4;
+            ctx.shadowOffsetX = 1; ctx.shadowOffsetY = 1;
+            ctx.fillStyle = task.status === '完了'
+              ? barGradient(ctx, msx, midY - msSize, msSize * 2, '#6ee7b7', '#059669')
+              : barGradient(ctx, msx, midY - msSize, msSize * 2, '#c4b5fd', '#8b5cf6');
+            ctx.beginPath();
+            ctx.moveTo(msx, midY - msSize); ctx.lineTo(msx + msSize, midY);
+            ctx.lineTo(msx, midY + msSize); ctx.lineTo(msx - msSize, midY);
+            ctx.closePath(); ctx.fill();
+            ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+            ctx.strokeStyle = task.status === '完了' ? '#047857' : '#6d28d9';
+            ctx.lineWidth = 1; ctx.stroke();
+          }
+          currentY += rowHeight; return;
+        }
+
+        /* 範囲チェック */
+        if (taskEnd < rangeStart || taskStart > rangeEnd) { currentY += rowHeight; return; }
+
+        var barStartDate = taskStart < rangeStart ? rangeStart : taskStart;
+        var barEndDate = taskEnd > rangeEnd ? rangeEnd : taskEnd;
+        var sOffset = Math.floor((barStartDate - rangeStart) / 86400000);
+        var eOffset = Math.floor((barEndDate - rangeStart) / 86400000);
+        var barX = leftMargin + sOffset * dayWidth + 1;
+        var barW = (eOffset - sOffset + 1) * dayWidth - 2;
+        var barH = rowHeight - 10;
+        var barY = ty + 5;
+
+        barAreas.push({ task: task, barX: barX, barY: barY, barW: barW, barH: barH, dayWidth: dayWidth });
+
+        /* 影 */
+        ctx.shadowColor = 'rgba(0,0,0,0.1)'; ctx.shadowBlur = 3;
+        ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 1;
+
+        /* 予定バー（グラデーション） */
+        if (task.status === '停止') {
+          ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#e5e7eb', '#d1d5db');
+        } else {
+          ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#93c5fd', '#3b82f6');
+        }
+        roundRect(ctx, barX, barY, barW, barH, 4); ctx.fill();
+        ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+
+        /* 予定バー枠線 */
+        ctx.strokeStyle = task.status === '停止' ? '#9ca3af' : '#2563eb';
+        ctx.lineWidth = 0.5;
+        roundRect(ctx, barX, barY, barW, barH, 4); ctx.stroke();
+
+        /* 進捗バー */
+        if (task.progress > 0 && task.status !== '停止') {
+          var progW = barW * Math.min(task.progress, 100) / 100;
+          if (progW > 2) {
+            if (task.status === '遅れ') {
+              ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#fca5a5', '#ef4444');
+              ctx.strokeStyle = '#dc2626';
+            } else {
+              ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#6ee7b7', '#10b981');
+              ctx.strokeStyle = '#059669';
+            }
+            roundRect(ctx, barX, barY, progW, barH, 4); ctx.fill();
+            ctx.lineWidth = 0.5;
+            roundRect(ctx, barX, barY, progW, barH, 4); ctx.stroke();
+          }
+        }
+
+        /* ドラッグハンドル */
+        if (PRIVILEGED && barW > 20) {
+          ctx.fillStyle = 'rgba(255,255,255,0.4)';
+          roundRect(ctx, barX + 1, barY + 2, 5, barH - 4, 2); ctx.fill();
+          roundRect(ctx, barX + barW - 6, barY + 2, 5, barH - 4, 2); ctx.fill();
+          /* ハンドル線 */
+          ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 0.5;
+          for (var hi = 0; hi < 3; hi++) {
+            var hx = barX + 2; var hy = barY + barH / 2 - 3 + hi * 3;
+            ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(hx + 2, hy); ctx.stroke();
+            hx = barX + barW - 4;
+            ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(hx + 2, hy); ctx.stroke();
+          }
+        }
+
+        /* 進捗テキスト（バーの上に白文字＋影） */
+        if (barW > 30) {
+          ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 2;
+          ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 1;
+          ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+          ctx.font = 'bold 9px "游ゴシック", "Yu Gothic", sans-serif';
+          ctx.fillText(task.progress + '%', barX + barW / 2, barY + barH / 2 + 3);
+          ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+          ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+        }
+        ctx.font = '10px "游ゴシック", "Yu Gothic", sans-serif';
+
+        currentY += rowHeight;
+      });
+    });
+
+    /* 最終パス：縦の区切り罫線を最前面に再描画 */
+    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(nameColW, 0); ctx.lineTo(nameColW, totalHeight); ctx.stroke();
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(leftMargin, 0); ctx.lineTo(leftMargin, totalHeight); ctx.stroke();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    if (w < 0) w = 0;
+    if (w < 2 * r) r = w / 2;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+  }
+
+  drawGantt();
+  window.addEventListener('resize', drawGantt);
+})();
+</script>
+{% endblock %}

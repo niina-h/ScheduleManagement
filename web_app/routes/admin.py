@@ -181,7 +181,9 @@ def add_user_route() -> str:
     Returns:
         str: 管理者ダッシュボードへのリダイレクトレスポンス。
     """
-    name: str = request.form.get("name", "").strip()
+    last_name: str = request.form.get("last_name", "").strip()
+    first_name: str = request.form.get("first_name", "").strip()
+    name: str = (last_name + " " + first_name).strip() if first_name else last_name
     role: str = request.form.get("role", "").strip()
     dept: str = request.form.get("dept", "").strip()
 
@@ -191,11 +193,11 @@ def add_user_route() -> str:
         flash("基本勤務時間は数値で入力してください", "warning")
         return _redirect_dashboard()
 
-    if not name:
-        flash("名前を入力してください", "warning")
+    if not last_name:
+        flash("姓を入力してください", "warning")
         return _redirect_dashboard()
 
-    success: bool = add_user(name, role, dept, std_hours)
+    success: bool = add_user(name, role, dept, std_hours, last_name=last_name, first_name=first_name)
     if success:
         record_operation(ACTION_USER_ADD, f"role={role}")
         flash(f"ユーザー「{name}」を追加しました", "success")
@@ -326,7 +328,9 @@ def bulk_update_users() -> str:
     skipped_count: int = 0
     for i in range(user_count):
         raw_id = request.form.get(f"uid_{i}", "")
-        name: str = request.form.get(f"name_{i}", "").strip()
+        last_name: str = request.form.get(f"last_name_{i}", "").strip()
+        first_name: str = request.form.get(f"first_name_{i}", "").strip()
+        name: str = (last_name + " " + first_name).strip() if first_name else last_name
         role: str = request.form.get(f"role_{i}", "ユーザー").strip()
         dept: str = request.form.get(f"dept_{i}", "").strip()
         try:
@@ -345,7 +349,8 @@ def bulk_update_users() -> str:
                 skipped_count += 1
                 continue
 
-        success = update_user(user_id, name, role, dept, std_hours)
+        success = update_user(user_id, name, role, dept, std_hours,
+                              last_name=last_name, first_name=first_name)
         if not success:
             error_ids.append(raw_id)
 

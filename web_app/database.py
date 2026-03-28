@@ -339,10 +339,13 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
             subcategory_id INTEGER REFERENCES task_subcategory(id) ON DELETE SET NULL,
             task_name TEXT NOT NULL,
             description TEXT DEFAULT '',
+            assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            is_milestone INTEGER DEFAULT 0,
             start_date TEXT NOT NULL,
             end_date TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT '未着手',
             progress INTEGER DEFAULT 0,
+            delay_days INTEGER DEFAULT 0,
             display_order INTEGER DEFAULT 0,
             created_by INTEGER REFERENCES users(id),
             created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -351,12 +354,30 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         )""")
         logger.info("project_task テーブルを作成しました。")
 
-    # project_task に delay_days カラムを追加（なければ）
+    # project_task にカラムを追加（なければ）
     if "project_task" in tables:
         pt_cols = {row[1] for row in db.execute("PRAGMA table_info(project_task)").fetchall()}
         if "delay_days" not in pt_cols:
             db.execute("ALTER TABLE project_task ADD COLUMN delay_days INTEGER DEFAULT 0")
             logger.info("project_task.delay_days カラムを追加しました。")
+        if "assigned_to" not in pt_cols:
+            db.execute("ALTER TABLE project_task ADD COLUMN assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL")
+            logger.info("project_task.assigned_to カラムを追加しました。")
+        if "is_milestone" not in pt_cols:
+            db.execute("ALTER TABLE project_task ADD COLUMN is_milestone INTEGER DEFAULT 0")
+            logger.info("project_task.is_milestone カラムを追加しました。")
+        if "assigned_to_2" not in pt_cols:
+            db.execute("ALTER TABLE project_task ADD COLUMN assigned_to_2 INTEGER REFERENCES users(id) ON DELETE SET NULL")
+            logger.info("project_task.assigned_to_2 カラムを追加しました。")
+
+    # users に姓・名カラムを追加（なければ）
+    u_cols = {row[1] for row in db.execute("PRAGMA table_info(users)").fetchall()}
+    if "last_name" not in u_cols:
+        db.execute("ALTER TABLE users ADD COLUMN last_name TEXT DEFAULT ''")
+        db.execute("ALTER TABLE users ADD COLUMN first_name TEXT DEFAULT ''")
+        # 既存ユーザーの name を姓として初期設定
+        db.execute("UPDATE users SET last_name = name WHERE last_name = '' OR last_name IS NULL")
+        logger.info("users.last_name / first_name カラムを追加しました。")
 
     # デフォルトデータ挿入（なければ）
     db.execute("""
