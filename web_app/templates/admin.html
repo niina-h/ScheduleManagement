@@ -18,9 +18,9 @@
 <div class="card shadow-sm mb-4">
   <div class="card-header bg-primary text-white fw-semibold d-flex align-items-center justify-content-between">
     <span>週間予定登録状況</span>
-    <a href="{{ url_for('export_bp.export_team_week') }}"
+    <a href="{{ url_for('export_bp.export_team_week', week=week_start) }}"
        class="btn btn-light btn-sm">
-      📥 メンバー全員エクスポート（今週）
+      📥 メンバー全員エクスポート（{{ week_start }}週）
     </a>
   </div>
   <div class="card-body">
@@ -524,6 +524,44 @@
   {% endif %}
 
 </div><!-- /accordion -->
+
+<!-- ===== マスタデータ管理（マスタのみ） ===== -->
+{% if login_role == 'マスタ' %}
+<div class="card shadow-sm mt-4">
+  <div class="card-header bg-dark text-white fw-semibold">
+    マスタデータ管理（CSV エクスポート / インポート）
+  </div>
+  <div class="card-body">
+
+    <h6 class="fw-bold mb-2">エクスポート（CSV ダウンロード）</h6>
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <a href="{{ url_for('admin_bp.export_master_csv', table_key='users') }}" class="btn btn-outline-primary btn-sm">ユーザー</a>
+      <a href="{{ url_for('admin_bp.export_master_csv', table_key='dept_master') }}" class="btn btn-outline-primary btn-sm">部署</a>
+      <a href="{{ url_for('admin_bp.export_master_csv', table_key='task_category') }}" class="btn btn-outline-primary btn-sm">大区分</a>
+      <a href="{{ url_for('admin_bp.export_master_csv', table_key='task_subcategory') }}" class="btn btn-outline-primary btn-sm">中区分</a>
+      <a href="{{ url_for('admin_bp.export_master_csv', table_key='mail_settings') }}" class="btn btn-outline-primary btn-sm">メール設定</a>
+      <a href="{{ url_for('admin_bp.export_master_csv', table_key='project_task') }}" class="btn btn-outline-primary btn-sm">プロジェクトタスク</a>
+      <a href="{{ url_for('admin_bp.export_all_master_csv') }}" class="btn btn-primary btn-sm">一括エクスポート</a>
+    </div>
+
+    <hr>
+
+    <h6 class="fw-bold mb-2">インポート（CSV アップロード）</h6>
+    <p class="text-muted small mb-2">
+      一括エクスポートしたCSVをそのままアップロードすると、対象テーブルのデータが<strong class="text-danger">全件置換</strong>されます。
+    </p>
+    <form method="post" action="{{ url_for('admin_bp.import_master_csv') }}" enctype="multipart/form-data"
+          onsubmit="return confirm('マスタデータをインポートします。\n対象テーブルの既存データは全て上書きされます。\n\nよろしいですか？');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="d-flex gap-2 align-items-center">
+        <input type="file" name="csv_file" accept=".csv" class="form-control form-control-sm" style="max-width:350px;" required>
+        <button type="submit" class="btn btn-warning btn-sm">インポート実行</button>
+      </div>
+    </form>
+
+  </div>
+</div>
+{% endif %}
 
 {% endblock %}
 

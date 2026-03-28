@@ -1,6 +1,8 @@
 """管理者向けダッシュボード・ユーザー管理ルートを提供するBlueprintモジュール。"""
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import re
 import secrets
@@ -10,12 +12,14 @@ logger = logging.getLogger(__name__)
 
 from flask import (
     Blueprint,
+    Response,
     abort,
     flash,
     jsonify,
     redirect,
     render_template,
     request,
+    send_file,
     session,
     url_for,
 )
@@ -27,10 +31,14 @@ from ..models import (
     count_operation_logs,
     delete_dept,
     delete_user,
+    get_all_categories,
     get_all_depts,
+    get_all_project_tasks,
+    get_all_subcategories,
     get_all_users,
     get_all_users_daily_status,
     get_all_users_schedule_status,
+    get_mail_setting,
     get_operation_logs,
     get_user_by_id,
     save_user_manager,
@@ -41,6 +49,7 @@ from ..models import (
     update_users_order,
     user_has_password,
 )
+from ..database import get_db
 from ..log_service import record_operation, ACTION_USER_ADD, ACTION_USER_DELETE, ACTION_USER_UPDATE
 from ..auth_helpers import is_privileged, is_master, can_access_user, can_set_password_for
 
@@ -539,3 +548,256 @@ def operation_logs() -> str:
         action_type=action_type,
         action_types=action_types,
     )
+
+
+# ============================================================
+# マスタデータ CSV エクスポート / インポート（マスタ権限のみ）
+# ============================================================
+
+# エクスポート対象テーブル定義
+_EXPORT_TABLES: dict[str, dict] = {
+    "users": {
+        "label": "ユーザー",
+        "columns": ["id", "name", "role", "dept", "std_hours_am", "std_hours_pm", "std_hours", "display_order", "manager_id"],
+        "sql": "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, display_order, manager_id FROM users ORDER BY display_order, id",
+    },
+    "dept_master": {
+        "label": "部署",
+        "columns": ["id", "dept_name", "display_order"],
+        "sql": "SELECT id, dept_name, display_order FROM dept_master ORDER BY display_order, id",
+    },
+    "task_category": {
+        "label": "大区分",
+        "columns": ["id", "name", "display_order"],
+        "sql": "SELECT id, name, display_order FROM task_category ORDER BY display_order, id",
+    },
+    "task_subcategory": {
+        "label": "中区分",
+        "columns": ["id", "category_id", "name", "display_order"],
+        "sql": "SELECT id, category_id, name, display_order FROM task_subcategory ORDER BY category_id, display_order, id",
+    },
+    "mail_settings": {
+        "label": "メール設定",
+        "columns": ["role", "to_address", "cc_address", "bcc_address", "subject_template", "body_template"],
+        "sql": "SELECT role, to_address, cc_address, bcc_address, subject_template, body_template FROM mail_settings ORDER BY role",
+    },
+    "project_task": {
+        "label": "プロジェクトタスク",
+        "columns": ["id", "category_id", "subcategory_id", "task_name", "description",
+                     "start_date", "end_date", "status", "delay_days", "progress",
+                     "display_order", "created_by"],
+        "sql": ("SELECT id, category_id, subcategory_id, task_name, description,"
+                " start_date, end_date, status, delay_days, progress,"
+                " display_order, created_by"
+                " FROM project_task ORDER BY display_order, id"),
+    },
+}
+
+
+def _build_csv(table_key: str) -> io.BytesIO:
+    """指定テーブルのCSVデータをBytesIOで返す。
+
+    Args:
+        table_key: _EXPORT_TABLES のキー名
+
+    Returns:
+        io.BytesIO: UTF-8 BOM付きCSVバイナリ
+    """
+    tbl = _EXPORT_TABLES[table_key]
+    db = get_db()
+    rows = db.execute(tbl["sql"]).fetchall()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(tbl["columns"])
+    for row in rows:
+        writer.writerow([row[col] for col in tbl["columns"]])
+
+    result = io.BytesIO()
+    result.write(b"\xef\xbb\xbf")  # UTF-8 BOM
+    result.write(buf.getvalue().encode("utf-8"))
+    result.seek(0)
+    return result
+
+
+@admin_bp.route("/master/export/<table_key>")
+def export_master_csv(table_key: str) -> Response:
+    """マスタデータをCSV形式でダウンロードする（マスタ権限のみ）。
+
+    Args:
+        table_key: エクスポート対象テーブルのキー名
+
+    Returns:
+        Response: CSVファイルのダウンロードレスポンス
+    """
+    if not is_master(session.get("user_role", "")):
+        abort(403)
+    if table_key not in _EXPORT_TABLES:
+        abort(404)
+
+    buf = _build_csv(table_key)
+    label = _EXPORT_TABLES[table_key]["label"]
+    filename = f"{label}_{date.today().isoformat()}.csv"
+    return send_file(
+        buf,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="text/csv; charset=utf-8",
+    )
+
+
+@admin_bp.route("/master/export-all")
+def export_all_master_csv() -> Response:
+    """全マスタデータを1つのCSVファイルにまとめてダウンロードする（マスタ権限のみ）。
+
+    各テーブルを [テーブル名] ヘッダーで区切って出力する。
+
+    Returns:
+        Response: CSVファイルのダウンロードレスポンス
+    """
+    if not is_master(session.get("user_role", "")):
+        abort(403)
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    db = get_db()
+
+    for key, tbl in _EXPORT_TABLES.items():
+        writer.writerow([f"[{key}]"])
+        writer.writerow(tbl["columns"])
+        rows = db.execute(tbl["sql"]).fetchall()
+        for row in rows:
+            writer.writerow([row[col] for col in tbl["columns"]])
+        writer.writerow([])  # 空行で区切り
+
+    result = io.BytesIO()
+    result.write(b"\xef\xbb\xbf")  # UTF-8 BOM
+    result.write(buf.getvalue().encode("utf-8"))
+    result.seek(0)
+
+    filename = f"マスタデータ一括_{date.today().isoformat()}.csv"
+    return send_file(
+        result,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="text/csv; charset=utf-8",
+    )
+
+
+@admin_bp.route("/master/import", methods=["POST"])
+def import_master_csv() -> Response:
+    """CSVファイルからマスタデータをインポートする（マスタ権限のみ）。
+
+    アップロードされたCSVの [テーブル名] ヘッダーで対象テーブルを判別し、
+    既存データを全削除後に挿入（全件置換）する。
+
+    Returns:
+        Response: 管理者ダッシュボードへのリダイレクト
+    """
+    if not is_master(session.get("user_role", "")):
+        abort(403)
+
+    file = request.files.get("csv_file")
+    if not file or not file.filename:
+        flash("CSVファイルを選択してください", "warning")
+        return redirect(url_for("admin_bp.dashboard"))
+
+    try:
+        raw = file.read()
+        # BOM除去
+        if raw.startswith(b"\xef\xbb\xbf"):
+            raw = raw[3:]
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("cp932")
+        except UnicodeDecodeError:
+            flash("CSVファイルの文字コードを読み取れません（UTF-8またはShift-JIS）", "warning")
+            return redirect(url_for("admin_bp.dashboard"))
+
+    reader = csv.reader(io.StringIO(text))
+    db = get_db()
+
+    current_table: str | None = None
+    current_columns: list[str] = []
+    imported_tables: list[str] = []
+    error_tables: list[str] = []
+
+    for row_data in reader:
+        if not row_data or all(c.strip() == "" for c in row_data):
+            continue
+
+        # [テーブル名] ヘッダー検出
+        first = row_data[0].strip()
+        if first.startswith("[") and first.endswith("]"):
+            current_table = first[1:-1]
+            current_columns = []
+            if current_table in _EXPORT_TABLES:
+                # テーブルの既存データを削除
+                try:
+                    db.execute(f"DELETE FROM {current_table}")
+                    imported_tables.append(_EXPORT_TABLES[current_table]["label"])
+                except Exception:
+                    logger.exception("テーブル %s のクリアに失敗", current_table)
+                    error_tables.append(current_table)
+                    current_table = None
+            else:
+                current_table = None
+            continue
+
+        # カラムヘッダー行
+        if current_table and not current_columns:
+            current_columns = [c.strip() for c in row_data]
+            continue
+
+        # データ行
+        if current_table and current_columns:
+            tbl = _EXPORT_TABLES.get(current_table)
+            if not tbl:
+                continue
+            # 列数チェック
+            if len(row_data) < len(current_columns):
+                row_data.extend([""] * (len(current_columns) - len(row_data)))
+
+            # id列はAUTOINCREMENTなので除外してINSERT（idが空でないならそのまま使う）
+            col_names = []
+            col_values = []
+            for i, col in enumerate(current_columns):
+                val = row_data[i].strip() if i < len(row_data) else ""
+                if col == "id" and val == "":
+                    continue  # id空の場合は自動採番
+                col_names.append(col)
+                # 数値カラムの空文字をNULLに変換
+                if val == "" and col in ("id", "category_id", "subcategory_id",
+                                          "display_order", "manager_id", "created_by",
+                                          "std_hours_am", "std_hours_pm", "std_hours",
+                                          "delay_days", "progress"):
+                    col_values.append(None)
+                else:
+                    col_values.append(val)
+
+            placeholders = ", ".join(["?"] * len(col_names))
+            cols_str = ", ".join(col_names)
+            try:
+                db.execute(
+                    f"INSERT INTO {current_table} ({cols_str}) VALUES ({placeholders})",
+                    col_values,
+                )
+            except Exception:
+                logger.exception("テーブル %s へのINSERTに失敗 (data=%s)", current_table, row_data)
+
+    try:
+        db.commit()
+    except Exception:
+        logger.exception("マスタインポートのコミットに失敗")
+        flash("インポート中にエラーが発生しました", "danger")
+        return redirect(url_for("admin_bp.dashboard"))
+
+    if imported_tables:
+        flash(f"インポート完了: {', '.join(imported_tables)}", "success")
+    if error_tables:
+        flash(f"エラー: {', '.join(error_tables)}", "warning")
+    if not imported_tables and not error_tables:
+        flash("インポート対象のデータが見つかりませんでした", "warning")
+
+    return redirect(url_for("admin_bp.dashboard"))

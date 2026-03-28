@@ -1566,7 +1566,17 @@ def export_team_week() -> object:
     if not is_privileged(session.get("user_role", "")):
         abort(403)
 
-    week_start = _get_current_week_start()
+    # クエリパラメータ week があればその週、なければ今週
+    week_param: str = request.args.get("week", "")
+    if week_param:
+        try:
+            week_date = date.fromisoformat(week_param)
+            week_start = _get_monday(week_date).isoformat()
+        except ValueError:
+            week_start = _get_current_week_start()
+    else:
+        week_start = _get_current_week_start()
+
     login_role: str = session.get("user_role", "")
     login_dept: str = session.get("user_dept", "")
     users = get_all_users(dept_filter=login_dept if login_dept else None)

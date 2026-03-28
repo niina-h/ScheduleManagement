@@ -33,3 +33,11 @@ body { font-size: 14px; }
 ::placeholder { color: #c8d0d8 !important; opacity: 1 !important; }
 input::placeholder, textarea::placeholder, select::placeholder { color: #c8d0d8 !important; opacity: 1 !important; }
 .form-control::placeholder { color: #c8d0d8 !important; opacity: 1 !important; }
+
+/* IME制御: テキスト入力は日本語IMEを維持、数値・日付は半角 */
+input[type="text"], textarea, input[list] {
+  ime-mode: active;
+}
+input[type="number"], input[type="date"], input[type="email"], input[type="url"] {
+  ime-mode: inactive;
+}
