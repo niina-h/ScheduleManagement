@@ -25,16 +25,20 @@ from flask import (
 from ..models import (
     copy_last_week_schedule,
     get_accessible_users,
+    get_active_tasks_for_user,
     get_all_categories,
     get_all_subcategories,
     get_all_users,
     get_daily_comment,
+    get_events_for_user_date,
     get_task_master,
     get_user_by_id,
     get_week_daily_results,
     get_weekly_leave,
     get_weekly_schedule,
     get_weekly_schedule_meta,
+    import_events_to_weekly_schedule,
+    import_tasks_to_weekly_schedule,
     save_weekly_leave,
     save_weekly_schedule,
 )
@@ -222,6 +226,14 @@ def weekly() -> Any:
     categories = get_all_categories()
     all_subcategories = get_all_subcategories()
 
+    # タスク管理からインポート可能なタスク一覧
+    active_project_tasks: list[dict] = get_active_tasks_for_user(target_user_id)
+
+    # 各曜日のイベント一覧
+    week_events: dict[int, list[dict]] = {}
+    for i, d in enumerate(dates):
+        week_events[i] = get_events_for_user_date(target_user_id, d)
+
     return render_template(
         "schedule.html",
         user=user,
@@ -244,6 +256,8 @@ def weekly() -> Any:
         week_admin_comments=week_admin_comments,
         categories=categories,
         all_subcategories=all_subcategories,
+        active_project_tasks=active_project_tasks,
+        week_events=week_events,
     )
 
 
@@ -389,6 +403,103 @@ def clear_schedule() -> Any:
     }
     save_weekly_schedule(target_user_id, week_start, empty_data, updated_by)
     flash("週間予定をクリアしました", "success")
+    redirect_url = url_for("schedule.weekly") + f"?week={week_start}"
+    if is_admin_view:
+        redirect_url += f"&user_id={target_user_id}"
+    return redirect(redirect_url)
+
+
+@schedule_bp.route("/schedule/import_tasks", methods=["POST"])
+def import_tasks() -> Any:
+    """タスク管理のタスクを週間予定にインポートする（POST）。
+
+    フォームから選択されたタスクIDを受け取り、AMスロットの空き枠に配置する。
+
+    Returns:
+        週間予定ページへのリダイレクト。
+    """
+    login_user_id: int | None = session.get("user_id")
+    if not login_user_id:
+        return redirect(url_for("auth.login"))
+
+    week_start: str = request.form.get("week_start", "").strip()
+    if not week_start:
+        week_start = _get_default_week_start()
+
+    # 対象ユーザー判定
+    form_user_id: str = request.form.get("target_user_id", "").strip()
+    if form_user_id and is_privileged(session.get("user_role", "")):
+        try:
+            target_user_id: int = int(form_user_id)
+        except ValueError:
+            target_user_id = int(login_user_id)
+    else:
+        target_user_id = int(login_user_id)
+
+    is_admin_view: bool = (target_user_id != int(login_user_id))
+    updated_by: str = session.get("user_name", "")
+
+    # 選択されたタスクID
+    task_ids_raw: list[str] = request.form.getlist("import_task_ids")
+    task_ids: list[int] = []
+    for raw in task_ids_raw:
+        try:
+            task_ids.append(int(raw))
+        except ValueError:
+            continue
+
+    if task_ids:
+        count = import_tasks_to_weekly_schedule(
+            target_user_id, week_start, task_ids, updated_by,
+        )
+        flash(f"{count}件のタスクをインポートしました", "success")
+    else:
+        flash("インポートするタスクが選択されていません", "warning")
+
+    redirect_url = url_for("schedule.weekly") + f"?week={week_start}"
+    if is_admin_view:
+        redirect_url += f"&user_id={target_user_id}"
+    return redirect(redirect_url)
+
+
+@schedule_bp.route("/schedule/import_events", methods=["POST"])
+def import_events() -> Any:
+    """イベントを週間予定に自動配置する（POST）。
+
+    タスク管理のイベント（is_event=1）を、開始時刻のAM/PM判定に基づき配置する。
+
+    Returns:
+        週間予定ページへのリダイレクト。
+    """
+    login_user_id: int | None = session.get("user_id")
+    if not login_user_id:
+        return redirect(url_for("auth.login"))
+
+    week_start: str = request.form.get("week_start", "").strip()
+    if not week_start:
+        week_start = _get_default_week_start()
+
+    # 対象ユーザー判定
+    form_user_id: str = request.form.get("target_user_id", "").strip()
+    if form_user_id and is_privileged(session.get("user_role", "")):
+        try:
+            target_user_id: int = int(form_user_id)
+        except ValueError:
+            target_user_id = int(login_user_id)
+    else:
+        target_user_id = int(login_user_id)
+
+    is_admin_view: bool = (target_user_id != int(login_user_id))
+    updated_by: str = session.get("user_name", "")
+
+    count = import_events_to_weekly_schedule(
+        target_user_id, week_start, updated_by,
+    )
+    if count > 0:
+        flash(f"{count}件のイベントを配置しました", "success")
+    else:
+        flash("配置するイベントがありません", "info")
+
     redirect_url = url_for("schedule.weekly") + f"?week={week_start}"
     if is_admin_view:
         redirect_url += f"&user_id={target_user_id}"

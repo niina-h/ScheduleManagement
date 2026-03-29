@@ -370,6 +370,34 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
             db.execute("ALTER TABLE project_task ADD COLUMN assigned_to_2 INTEGER REFERENCES users(id) ON DELETE SET NULL")
             logger.info("project_task.assigned_to_2 カラムを追加しました。")
 
+    # project_task にイベント関連カラムを追加（なければ）
+    if "project_task" in tables:
+        pt_cols2 = {row[1] for row in db.execute("PRAGMA table_info(project_task)").fetchall()}
+        if "is_event" not in pt_cols2:
+            db.execute("ALTER TABLE project_task ADD COLUMN is_event INTEGER DEFAULT 0")
+            logger.info("project_task.is_event カラムを追加しました。")
+        if "event_start_time" not in pt_cols2:
+            db.execute("ALTER TABLE project_task ADD COLUMN event_start_time TEXT DEFAULT ''")
+            logger.info("project_task.event_start_time カラムを追加しました。")
+        if "event_end_time" not in pt_cols2:
+            db.execute("ALTER TABLE project_task ADD COLUMN event_end_time TEXT DEFAULT ''")
+            logger.info("project_task.event_end_time カラムを追加しました。")
+        if "planned_hours" not in pt_cols2:
+            db.execute("ALTER TABLE project_task ADD COLUMN planned_hours REAL DEFAULT 0.0")
+            logger.info("project_task.planned_hours カラムを追加しました。")
+
+    # weekly_schedule に project_task_id を追加（なければ）
+    ws_cols = {row[1] for row in db.execute("PRAGMA table_info(weekly_schedule)").fetchall()}
+    if "project_task_id" not in ws_cols:
+        db.execute("ALTER TABLE weekly_schedule ADD COLUMN project_task_id INTEGER")
+        logger.info("weekly_schedule.project_task_id カラムを追加しました。")
+
+    # daily_result に project_task_id を追加（なければ）
+    dr_cols = {row[1] for row in db.execute("PRAGMA table_info(daily_result)").fetchall()}
+    if "project_task_id" not in dr_cols:
+        db.execute("ALTER TABLE daily_result ADD COLUMN project_task_id INTEGER")
+        logger.info("daily_result.project_task_id カラムを追加しました。")
+
     # users に姓・名カラムを追加（なければ）
     u_cols = {row[1] for row in db.execute("PRAGMA table_info(users)").fetchall()}
     if "last_name" not in u_cols:

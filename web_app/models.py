@@ -556,7 +556,7 @@ def get_weekly_schedule(user_id: int, week_start: str) -> dict:
     """
     db = get_db()
     rows = db.execute(
-        "SELECT day_of_week, time_slot, slot_index, task_name, hours "
+        "SELECT day_of_week, time_slot, slot_index, task_name, hours, project_task_id "
         "FROM weekly_schedule "
         "WHERE user_id = ? AND week_start = ?",
         (user_id, week_start),
@@ -571,6 +571,7 @@ def get_weekly_schedule(user_id: int, week_start: str) -> dict:
             schedule[day][slot][idx] = {
                 "task_name": row["task_name"] or "",
                 "hours": row["hours"] or 0.0,
+                "project_task_id": row["project_task_id"],
             }
     return schedule
 
@@ -596,15 +597,19 @@ def save_weekly_schedule(
     db = get_db()
     now = datetime.now().isoformat()
 
-    # 既存レコードのcreated_atをキャッシュ
+    # 既存レコードのcreated_at・project_task_idをキャッシュ
     existing_rows = db.execute(
-        "SELECT day_of_week, time_slot, slot_index, created_at "
+        "SELECT day_of_week, time_slot, slot_index, created_at, project_task_id "
         "FROM weekly_schedule "
         "WHERE user_id = ? AND week_start = ?",
         (user_id, week_start),
     ).fetchall()
     created_at_map: dict[tuple[int, str, int], str] = {
         (r["day_of_week"], r["time_slot"], r["slot_index"]): r["created_at"]
+        for r in existing_rows
+    }
+    pt_id_map: dict[tuple[int, str, int], int | None] = {
+        (r["day_of_week"], r["time_slot"], r["slot_index"]): r["project_task_id"]
         for r in existing_rows
     }
 
@@ -614,11 +619,14 @@ def save_weekly_schedule(
             for idx, entry in enumerate(entries):
                 key = (day_int, slot, idx)
                 created_at = created_at_map.get(key) or now
+                # project_task_id: フォームから渡された値優先、なければ既存値を維持
+                pt_id = entry.get("project_task_id") or pt_id_map.get(key)
                 db.execute(
                     "INSERT OR REPLACE INTO weekly_schedule "
                     "(user_id, week_start, day_of_week, time_slot, slot_index, "
-                    " task_name, hours, subcategory_name, created_at, updated_at, updated_by) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " task_name, hours, subcategory_name, project_task_id, "
+                    " created_at, updated_at, updated_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         user_id,
                         week_start,
@@ -628,6 +636,7 @@ def save_weekly_schedule(
                         entry.get("task_name", ""),
                         entry.get("hours", 0.0),
                         entry.get("subcategory_name", ""),
+                        pt_id,
                         created_at,
                         now,
                         updated_by,
@@ -778,7 +787,7 @@ def get_daily_result(user_id: int, date_str: str) -> dict:
     """
     db = get_db()
     rows = db.execute(
-        "SELECT time_slot, slot_index, task_name, hours, defer_date, is_carryover "
+        "SELECT time_slot, slot_index, task_name, hours, defer_date, is_carryover, project_task_id "
         "FROM daily_result "
         "WHERE user_id = ? AND date = ?",
         (user_id, date_str),
@@ -794,6 +803,7 @@ def get_daily_result(user_id: int, date_str: str) -> dict:
                 "hours": row["hours"] or 0.0,
                 "defer_date": row["defer_date"] or "",
                 "is_carryover": int(row["is_carryover"] or 0),
+                "project_task_id": row["project_task_id"],
             }
     return result
 
@@ -842,8 +852,9 @@ def save_daily_result(
                 db.execute(
                     "INSERT OR REPLACE INTO daily_result "
                     "(user_id, date, time_slot, slot_index, task_name, hours, "
-                    " subcategory_name, defer_date, is_carryover, updated_at, updated_by) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " subcategory_name, defer_date, is_carryover, project_task_id, "
+                    " updated_at, updated_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         user_id,
                         date_str,
@@ -854,6 +865,7 @@ def save_daily_result(
                         entry.get("subcategory_name", ""),
                         entry.get("defer_date", ""),
                         int(entry.get("is_carryover", 0)),
+                        entry.get("project_task_id"),
                         now,
                         updated_by,
                     ),
@@ -1780,14 +1792,23 @@ PROJECT_TASK_STATUSES: list[str] = [
 ]
 
 
-def _normalize_progress(status: str, progress: int) -> int:
-    """状態に応じた進捗率の正規化（手動入力を尊重する）。
+def _normalize_progress(
+    status: str,
+    progress: int,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> int:
+    """状態に応じた進捗率の正規化。
 
-    未着手→0、完了→100 のみ強制。それ以外はユーザー入力値をそのまま返す。
+    未着手→0、完了→100 のみ強制。
+    「順調」の場合は開始日・終了日・今日の日付から自動計算する。
+    それ以外はユーザー入力値をそのまま返す。
 
     Args:
         status: タスク状態
         progress: ユーザーが入力した進捗率
+        start_date: 開始日（YYYY-MM-DD）。順調時の自動計算に使用。
+        end_date: 終了日（YYYY-MM-DD）。順調時の自動計算に使用。
 
     Returns:
         int: 正規化された進捗率
@@ -1796,7 +1817,39 @@ def _normalize_progress(status: str, progress: int) -> int:
         return 0
     if status == "完了":
         return 100
+    if status == "順調" and start_date and end_date:
+        return _calc_progress_by_date(start_date, end_date)
     return max(0, progress)
+
+
+def _calc_progress_by_date(start_date: str, end_date: str) -> int:
+    """開始日・終了日・今日の日付から進捗率を自動計算する。
+
+    計算式: (今日 - 開始日) / (終了日 - 開始日) × 100
+    開始日前は0%、終了日以降は100%にクランプする。
+
+    Args:
+        start_date: 開始日（YYYY-MM-DD）
+        end_date: 終了日（YYYY-MM-DD）
+
+    Returns:
+        int: 0〜100の進捗率
+    """
+    try:
+        s = date.fromisoformat(start_date)
+        e = date.fromisoformat(end_date)
+    except (ValueError, TypeError):
+        return 0
+    today_d = date.today()
+    if today_d <= s:
+        return 0
+    if today_d >= e:
+        return 100
+    total_days = (e - s).days
+    if total_days <= 0:
+        return 0
+    elapsed = (today_d - s).days
+    return max(0, min(100, round(elapsed / total_days * 100)))
 
 
 def get_all_project_tasks(assigned_to: int | None = None) -> list[dict]:
@@ -1874,6 +1927,10 @@ def add_project_task(
     assigned_to: int | None = None,
     assigned_to_2: int | None = None,
     is_milestone: int = 0,
+    is_event: int = 0,
+    event_start_time: str = "",
+    event_end_time: str = "",
+    planned_hours: float = 0.0,
 ) -> int:
     """プロジェクトタスクを追加する。
 
@@ -1892,22 +1949,28 @@ def add_project_task(
         assigned_to: 担当者1ユーザーID
         assigned_to_2: 担当者2ユーザーID
         is_milestone: マイルストーンフラグ（1=マイルストーン）
+        is_event: イベントフラグ（1=イベント/会議）
+        event_start_time: イベント開始時刻（HH:MM形式）
+        event_end_time: イベント終了時刻（HH:MM形式）
+        planned_hours: 予定工数（時間）
 
     Returns:
         int: 新規タスクID
     """
     db = get_db()
-    calc_progress = _normalize_progress(status, progress)
+    calc_progress = _normalize_progress(status, progress, start_date, end_date)
     max_order = db.execute("SELECT COALESCE(MAX(display_order), 0) FROM project_task").fetchone()[0]
     cur = db.execute(
         "INSERT INTO project_task "
         "(category_id, subcategory_id, task_name, description, assigned_to, assigned_to_2, "
         " is_milestone, start_date, end_date, status, delay_days, progress, "
-        " display_order, created_by, updated_by) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " display_order, created_by, updated_by, "
+        " is_event, event_start_time, event_end_time, planned_hours) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (category_id, subcategory_id, task_name, description, assigned_to, assigned_to_2,
          is_milestone, start_date, end_date, status, delay_days, calc_progress,
-         max_order + 1, created_by, updated_by),
+         max_order + 1, created_by, updated_by,
+         is_event, event_start_time, event_end_time, planned_hours),
     )
     db.commit()
     return cur.lastrowid
@@ -1928,6 +1991,10 @@ def update_project_task(
     assigned_to: int | None = None,
     assigned_to_2: int | None = None,
     is_milestone: int = 0,
+    is_event: int = 0,
+    event_start_time: str = "",
+    event_end_time: str = "",
+    planned_hours: float = 0.0,
 ) -> None:
     """プロジェクトタスクを更新する。
 
@@ -1946,19 +2013,26 @@ def update_project_task(
         assigned_to: 担当者1ユーザーID
         assigned_to_2: 担当者2ユーザーID
         is_milestone: マイルストーンフラグ（1=マイルストーン）
+        is_event: イベントフラグ（1=イベント/会議）
+        event_start_time: イベント開始時刻（HH:MM形式）
+        event_end_time: イベント終了時刻（HH:MM形式）
+        planned_hours: 予定工数（時間）
     """
     db = get_db()
-    calc_progress = _normalize_progress(status, progress)
+    calc_progress = _normalize_progress(status, progress, start_date, end_date)
     db.execute(
         "UPDATE project_task SET "
         "category_id=?, subcategory_id=?, task_name=?, description=?, "
         "assigned_to=?, assigned_to_2=?, is_milestone=?, start_date=?, end_date=?, "
         "status=?, delay_days=?, progress=?, "
+        "is_event=?, event_start_time=?, event_end_time=?, planned_hours=?, "
         "updated_at=datetime('now','localtime'), updated_by=? "
         "WHERE id=?",
         (category_id, subcategory_id, task_name, description,
          assigned_to, assigned_to_2, is_milestone, start_date, end_date,
-         status, delay_days, calc_progress, updated_by, task_id),
+         status, delay_days, calc_progress,
+         is_event, event_start_time, event_end_time, planned_hours,
+         updated_by, task_id),
     )
     db.commit()
 
@@ -1972,6 +2046,500 @@ def delete_project_task(task_id: int) -> None:
     db = get_db()
     db.execute("DELETE FROM project_task WHERE id = ?", (task_id,))
     db.commit()
+
+
+def get_active_tasks_for_user(user_id: int) -> list[dict]:
+    """指定ユーザーに割り当てられた未完了の通常タスク（イベント除く）を取得する。
+
+    週間予定へのインポート候補として使用する。
+
+    Args:
+        user_id: ユーザーID
+
+    Returns:
+        list[dict]: タスク一覧（id, task_name, start_date, end_date, status, progress）
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT pt.id, pt.task_name, pt.start_date, pt.end_date, "
+        "  pt.status, pt.progress, pt.planned_hours, "
+        "  tc.name AS category_name, ts.name AS subcategory_name "
+        "FROM project_task pt "
+        "LEFT JOIN task_category tc ON pt.category_id = tc.id "
+        "LEFT JOIN task_subcategory ts ON pt.subcategory_id = ts.id "
+        "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?) "
+        "  AND pt.status NOT IN ('完了', '停止') "
+        "  AND pt.is_event = 0 "
+        "ORDER BY tc.display_order, ts.display_order, pt.display_order",
+        (user_id, user_id),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_events_for_user_date(user_id: int, target_date: str) -> list[dict]:
+    """指定ユーザー・日付に該当するイベントを取得する。
+
+    start_date <= target_date <= end_date のイベントを返す。
+
+    Args:
+        user_id: ユーザーID
+        target_date: 対象日付（YYYY-MM-DD形式）
+
+    Returns:
+        list[dict]: イベント一覧
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT pt.id, pt.task_name, pt.description, pt.start_date, pt.end_date, "
+        "  pt.event_start_time, pt.event_end_time, pt.planned_hours, "
+        "  pt.status, pt.progress, "
+        "  tc.name AS category_name, ts.name AS subcategory_name "
+        "FROM project_task pt "
+        "LEFT JOIN task_category tc ON pt.category_id = tc.id "
+        "LEFT JOIN task_subcategory ts ON pt.subcategory_id = ts.id "
+        "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?) "
+        "  AND pt.is_event = 1 "
+        "  AND pt.start_date <= ? AND pt.end_date >= ? "
+        "ORDER BY pt.event_start_time ASC",
+        (user_id, user_id, target_date, target_date),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def import_tasks_to_weekly_schedule(
+    user_id: int,
+    week_start: str,
+    task_ids: list[int],
+    updated_by: str = "",
+) -> int:
+    """タスク管理のタスクを週間予定にインポートする。
+
+    各タスクをAMスロットの空き枠に作業時間0で割り当てる。
+    既に同じ project_task_id で登録済みの場合はスキップする。
+
+    Args:
+        user_id: ユーザーID
+        week_start: 週開始日（YYYY-MM-DD形式）
+        task_ids: インポートするタスクIDのリスト
+        updated_by: 更新者名
+
+    Returns:
+        int: 実際にインポートした件数
+    """
+    import sqlite3 as _sqlite3
+
+    db = get_db()
+    now = datetime.now().isoformat()
+    imported = 0
+
+    # 既存の project_task_id を収集（重複防止）
+    existing_rows = db.execute(
+        "SELECT project_task_id FROM weekly_schedule "
+        "WHERE user_id = ? AND week_start = ? AND project_task_id IS NOT NULL",
+        (user_id, week_start),
+    ).fetchall()
+    existing_pt_ids: set[int] = {r["project_task_id"] for r in existing_rows}
+
+    for pt_id in task_ids:
+        if pt_id in existing_pt_ids:
+            continue
+        task = get_project_task_by_id(pt_id)
+        if not task:
+            continue
+
+        # 月曜のAMスロットから空き枠を探す
+        placed = False
+        for day in range(5):
+            if placed:
+                break
+            for idx in range(5):
+                row = db.execute(
+                    "SELECT task_name FROM weekly_schedule "
+                    "WHERE user_id = ? AND week_start = ? AND day_of_week = ? "
+                    "  AND time_slot = 'am' AND slot_index = ?",
+                    (user_id, week_start, day, idx),
+                ).fetchone()
+                if row is None or not row["task_name"]:
+                    try:
+                        db.execute(
+                            "INSERT OR REPLACE INTO weekly_schedule "
+                            "(user_id, week_start, day_of_week, time_slot, slot_index, "
+                            " task_name, hours, subcategory_name, project_task_id, "
+                            " updated_at, updated_by) "
+                            "VALUES (?, ?, ?, 'am', ?, ?, 0.0, ?, ?, ?, ?)",
+                            (user_id, week_start, day, idx,
+                             task["task_name"],
+                             task.get("subcategory_name") or "",
+                             pt_id, now, updated_by),
+                        )
+                        placed = True
+                        imported += 1
+                    except _sqlite3.DatabaseError:
+                        pass
+                    break
+
+    if imported > 0:
+        db.commit()
+    return imported
+
+
+def import_events_to_weekly_schedule(
+    user_id: int,
+    week_start: str,
+    updated_by: str = "",
+) -> int:
+    """イベントを週間予定に自動配置する。
+
+    イベントの開始時刻からAM/PMを判定し、該当曜日の空き枠に配置する。
+    12:00未満はAM、12:00以降はPM。
+
+    Args:
+        user_id: ユーザーID
+        week_start: 週開始日（YYYY-MM-DD形式）
+        updated_by: 更新者名
+
+    Returns:
+        int: 配置したイベント数
+    """
+    import sqlite3 as _sqlite3
+
+    db = get_db()
+    now = datetime.now().isoformat()
+    ws_date = date.fromisoformat(week_start)
+    imported = 0
+
+    # 既存の project_task_id を収集（重複防止）
+    existing_rows = db.execute(
+        "SELECT project_task_id FROM weekly_schedule "
+        "WHERE user_id = ? AND week_start = ? AND project_task_id IS NOT NULL",
+        (user_id, week_start),
+    ).fetchall()
+    existing_pt_ids: set[int] = {r["project_task_id"] for r in existing_rows}
+
+    # 当週の月〜金の日付
+    week_dates = [(ws_date + timedelta(days=i)).isoformat() for i in range(5)]
+
+    for day_idx, day_date in enumerate(week_dates):
+        events = get_events_for_user_date(user_id, day_date)
+        for ev in events:
+            if ev["id"] in existing_pt_ids:
+                continue
+
+            # 開始時刻からAM/PM判定
+            start_time = ev.get("event_start_time") or "09:00"
+            try:
+                hour = int(start_time.split(":")[0])
+            except (ValueError, IndexError):
+                hour = 9
+            time_slot = "pm" if hour >= 12 else "am"
+
+            # 該当スロットの空き枠を探す
+            for idx in range(5):
+                row = db.execute(
+                    "SELECT task_name FROM weekly_schedule "
+                    "WHERE user_id = ? AND week_start = ? AND day_of_week = ? "
+                    "  AND time_slot = ? AND slot_index = ?",
+                    (user_id, week_start, day_idx, time_slot, idx),
+                ).fetchone()
+                if row is None or not row["task_name"]:
+                    # イベント名に時間を付与
+                    time_label = f"【{start_time}-{ev.get('event_end_time') or ''}】"
+                    event_task_name = f"{time_label}{ev['task_name']}"
+                    hours = ev.get("planned_hours") or 0.0
+                    try:
+                        db.execute(
+                            "INSERT OR REPLACE INTO weekly_schedule "
+                            "(user_id, week_start, day_of_week, time_slot, slot_index, "
+                            " task_name, hours, subcategory_name, project_task_id, "
+                            " updated_at, updated_by) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (user_id, week_start, day_idx, time_slot, idx,
+                             event_task_name, hours,
+                             ev.get("subcategory_name") or "",
+                             ev["id"], now, updated_by),
+                        )
+                        existing_pt_ids.add(ev["id"])
+                        imported += 1
+                    except _sqlite3.DatabaseError:
+                        pass
+                    break
+
+    if imported > 0:
+        db.commit()
+    return imported
+
+
+def sync_daily_progress_to_task(
+    user_id: int,
+    date_str: str,
+) -> int:
+    """日次実績の作業時間をタスク管理の進捗に反映する。
+
+    project_task_id が紐づいている実績スロットの作業時間を集計し、
+    タスクの planned_hours に対する実績比率で進捗を更新する。
+    ステータスが「完了」「停止」のタスクは更新しない。
+
+    Args:
+        user_id: ユーザーID
+        date_str: 実績日付（YYYY-MM-DD形式）
+
+    Returns:
+        int: 更新したタスク数
+    """
+    db = get_db()
+    updated = 0
+
+    # 全実績から project_task_id 別に時間を集計
+    rows = db.execute(
+        "SELECT project_task_id, SUM(hours) AS total_hours "
+        "FROM daily_result "
+        "WHERE user_id = ? AND project_task_id IS NOT NULL "
+        "GROUP BY project_task_id",
+        (user_id,),
+    ).fetchall()
+
+    for row in rows:
+        pt_id = row["project_task_id"]
+        total_hours = row["total_hours"] or 0.0
+
+        task = get_project_task_by_id(pt_id)
+        if not task:
+            continue
+        if task["status"] in ("完了", "停止"):
+            continue
+
+        planned = task.get("planned_hours") or 0.0
+        if planned <= 0:
+            continue
+
+        new_progress = max(0, min(100, round(total_hours / planned * 100)))
+        if new_progress != (task.get("progress") or 0):
+            db.execute(
+                "UPDATE project_task SET progress = ?, "
+                "updated_at = datetime('now','localtime') "
+                "WHERE id = ?",
+                (new_progress, pt_id),
+            )
+            updated += 1
+
+    if updated > 0:
+        db.commit()
+    return updated
+
+
+# ---------------------------------------------------------------------------
+# ブラビオExcelインポート
+# ---------------------------------------------------------------------------
+
+
+def _find_user_by_partial_name(name: str, users: list[dict]) -> int | None:
+    """ユーザー名の部分一致で該当ユーザーIDを返す。
+
+    姓・名・フルネームのいずれかに部分一致するユーザーを検索する。
+    一致しない場合は None を返す。
+
+    Args:
+        name: 検索する名前文字列
+        users: get_all_users() の結果リスト
+
+    Returns:
+        int | None: 一致したユーザーID、または None
+    """
+    name = name.strip().replace("\u3000", " ")
+    if not name:
+        return None
+    for u in users:
+        full = (u.get("name") or "").replace("\u3000", " ")
+        last = (u.get("last_name") or "").replace("\u3000", " ")
+        first = (u.get("first_name") or "").replace("\u3000", " ")
+        # 部分一致チェック
+        if name in full or name in last or name in first:
+            return u["id"]
+        if full and full in name:
+            return u["id"]
+        # 姓だけでも一致判定
+        if last and last in name:
+            return u["id"]
+    return None
+
+
+def _map_brabio_status(status_str: str, progress: int) -> str:
+    """ブラビオのステータスをプロジェクトタスクのステータスにマッピングする。
+
+    Args:
+        status_str: ブラビオのステータス文字列
+        progress: 進捗率
+
+    Returns:
+        str: マッピング後のステータス
+    """
+    s = status_str.strip()
+    if s == "完了":
+        return "完了"
+    if s == "停止":
+        return "停止"
+    if s == "未着手":
+        return "未着手"
+    if s in ("作業中", ""):
+        if progress >= 100:
+            return "完了"
+        if progress > 0:
+            return "着手"
+        return "未着手"
+    return "着手"
+
+
+def import_brabio_excel(
+    file_path: str,
+    created_by: int,
+    updated_by: str,
+) -> dict:
+    """ブラビオExcelファイルからタスクをインポートする。
+
+    folder行を大区分・中区分、task行をプロジェクトタスクとして取り込む。
+    milestone行はマイルストーンとして取り込む。
+    既に同名タスクが存在する場合はスキップする。
+    担当者はユーザー名の部分一致でマッチングする。
+
+    Args:
+        file_path: Excelファイルパス
+        created_by: 作成者ユーザーID
+        updated_by: 更新者名
+
+    Returns:
+        dict: {"imported": int, "skipped": int, "errors": list[str]}
+    """
+    import openpyxl as _openpyxl
+
+    result = {"imported": 0, "skipped": 0, "errors": []}
+
+    try:
+        wb = _openpyxl.load_workbook(file_path, data_only=True)
+    except Exception as exc:
+        result["errors"].append(f"ファイルを開けませんでした: {exc}")
+        return result
+
+    ws = wb.worksheets[0]
+    all_users = get_all_users()
+
+    # 既存タスク名の集合（重複チェック用）
+    existing_tasks = get_all_project_tasks()
+    existing_names: set[str] = {t["task_name"] for t in existing_tasks}
+
+    # 大区分・中区分のキャッシュ
+    categories = get_all_categories()
+    cat_name_map: dict[str, int] = {c["name"]: c["id"] for c in categories}
+
+    subcategories = get_all_subcategories()
+    subcat_name_map: dict[str, int] = {s["name"]: s["id"] for s in subcategories}
+
+    # folder 階層を追跡（カテゴリ割り当て用）
+    # outline=1 の folder → 大区分候補
+    # outline=2 の folder → 中区分候補
+    current_cat_name: str = ""
+    current_cat_id: int | None = None
+    current_subcat_name: str = ""
+    current_subcat_id: int | None = None
+
+    for r in range(5, ws.max_row + 1):
+        row_type = str(ws.cell(r, 1).value or "").strip()
+        outline = ws.cell(r, 2).value
+        try:
+            outline_level = int(outline) if outline is not None else 0
+        except (ValueError, TypeError):
+            outline_level = 0
+        title = str(ws.cell(r, 4).value or "").strip()
+        start_raw = str(ws.cell(r, 5).value or "").strip()
+        end_raw = str(ws.cell(r, 6).value or "").strip()
+        status_raw = str(ws.cell(r, 7).value or "").strip()
+        progress_raw = ws.cell(r, 8).value
+        member_raw = str(ws.cell(r, 11).value or "").strip()
+
+        if not title:
+            continue
+
+        # 進捗率
+        try:
+            progress = max(0, min(int(progress_raw), 100)) if progress_raw else 0
+        except (ValueError, TypeError):
+            progress = 0
+
+        # 日付変換（YYYY/MM/DD → YYYY-MM-DD）
+        start_date = start_raw.replace("/", "-") if start_raw else ""
+        end_date = end_raw.replace("/", "-") if end_raw else ""
+
+        # folder 行 → カテゴリ追跡（タスクとしては取り込まない）
+        if row_type == "folder":
+            if outline_level == 1:
+                current_cat_name = title
+                current_cat_id = cat_name_map.get(title)
+                current_subcat_name = ""
+                current_subcat_id = None
+            elif outline_level == 2:
+                current_subcat_name = title
+                current_subcat_id = subcat_name_map.get(title)
+            continue
+
+        # project 行 → スキップ
+        if row_type == "project":
+            continue
+
+        # task / milestone 行 → インポート対象
+        if row_type not in ("task", "milestone"):
+            continue
+
+        # 改行含むタイトルは最初の行のみ
+        title = title.split("\n")[0].strip()
+
+        # 重複チェック
+        if title in existing_names:
+            result["skipped"] += 1
+            continue
+
+        # ステータスマッピング
+        status = _map_brabio_status(status_raw, progress)
+
+        # 担当者マッチング（複数名の場合は改行区切り）
+        assigned_to: int | None = None
+        assigned_to_2: int | None = None
+        if member_raw:
+            members = [m.strip() for m in member_raw.split("\n") if m.strip()]
+            if len(members) >= 1:
+                assigned_to = _find_user_by_partial_name(members[0], all_users)
+            if len(members) >= 2:
+                assigned_to_2 = _find_user_by_partial_name(members[1], all_users)
+
+        is_milestone = 1 if row_type == "milestone" else 0
+
+        # 日付がない場合はデフォルト
+        if not start_date:
+            start_date = date.today().isoformat()
+        if not end_date:
+            end_date = start_date
+
+        try:
+            add_project_task(
+                category_id=current_cat_id,
+                subcategory_id=current_subcat_id,
+                task_name=title,
+                description="",
+                start_date=start_date,
+                end_date=end_date,
+                status=status,
+                progress=progress,
+                delay_days=0,
+                created_by=created_by,
+                updated_by=updated_by,
+                assigned_to=assigned_to,
+                assigned_to_2=assigned_to_2,
+                is_milestone=is_milestone,
+            )
+            existing_names.add(title)
+            result["imported"] += 1
+        except Exception as exc:
+            result["errors"].append(f"行{r}「{title}」: {exc}")
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2030,6 +2598,100 @@ def get_task_progress_summary(user_id: int | None = None) -> dict:
         "delayed_count": delayed_count,
         "avg_progress": avg_progress,
         "status_breakdown": status_breakdown,
+        "tasks": tasks,
+    }
+
+
+def get_task_overview_summary() -> dict:
+    """管理者向けタスク全体俯瞰サマリーを取得する。
+
+    全タスクを対象に、ステータス別件数・カテゴリ別集計・担当者別集計を生成する。
+    管理職・マスタ向けダッシュボードで使用。
+
+    Returns:
+        dict: 以下のキーを持つ辞書。
+            - total_count (int): タスク総数
+            - completed_count (int): 完了タスク数
+            - delayed_count (int): 遅延タスク数
+            - avg_progress (float): 平均進捗率
+            - status_breakdown (dict[str, int]): ステータス別件数
+            - category_summary (list[dict]): カテゴリ別の件数・平均進捗
+            - user_summary (list[dict]): 担当者別の件数・平均進捗
+            - tasks (list[dict]): 全タスク情報
+    """
+    tasks: list[dict] = get_all_project_tasks()
+
+    status_breakdown: dict[str, int] = {s: 0 for s in PROJECT_TASK_STATUSES}
+    completed_count: int = 0
+    delayed_count: int = 0
+    total_progress: float = 0.0
+
+    # カテゴリ別集計用
+    cat_data: dict[str, dict] = {}
+    # 担当者別集計用
+    user_data: dict[str, dict] = {}
+
+    for task in tasks:
+        status: str = task.get("status", "")
+        if status in status_breakdown:
+            status_breakdown[status] += 1
+        if status == "完了":
+            completed_count += 1
+        delay_days: int = task.get("delay_days", 0) or 0
+        if status == "遅れ" or delay_days > 0:
+            delayed_count += 1
+        prog: float = float(task.get("progress", 0) or 0)
+        total_progress += prog
+
+        # カテゴリ別
+        cat_name: str = task.get("category_name") or "（未分類）"
+        if cat_name not in cat_data:
+            cat_data[cat_name] = {"name": cat_name, "count": 0, "progress_sum": 0.0,
+                                  "completed": 0, "delayed": 0}
+        cat_data[cat_name]["count"] += 1
+        cat_data[cat_name]["progress_sum"] += prog
+        if status == "完了":
+            cat_data[cat_name]["completed"] += 1
+        if status == "遅れ" or delay_days > 0:
+            cat_data[cat_name]["delayed"] += 1
+
+        # 担当者別
+        user_name: str = task.get("assigned_name") or "（未割当）"
+        if user_name not in user_data:
+            user_data[user_name] = {"name": user_name, "count": 0, "progress_sum": 0.0,
+                                    "completed": 0, "delayed": 0}
+        user_data[user_name]["count"] += 1
+        user_data[user_name]["progress_sum"] += prog
+        if status == "完了":
+            user_data[user_name]["completed"] += 1
+        if status == "遅れ" or delay_days > 0:
+            user_data[user_name]["delayed"] += 1
+
+    total_count: int = len(tasks)
+    avg_progress: float = round(total_progress / total_count, 1) if total_count > 0 else 0.0
+
+    # カテゴリ別平均進捗を計算
+    category_summary: list[dict] = []
+    for cd in cat_data.values():
+        cd["avg_progress"] = round(cd["progress_sum"] / cd["count"], 1) if cd["count"] > 0 else 0.0
+        category_summary.append(cd)
+    category_summary.sort(key=lambda x: x["name"])
+
+    # 担当者別平均進捗を計算
+    user_summary: list[dict] = []
+    for ud in user_data.values():
+        ud["avg_progress"] = round(ud["progress_sum"] / ud["count"], 1) if ud["count"] > 0 else 0.0
+        user_summary.append(ud)
+    user_summary.sort(key=lambda x: -x["count"])
+
+    return {
+        "total_count": total_count,
+        "completed_count": completed_count,
+        "delayed_count": delayed_count,
+        "avg_progress": avg_progress,
+        "status_breakdown": status_breakdown,
+        "category_summary": category_summary,
+        "user_summary": user_summary,
         "tasks": tasks,
     }
 

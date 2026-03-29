@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% block title %}タスク全体俯瞰 - 予定管理システム{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h5 class="fw-bold mb-0">タスク全体俯瞰</h5>
+      <div class="d-flex gap-2">
+        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('project_tasks_bp.task_list') }}">タスク一覧</a>
+        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('project_tasks_bp.progress_dashboard') }}">個人ダッシュボード</a>
+      </div>
+    </div>
+
+    {# ── サマリーカード ── #}
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-md-3">
+        <div class="card shadow-sm text-center">
+          <div class="card-body py-2">
+            <div class="text-muted small">全タスク</div>
+            <div class="fs-3 fw-bold">{{ summary.total_count }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card shadow-sm text-center border-success">
+          <div class="card-body py-2">
+            <div class="text-muted small">完了</div>
+            <div class="fs-3 fw-bold text-success">{{ summary.completed_count }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card shadow-sm text-center border-danger">
+          <div class="card-body py-2">
+            <div class="text-muted small">遅れ</div>
+            <div class="fs-3 fw-bold text-danger">{{ summary.delayed_count }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card shadow-sm text-center border-primary">
+          <div class="card-body py-2">
+            <div class="text-muted small">全体進捗率</div>
+            <div class="fs-3 fw-bold text-primary">{{ "%.0f"|format(summary.avg_progress) }}%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── グラフエリア: ステータス円グラフ + カテゴリ別進捗 ── #}
+    <div class="row g-3 mb-3">
+      <div class="col-md-4">
+        <div class="card shadow-sm">
+          <div class="card-header bg-light fw-semibold small">ステータス別内訳</div>
+          <div class="card-body" style="height:300px;">
+            <canvas id="statusChart"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-8">
+        <div class="card shadow-sm">
+          <div class="card-header bg-light fw-semibold small">カテゴリ別 平均進捗率</div>
+          <div class="card-body p-2" style="overflow-y:auto; max-height:300px;">
+            <canvas id="categoryChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── 担当者別集計 ── #}
+    <div class="row g-3 mb-3">
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-header bg-light fw-semibold small">担当者別 タスク状況</div>
+          <div class="card-body p-0">
+            <table class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>担当者</th>
+                  <th class="text-center">件数</th>
+                  <th class="text-center">完了</th>
+                  <th class="text-center">遅れ</th>
+                  <th style="min-width:200px;">平均進捗</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for u in summary.user_summary %}
+                <tr>
+                  <td class="fw-semibold small">{{ u.name }}</td>
+                  <td class="text-center small">{{ u.count }}</td>
+                  <td class="text-center small text-success fw-bold">{{ u.completed }}</td>
+                  <td class="text-center small text-danger fw-bold">{{ u.delayed }}</td>
+                  <td>
+                    <div class="d-flex align-items-center gap-2">
+                      <div class="progress flex-grow-1" style="height:16px;">
+                        <div class="progress-bar {% if u.avg_progress >= 80 %}bg-success{% elif u.avg_progress >= 50 %}bg-primary{% elif u.avg_progress >= 30 %}bg-warning{% else %}bg-secondary{% endif %}"
+                             style="width:{{ [u.avg_progress, 100]|min }}%">
+                        </div>
+                      </div>
+                      <span class="small fw-bold" style="min-width:40px;">{{ "%.0f"|format(u.avg_progress) }}%</span>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── カテゴリ別詳細テーブル ── #}
+    <div class="row g-3 mb-3">
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-header bg-light fw-semibold small">カテゴリ別 詳細</div>
+          <div class="card-body p-0">
+            <table class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>カテゴリ</th>
+                  <th class="text-center">件数</th>
+                  <th class="text-center">完了</th>
+                  <th class="text-center">遅れ</th>
+                  <th style="min-width:200px;">平均進捗</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for c in summary.category_summary %}
+                <tr>
+                  <td class="fw-semibold small">{{ c.name }}</td>
+                  <td class="text-center small">{{ c.count }}</td>
+                  <td class="text-center small text-success fw-bold">{{ c.completed }}</td>
+                  <td class="text-center small text-danger fw-bold">{{ c.delayed }}</td>
+                  <td>
+                    <div class="d-flex align-items-center gap-2">
+                      <div class="progress flex-grow-1" style="height:16px;">
+                        <div class="progress-bar {% if c.avg_progress >= 80 %}bg-success{% elif c.avg_progress >= 50 %}bg-primary{% elif c.avg_progress >= 30 %}bg-warning{% else %}bg-secondary{% endif %}"
+                             style="width:{{ [c.avg_progress, 100]|min }}%">
+                        </div>
+                      </div>
+                      <span class="small fw-bold" style="min-width:40px;">{{ "%.0f"|format(c.avg_progress) }}%</span>
+                    </div>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── 遅れ・注意タスク一覧 ── #}
+    <div class="card shadow-sm">
+      <div class="card-header bg-danger text-white fw-semibold small">遅れ・注意タスク</div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>タスク名</th>
+              <th>カテゴリ</th>
+              <th>担当者</th>
+              <th>期限</th>
+              <th class="text-center">進捗</th>
+              <th class="text-center">遅延日</th>
+              <th>状態</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in summary.tasks if t.status == '遅れ' or (t.delay_days and t.delay_days > 0) %}
+            <tr>
+              <td class="small fw-semibold">{{ t.task_name }}</td>
+              <td class="small text-muted">{{ t.category_name or '' }}</td>
+              <td class="small">{{ t.assigned_name or '（未割当）' }}</td>
+              <td class="small">{{ t.end_date }}</td>
+              <td class="text-center">
+                <div class="progress" style="height:14px;min-width:60px;">
+                  <div class="progress-bar bg-danger" style="width:{{ [t.progress, 100]|min }}%">
+                    <small>{{ t.progress }}%</small>
+                  </div>
+                </div>
+              </td>
+              <td class="text-center"><span class="badge bg-danger">{{ t.delay_days or 0 }}日</span></td>
+              <td class="small text-danger fw-bold">{{ t.status }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="text-center text-muted py-3">遅れタスクはありません</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script type="application/json" id="chartData">{{ chart_json | tojson }}</script>
+<script>
+(function () {
+  var data = JSON.parse(document.getElementById('chartData').textContent);
+
+  /* ステータス別ドーナツチャート */
+  new Chart(document.getElementById('statusChart').getContext('2d'), {
+    type: 'doughnut',
+    data: {
+      labels: data.status_labels,
+      datasets: [{
+        data: data.status_counts,
+        backgroundColor: data.status_colors,
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { font: { size: 11 } } }
+      }
+    }
+  });
+
+  /* カテゴリ別 横棒グラフ */
+  var catBarH = Math.max(200, data.cat_names.length * 40);
+  var catCanvas = document.getElementById('categoryChart');
+  catCanvas.style.height = catBarH + 'px';
+  catCanvas.parentElement.style.maxHeight = Math.max(300, catBarH + 20) + 'px';
+
+  new Chart(catCanvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: data.cat_names,
+      datasets: [
+        {
+          label: '平均進捗率',
+          data: data.cat_avg_progress,
+          backgroundColor: data.cat_avg_progress.map(function(v) {
+            if (v >= 80) return '#10b981';
+            if (v >= 50) return '#3b82f6';
+            if (v >= 30) return '#f59e0b';
+            return '#9ca3af';
+          }),
+          borderWidth: 0,
+          barThickness: 22,
+        }
+      ]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { min: 0, max: 100, ticks: { callback: function(v) { return v + '%'; } } },
+        y: { ticks: { font: { size: 11 } } }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              var i = ctx.dataIndex;
+              return ctx.parsed.x + '% (' + data.cat_counts[i] + '件, 完了' + data.cat_completed[i] + ', 遅れ' + data.cat_delayed[i] + ')';
+            }
+          }
+        }
+      }
+    }
+  });
+})();
+</script>
+{% endblock %}

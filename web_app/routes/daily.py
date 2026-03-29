@@ -20,6 +20,7 @@ from ..models import (
     get_daily_comment,
     get_daily_result,
     get_daily_result_meta,
+    get_events_for_user_date,
     get_pending_carryovers,
     get_task_master,
     get_user_by_id,
@@ -31,6 +32,7 @@ from ..models import (
     save_admin_comment,
     save_daily_comment,
     save_daily_result,
+    sync_daily_progress_to_task,
 )
 from ..auth_helpers import is_privileged, is_master, can_access_user
 
@@ -244,6 +246,9 @@ def daily_view(date_str: str) -> Any:
                 "comment": sub_comment,
             })
 
+    # 当日のイベント一覧を取得
+    day_events: list[dict] = get_events_for_user_date(target_user_id, date_str)
+
     # 繰越タスク（保留中）を取得
     pending_carryovers: list[dict] = get_pending_carryovers(target_user_id)
 
@@ -282,6 +287,7 @@ def daily_view(date_str: str) -> Any:
         all_users=all_users_list,
         pending_carryovers=pending_carryovers,
         leave_dates_json=leave_dates_json,
+        day_events=day_events,
     )
 
 
@@ -332,6 +338,12 @@ def daily_save() -> Any:
             raw_defer: str = request.form.get(f"defer_date_{slot}_{i}", "").strip()
             defer_date: str = raw_defer if task else ""
             is_carryover: int = 1 if (task and request.form.get(f"carryover_{slot}_{i}", "") == "1") else 0
+            # project_task_id の取得（タスク管理と紐づいている場合）
+            pt_id_raw: str = request.form.get(f"project_task_id_{slot}_{i}", "").strip()
+            try:
+                project_task_id: int | None = int(pt_id_raw) if pt_id_raw else None
+            except ValueError:
+                project_task_id = None
             try:
                 hours: float = float(request.form.get(f"result_hours_{slot}_{i}", 0) or 0)
                 if defer_date:
@@ -346,6 +358,7 @@ def daily_save() -> Any:
                 "defer_date": defer_date,
                 "is_carryover": is_carryover,
                 "subcategory_name": subcategory_name,
+                "project_task_id": project_task_id,
             })
 
     updated_by: str = session.get("user_name", "")
@@ -416,6 +429,9 @@ def daily_save() -> Any:
     # 全スロットで⏩OFFかつリスケでもないタスクの繰越を解決
     for task_nm in all_result_tasks - carryover_on_tasks:
         resolve_carryovers_by_task(target_user_id, task_nm, date_str)
+
+    # タスク管理の進捗連動（project_task_id が紐づいている実績の工数を反映）
+    sync_daily_progress_to_task(target_user_id, date_str)
 
     # コメント保存
     reflection: str = request.form.get("reflection", "").strip()

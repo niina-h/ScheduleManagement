@@ -9,6 +9,7 @@
       <div class="d-flex gap-2">
         <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_tasks_bp.gantt') }}">ガントチャート</a>
         {% if privileged %}
+        <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#importBrabioModal">📥 ブラビオ取込</button>
         <button class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#addForm">＋ タスク追加</button>
         {% endif %}
       </div>
@@ -77,7 +78,7 @@
               </div>
               <div class="col-md-2">
                 <label class="form-label small fw-semibold">状態</label>
-                <select name="status" class="form-select form-select-sm">
+                <select name="status" id="add-status" class="form-select form-select-sm">
                   {% for s in statuses %}
                   <option value="{{ s }}">{{ s }}</option>
                   {% endfor %}
@@ -89,13 +90,32 @@
               </div>
               <div class="col-md-1">
                 <label class="form-label small fw-semibold">進捗%</label>
-                <input type="number" name="progress" class="form-control form-control-sm" value="0" min="0" max="200">
+                <input type="number" name="progress" id="add-progress" class="form-control form-control-sm" value="0" min="0" max="200">
               </div>
               <div class="col-md-1 d-flex align-items-end">
                 <div class="form-check">
                   <input type="checkbox" name="is_milestone" class="form-check-input" id="add-milestone" value="1">
                   <label class="form-check-label small" for="add-milestone">MS</label>
                 </div>
+              </div>
+              <div class="col-md-1 d-flex align-items-end">
+                <div class="form-check">
+                  <input type="checkbox" name="is_event" class="form-check-input" id="add-event" value="1"
+                         onchange="toggleEventFields(this, 'add')">
+                  <label class="form-check-label small" for="add-event">会議</label>
+                </div>
+              </div>
+              <div class="col-md-1 event-fields-add" style="display:none;">
+                <label class="form-label small fw-semibold">開始時刻</label>
+                <input type="time" name="event_start_time" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-1 event-fields-add" style="display:none;">
+                <label class="form-label small fw-semibold">終了時刻</label>
+                <input type="time" name="event_end_time" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-1">
+                <label class="form-label small fw-semibold">予定工数</label>
+                <input type="number" name="planned_hours" class="form-control form-control-sm" value="0" min="0" step="0.5">
               </div>
               <div class="col-md-1 d-flex align-items-end">
                 <button type="submit" class="btn btn-primary btn-sm w-100">追加</button>
@@ -130,6 +150,8 @@
               <th style="width:5%">進捗</th>
               <th style="width:10%">進捗バー</th>
               <th style="width:3%">MS</th>
+              <th style="width:3%">会議</th>
+              <th style="width:4%">工数h</th>
               {% if privileged %}<th style="width:3%">削除</th>{% endif %}
             </tr>
           </thead>
@@ -138,7 +160,7 @@
             {% if (t.category_name or '（なし）') != ns.current_cat %}
               {% set ns.current_cat = t.category_name or '（なし）' %}
               <tr class="table-secondary">
-                <td colspan="{{ 12 if privileged else 11 }}" class="fw-bold">{{ ns.current_cat }}</td>
+                <td colspan="{{ 14 if privileged else 13 }}" class="fw-bold">{{ ns.current_cat }}</td>
               </tr>
             {% endif %}
             <tr{% if t.is_milestone %} class="table-warning"{% endif %}>
@@ -212,6 +234,23 @@
                   {% if t.is_milestone %}◆{% endif %}
                 {% endif %}
               </td>
+              <td class="text-center">
+                {% if privileged %}
+                  <input type="checkbox" form="bulkForm" name="is_event_{{ t.id }}" class="form-check-input" value="1" {% if t.is_event %}checked{% endif %}
+                         title="会議/イベント">
+                  <input type="hidden" form="bulkForm" name="event_start_time_{{ t.id }}" value="{{ t.event_start_time or '' }}">
+                  <input type="hidden" form="bulkForm" name="event_end_time_{{ t.id }}" value="{{ t.event_end_time or '' }}">
+                {% else %}
+                  {% if t.is_event %}📅{% endif %}
+                {% endif %}
+              </td>
+              <td class="small text-center">
+                {% if privileged %}
+                  <input type="number" form="bulkForm" name="planned_hours_{{ t.id }}" value="{{ t.planned_hours or 0 }}" min="0" step="0.5" class="form-control form-control-sm" style="width:55px">
+                {% else %}
+                  {{ t.planned_hours or 0 }}h
+                {% endif %}
+              </td>
               {% if privileged %}
               <td class="text-center">
                 <form method="post" action="{{ url_for('project_tasks_bp.delete_task', task_id=t.id) }}" class="d-inline"
@@ -224,7 +263,7 @@
             </tr>
             {% endfor %}
             {% if not tasks %}
-            <tr><td colspan="{{ 12 if privileged else 11 }}" class="text-center text-muted py-3">
+            <tr><td colspan="{{ 14 if privileged else 13 }}" class="text-center text-muted py-3">
               {% if privileged %}タスクが登録されていません{% else %}割り当てられたタスクはありません{% endif %}
             </td></tr>
             {% endif %}
@@ -250,6 +289,39 @@
 
   </div>
 </div>
+
+{# ── ブラビオ取込モーダル ── #}
+{% if privileged %}
+<div class="modal fade" id="importBrabioModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('project_tasks_bp.import_brabio') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="modal-header">
+          <h6 class="modal-title fw-bold">ブラビオExcel取込</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-muted mb-2">
+            ブラビオからエクスポートしたExcelファイルを取り込みます。<br>
+            同名タスクが既に存在する場合はスキップします。<br>
+            担当者はユーザー名の部分一致で自動マッチングします。
+          </p>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Excelファイル（省略時はdata/ブラビオ商品開発業務.xlsx）</label>
+            <input type="file" name="brabio_file" class="form-control form-control-sm" accept=".xlsx">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">キャンセル</button>
+          <button type="submit" class="btn btn-info btn-sm">取込実行</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
@@ -274,6 +346,24 @@ document.addEventListener('DOMContentLoaded', function () {
   /* 状態→進捗率の自動マッピング */
   var STATUS_PROGRESS = { '未着手': 0, '着手': 10, '完了': 100 };
 
+  /**
+   * 「順調」選択時に開始日・終了日・今日から進捗%を自動計算する。
+   * 計算式: (今日 - 開始日) / (終了日 - 開始日) × 100
+   */
+  function calcProgressByDate(startStr, endStr) {
+    if (!startStr || !endStr) return 0;
+    var sp = startStr.split('-'), ep = endStr.split('-');
+    var s = new Date(parseInt(sp[0]), parseInt(sp[1]) - 1, parseInt(sp[2]));
+    var e = new Date(parseInt(ep[0]), parseInt(ep[1]) - 1, parseInt(ep[2]));
+    var now = new Date(); now.setHours(0, 0, 0, 0);
+    if (now <= s) return 0;
+    if (now >= e) return 100;
+    var total = (e - s) / 86400000;
+    if (total <= 0) return 0;
+    var elapsed = (now - s) / 86400000;
+    return Math.max(0, Math.min(100, Math.round(elapsed / total * 100)));
+  }
+
   function updateBar(tid) {
     var progInput = document.querySelector('.js-progress[data-tid="' + tid + '"]');
     var bar = document.getElementById('bar-' + tid);
@@ -296,8 +386,15 @@ document.addEventListener('DOMContentLoaded', function () {
     sel.addEventListener('change', function () {
       var tid = sel.dataset.tid;
       var status = sel.value;
-      if (status in STATUS_PROGRESS) {
-        var progInput = document.querySelector('.js-progress[data-tid="' + tid + '"]');
+      var progInput = document.querySelector('.js-progress[data-tid="' + tid + '"]');
+      if (status === '順調') {
+        /* 順調: 日付から進捗%を自動計算 */
+        var startInput = document.querySelector('[name="start_date_' + tid + '"]');
+        var endInput = document.querySelector('[name="end_date_' + tid + '"]');
+        if (progInput && startInput && endInput) {
+          progInput.value = calcProgressByDate(startInput.value, endInput.value);
+        }
+      } else if (status in STATUS_PROGRESS) {
         if (progInput) progInput.value = STATUS_PROGRESS[status];
       }
       /* 状態色クラス更新 */
@@ -309,6 +406,24 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
+  /* 追加フォームの状態変更 → 順調なら自動計算 */
+  var addStatus = document.getElementById('add-status');
+  if (addStatus) {
+    addStatus.addEventListener('change', function () {
+      var status = addStatus.value;
+      var progInput = document.getElementById('add-progress');
+      if (status === '順調') {
+        var startInput = document.querySelector('#addForm input[name="start_date"]');
+        var endInput = document.querySelector('#addForm input[name="end_date"]');
+        if (progInput && startInput && endInput) {
+          progInput.value = calcProgressByDate(startInput.value, endInput.value);
+        }
+      } else if (status in STATUS_PROGRESS && progInput) {
+        progInput.value = STATUS_PROGRESS[status];
+      }
+    });
+  }
+
   /* 進捗%入力 → バーリアルタイム更新 */
   document.querySelectorAll('.js-progress').forEach(function (inp) {
     inp.addEventListener('input', function () {
@@ -316,5 +431,13 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 });
+
+/** イベントチェックボックスでフィールドの表示/非表示を切り替える */
+function toggleEventFields(checkbox, prefix) {
+  var fields = document.querySelectorAll('.event-fields-' + prefix);
+  fields.forEach(function (el) {
+    el.style.display = checkbox.checked ? '' : 'none';
+  });
+}
 </script>
 {% endblock %}

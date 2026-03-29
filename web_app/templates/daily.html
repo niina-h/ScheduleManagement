@@ -59,6 +59,19 @@
     {% endfor %}
   </datalist>
 
+  {# ---- イベント表示 ---- #}
+  {% if day_events is defined and day_events %}
+  <div class="alert alert-warning py-2 mb-2">
+    <strong>📅 本日のイベント：</strong>
+    {% for ev in day_events %}
+    <span class="badge" style="background:#f59e0b;color:#000;font-size:0.85em;margin:2px;">
+      {{ ev.event_start_time or '' }}-{{ ev.event_end_time or '' }} {{ ev.task_name }}
+      {% if ev.planned_hours %}({{ ev.planned_hours }}h){% endif %}
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {# ---- 2カラムレイアウト ---- #}
   <div class="row g-3">
 
@@ -171,6 +184,7 @@
                             title="繰り越し（作業したが未完了）"
                             {% if am_off %}disabled{% endif %}>⏩</button>
                     <input type="hidden" name="carryover_am_{{ i }}" value="{{ '1' if is_co else '' }}">
+                    <input type="hidden" name="project_task_id_am_{{ i }}" value="{{ r_cell.project_task_id or s_cell.project_task_id or '' }}">
                   </div>
                   <input type="date" name="defer_date_am_{{ i }}"
                          class="defer-date-picker" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;"
@@ -234,6 +248,7 @@
                             title="繰り越し（作業したが未完了）"
                             {% if pm_off %}disabled{% endif %}>⏩</button>
                     <input type="hidden" name="carryover_pm_{{ i }}" value="{{ '1' if is_co else '' }}">
+                    <input type="hidden" name="project_task_id_pm_{{ i }}" value="{{ r_cell.project_task_id or s_cell.project_task_id or '' }}">
                   </div>
                   <input type="date" name="defer_date_pm_{{ i }}"
                          class="defer-date-picker" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;"

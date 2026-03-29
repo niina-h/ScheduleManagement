@@ -60,6 +60,22 @@
     </button>
   </form>
 
+  {# タスクインポート（モーダル起動ボタン） #}
+  {% if active_project_tasks %}
+  <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#importTaskModal">
+    📋 タスク取込
+  </button>
+  {% endif %}
+
+  {# イベント自動配置ボタン #}
+  <form method="post" action="{{ url_for('schedule.import_events') }}">
+    <input type="hidden" name="week_start" value="{{ week_start }}">
+    {% if is_admin_view is defined and is_admin_view %}
+    <input type="hidden" name="target_user_id" value="{{ target_user_id }}">
+    {% endif %}
+    <button type="submit" class="btn btn-outline-warning btn-sm">📅 イベント取込</button>
+  </form>
+
   {% if today >= week_dates[0] %}
   <div class="btn-group btn-group-sm ms-auto" id="view-toggle" role="group">
     <button type="button" class="btn btn-outline-primary" id="btn-plan-view" onclick="setViewMode('plan')">📋 予定</button>
@@ -134,6 +150,22 @@
           </td>
           {% endfor %}
         </tr>
+
+        {# イベント行 #}
+        {% if week_events is defined %}
+        <tr class="event-row" style="background:#fffbeb;">
+          <td colspan="2" class="text-center text-muted small">📅</td>
+          {% for day in range(5) %}
+          <td class="small" style="vertical-align:top;">
+            {% for ev in week_events.get(day, []) %}
+            <span class="event-badge" title="{{ ev.task_name }}">
+              {{ ev.event_start_time or '' }}-{{ ev.event_end_time or '' }} {{ ev.task_name }}
+            </span>
+            {% endfor %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endif %}
 
         {# 午前セクション #}
         {% for i in range(5) %}
@@ -254,6 +286,61 @@
     </div>
   </div>
 </div>
+
+{# ── タスクインポートモーダル ── #}
+{% if active_project_tasks is defined and active_project_tasks %}
+<div class="modal fade" id="importTaskModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('schedule.import_tasks') }}">
+        <input type="hidden" name="week_start" value="{{ week_start }}">
+        {% if is_admin_view is defined and is_admin_view %}
+        <input type="hidden" name="target_user_id" value="{{ target_user_id }}">
+        {% endif %}
+        <div class="modal-header">
+          <h6 class="modal-title fw-bold">タスク管理から取込</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-muted mb-2">選択したタスクをAMスロットに取り込みます（時間なし）。</p>
+          <div style="max-height:300px; overflow-y:auto;">
+          {% for pt in active_project_tasks %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="import_task_ids" value="{{ pt.id }}" id="import-pt-{{ pt.id }}">
+              <label class="form-check-label small" for="import-pt-{{ pt.id }}">
+                {{ pt.task_name }}
+                <span class="text-muted">（{{ pt.status }} {{ pt.progress }}%）</span>
+              </label>
+            </div>
+          {% endfor %}
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">キャンセル</button>
+          <button type="submit" class="btn btn-primary btn-sm">取込</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── 各曜日のイベント表示 ── #}
+{% if week_events is defined %}
+<style>
+.event-badge {
+  display: inline-block;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.75rem;
+  margin: 1px;
+  white-space: nowrap;
+}
+</style>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
