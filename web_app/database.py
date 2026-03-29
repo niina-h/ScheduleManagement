@@ -146,6 +146,14 @@ CREATE TABLE IF NOT EXISTS project_task (
     updated_at TEXT DEFAULT (datetime('now','localtime')),
     updated_by TEXT DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS company_holiday (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    holiday_date TEXT NOT NULL UNIQUE,
+    holiday_name TEXT NOT NULL DEFAULT '',
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
 """
 
 # users.json のパス

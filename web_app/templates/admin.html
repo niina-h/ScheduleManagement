@@ -6,6 +6,7 @@
 <div class="d-flex align-items-center justify-content-between mb-4">
   <h4 class="mb-0 fw-bold">管理者ダッシュボード</h4>
   <div class="d-flex gap-2">
+    <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#importBrabioModal">📥 ブラビオ取込</button>
     {% if session.user_role == 'マスタ' %}
     <a href="{{ url_for('export_bp.import_schedule') }}" class="btn btn-outline-success btn-sm">📥 予定インポート</a>
     <a href="{{ url_for('mail_report_bp.settings') }}" class="btn btn-outline-warning btn-sm">⚙ メール設定</a>
@@ -539,6 +540,70 @@
 
 </div><!-- /accordion -->
 
+<!-- ===== 会社休日管理（マスタのみ） ===== -->
+{% if login_role == 'マスタ' %}
+<div class="card shadow-sm mt-4">
+  <div class="card-header bg-warning text-dark fw-semibold d-flex align-items-center justify-content-between">
+    <span>会社休日管理</span>
+    <small class="text-muted">土日・祝日は自動除外。ここでは会社独自の休日を登録します。</small>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      {# 登録フォーム #}
+      <div class="col-md-5">
+        <div class="card border-0 bg-light p-3">
+          <h6 class="fw-semibold mb-3">休日を追加</h6>
+          <form method="post" action="{{ url_for('admin_bp.add_company_holiday_route') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="mb-2">
+              <label class="form-label small fw-semibold">日付 <span class="text-danger">*</span></label>
+              <input type="date" name="holiday_date" class="form-control form-control-sm" required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">名称（例：創立記念日）</label>
+              <input type="text" name="holiday_name" class="form-control form-control-sm" placeholder="会社休日">
+            </div>
+            <button type="submit" class="btn btn-warning btn-sm w-100">登録</button>
+          </form>
+        </div>
+      </div>
+      {# 一覧 #}
+      <div class="col-md-7">
+        <h6 class="fw-semibold mb-2">登録済み会社休日（{{ current_year }}〜{{ current_year + 1 }}年）</h6>
+        {% if company_holidays %}
+        <table class="table table-sm table-hover">
+          <thead class="table-light">
+            <tr>
+              <th>日付</th>
+              <th>名称</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for h in company_holidays %}
+            <tr>
+              <td class="small">{{ h.holiday_date }}</td>
+              <td class="small">{{ h.holiday_name }}</td>
+              <td class="text-end">
+                <form method="post" action="{{ url_for('admin_bp.delete_company_holiday_route', holiday_id=h.id) }}"
+                      onsubmit="return confirm('削除してよいですか？')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1">削除</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted small">登録された会社休日はありません。</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- ===== マスタデータ管理（マスタのみ） ===== -->
 {% if login_role == 'マスタ' %}
 <div class="card shadow-sm mt-4">
@@ -689,4 +754,35 @@ function submitDeptUpdate(deptId) {
   document.getElementById('dept-update-form-' + deptId).submit();
 }
 </script>
+
+{# ── ブラビオ取込モーダル ── #}
+<div class="modal fade" id="importBrabioModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('project_tasks_bp.import_brabio') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="modal-header">
+          <h6 class="modal-title fw-bold">ブラビオExcel取込</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-muted mb-2">
+            ブラビオからエクスポートしたExcelファイルを取り込みます。<br>
+            同名タスクが既に存在する場合はスキップします。<br>
+            担当者はユーザー名の部分一致で自動マッチングします。
+          </p>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Excelファイル（省略時はdata/ブラビオ商品開発業務.xlsx）</label>
+            <input type="file" name="brabio_file" class="form-control form-control-sm" accept=".xlsx">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">キャンセル</button>
+          <button type="submit" class="btn btn-primary btn-sm">取込実行</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 {% endblock %}

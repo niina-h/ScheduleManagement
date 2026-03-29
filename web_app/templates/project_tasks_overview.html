@@ -1,14 +1,15 @@
 {% extends "base.html" %}
-{% block title %}タスク全体俯瞰 - 予定管理システム{% endblock %}
+{% block title %}全体ステータス - 予定管理システム{% endblock %}
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-12">
 
     <div class="d-flex align-items-center justify-content-between mb-3">
-      <h5 class="fw-bold mb-0">タスク全体俯瞰</h5>
+      <h5 class="fw-bold mb-0">全体ステータス</h5>
       <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_tasks_bp.gantt') }}">ガントチャート</a>
         <a class="btn btn-outline-primary btn-sm" href="{{ url_for('project_tasks_bp.task_list') }}">タスク一覧</a>
-        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('project_tasks_bp.progress_dashboard') }}">個人ダッシュボード</a>
+        <a class="btn btn-warning btn-sm" href="{{ url_for('admin_bp.dashboard') }}">管理画面へ</a>
       </div>
     </div>
 
@@ -87,7 +88,14 @@
               <tbody>
                 {% for u in summary.user_summary %}
                 <tr>
-                  <td class="fw-semibold small">{{ u.name }}</td>
+                  <td class="fw-semibold small">
+                    {% if u.user_id %}
+                    <a href="{{ url_for('project_tasks_bp.progress_dashboard') }}?user_id={{ u.user_id }}"
+                       class="text-decoration-none">{{ u.name }}</a>
+                    {% else %}
+                    {{ u.name }}
+                    {% endif %}
+                  </td>
                   <td class="text-center small">{{ u.count }}</td>
                   <td class="text-center small text-success fw-bold">{{ u.completed }}</td>
                   <td class="text-center small text-danger fw-bold">{{ u.delayed }}</td>

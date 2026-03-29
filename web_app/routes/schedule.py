@@ -504,3 +504,70 @@ def import_events() -> Any:
     if is_admin_view:
         redirect_url += f"&user_id={target_user_id}"
     return redirect(redirect_url)
+
+
+@schedule_bp.route("/schedule/import_tasks_and_events", methods=["POST"])
+def import_tasks_and_events() -> Any:
+    """タスクとイベントを同時に週間予定へ取り込む（タスク管理反映）。
+
+    選択されたタスクをAMスロットに配置し、さらにイベントも自動配置する。
+
+    Returns:
+        週間予定ページへのリダイレクト。
+    """
+    login_user_id: int | None = session.get("user_id")
+    if not login_user_id:
+        return redirect(url_for("auth.login"))
+
+    week_start: str = request.form.get("week_start", "").strip()
+    if not week_start:
+        week_start = _get_default_week_start()
+
+    # 対象ユーザー判定
+    form_user_id: str = request.form.get("target_user_id", "").strip()
+    if form_user_id and is_privileged(session.get("user_role", "")):
+        try:
+            target_user_id: int = int(form_user_id)
+        except ValueError:
+            target_user_id = int(login_user_id)
+    else:
+        target_user_id = int(login_user_id)
+
+    is_admin_view: bool = (target_user_id != int(login_user_id))
+    updated_by: str = session.get("user_name", "")
+
+    # タスク取込
+    task_ids_raw: list[str] = request.form.getlist("import_task_ids")
+    task_ids: list[int] = []
+    for raw in task_ids_raw:
+        try:
+            task_ids.append(int(raw))
+        except ValueError:
+            continue
+
+    task_count = 0
+    if task_ids:
+        task_count = import_tasks_to_weekly_schedule(
+            target_user_id, week_start, task_ids, updated_by,
+        )
+
+    # イベント取込
+    event_count = import_events_to_weekly_schedule(
+        target_user_id, week_start, updated_by,
+    )
+
+    msgs = []
+    if task_count > 0:
+        msgs.append(f"タスク{task_count}件")
+    if event_count > 0:
+        msgs.append(f"イベント{event_count}件")
+
+    if msgs:
+        flash("・".join(msgs) + "を取り込みました", "success")
+    else:
+        flash("取り込む対象がありませんでした", "info")
+
+    redirect_url = url_for("schedule.weekly") + f"?week={week_start}"
+    if is_admin_view:
+        redirect_url += f"&user_id={target_user_id}"
+    return redirect(redirect_url)

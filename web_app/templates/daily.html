@@ -184,7 +184,17 @@
                             title="繰り越し（作業したが未完了）"
                             {% if am_off %}disabled{% endif %}>⏩</button>
                     <input type="hidden" name="carryover_am_{{ i }}" value="{{ '1' if is_co else '' }}">
-                    <input type="hidden" name="project_task_id_am_{{ i }}" value="{{ r_cell.project_task_id or s_cell.project_task_id or '' }}">
+                    <input type="hidden" name="project_task_id_am_{{ i }}"
+                           class="pt-id-field"
+                           data-slot="am" data-idx="{{ i }}"
+                           value="{{ r_cell.project_task_id or s_cell.project_task_id or '' }}">
+                    {% set linked_pt_id = r_cell.project_task_id or s_cell.project_task_id %}
+                    <span class="pt-link-badge badge ms-1"
+                          data-slot="am" data-idx="{{ i }}"
+                          style="background:{% if linked_pt_id %}#0d6efd{% else %}#e2e8f0{% endif %};color:{% if linked_pt_id %}#fff{% else %}#94a3b8{% endif %};font-size:0.68em;cursor:default;"
+                          title="{% if linked_pt_id %}タスク管理に紐付き済み（ID:{{ linked_pt_id }}）{% else %}タスク管理に未紐付け{% endif %}">
+                      {% if linked_pt_id %}🔗{% else %}—{% endif %}
+                    </span>
                   </div>
                   <input type="date" name="defer_date_am_{{ i }}"
                          class="defer-date-picker" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;"
@@ -248,7 +258,17 @@
                             title="繰り越し（作業したが未完了）"
                             {% if pm_off %}disabled{% endif %}>⏩</button>
                     <input type="hidden" name="carryover_pm_{{ i }}" value="{{ '1' if is_co else '' }}">
-                    <input type="hidden" name="project_task_id_pm_{{ i }}" value="{{ r_cell.project_task_id or s_cell.project_task_id or '' }}">
+                    <input type="hidden" name="project_task_id_pm_{{ i }}"
+                           class="pt-id-field"
+                           data-slot="pm" data-idx="{{ i }}"
+                           value="{{ r_cell.project_task_id or s_cell.project_task_id or '' }}">
+                    {% set linked_pt_id = r_cell.project_task_id or s_cell.project_task_id %}
+                    <span class="pt-link-badge badge ms-1"
+                          data-slot="pm" data-idx="{{ i }}"
+                          style="background:{% if linked_pt_id %}#0d6efd{% else %}#e2e8f0{% endif %};color:{% if linked_pt_id %}#fff{% else %}#94a3b8{% endif %};font-size:0.68em;cursor:default;"
+                          title="{% if linked_pt_id %}タスク管理に紐付き済み（ID:{{ linked_pt_id }}）{% else %}タスク管理に未紐付け{% endif %}">
+                      {% if linked_pt_id %}🔗{% else %}—{% endif %}
+                    </span>
                   </div>
                   <input type="date" name="defer_date_pm_{{ i }}"
                          class="defer-date-picker" style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;"
@@ -885,5 +905,64 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
     }
   });
 });
+
+/* ── タスク管理紐付け自動マッチング ── */
+(function () {
+  var projectTasks = [];
+  var dataEl = document.getElementById('project-tasks-data');
+  if (dataEl) {
+    try { projectTasks = JSON.parse(dataEl.textContent); } catch (e) {}
+  }
+  if (!projectTasks.length) return;
+
+  /* タスク名 → {id, status, progress} のマップ */
+  var taskMap = {};
+  projectTasks.forEach(function (t) { taskMap[t.name] = t; });
+
+  function updateBadge(slot, idx, ptId) {
+    var badge = document.querySelector('.pt-link-badge[data-slot="' + slot + '"][data-idx="' + idx + '"]');
+    if (!badge) return;
+    if (ptId) {
+      badge.textContent = '🔗';
+      badge.style.background = '#0d6efd';
+      badge.style.color = '#fff';
+      badge.title = 'タスク管理に紐付き（ID:' + ptId + '）';
+    } else {
+      badge.textContent = '—';
+      badge.style.background = '#e2e8f0';
+      badge.style.color = '#94a3b8';
+      badge.title = 'タスク管理に未紐付け';
+    }
+  }
+
+  /* タスク名入力フィールドの変更を監視 */
+  document.querySelectorAll('input.result-task').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var name = input.value.trim();
+      var slot = input.dataset.slot || (input.name.includes('_am_') ? 'am' : 'pm');
+      var idx  = input.dataset.navIdx !== undefined
+        ? Math.floor(parseInt(input.dataset.navIdx) / 2)
+        : (input.name.match(/_(\d+)$/) ? parseInt(input.name.match(/_(\d+)$/)[1]) : -1);
+      if (idx < 0) return;
+
+      var hidden = document.querySelector(
+        '.pt-id-field[data-slot="' + slot + '"][data-idx="' + idx + '"]'
+      );
+      if (!hidden) return;
+
+      /* 既に紐付き済みの場合は上書きしない */
+      if (hidden.value) { updateBadge(slot, idx, hidden.value); return; }
+
+      var matched = taskMap[name];
+      if (matched) {
+        hidden.value = matched.id;
+        updateBadge(slot, idx, matched.id);
+      } else {
+        updateBadge(slot, idx, '');
+      }
+    });
+  });
+})();
 </script>
+<script type="application/json" id="project-tasks-data">{{ project_tasks_json | safe }}</script>
 {% endblock %}

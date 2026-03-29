@@ -1959,6 +1959,9 @@ def add_project_task(
     """
     db = get_db()
     calc_progress = _normalize_progress(status, progress, start_date, end_date)
+    # マイルストーン・イベント以外で予定工数未設定なら期間から自動計算
+    if planned_hours <= 0 and not is_milestone and not is_event:
+        planned_hours = calc_planned_hours(start_date, end_date)
     max_order = db.execute("SELECT COALESCE(MAX(display_order), 0) FROM project_task").fetchone()[0]
     cur = db.execute(
         "INSERT INTO project_task "
@@ -2310,15 +2313,28 @@ def sync_daily_progress_to_task(
 
         planned = task.get("planned_hours") or 0.0
         if planned <= 0:
+            # 予定工数未設定：実績があれば「未着手」→「着手」に昇格
+            if total_hours > 0 and task["status"] == "未着手":
+                db.execute(
+                    "UPDATE project_task SET status = '着手', "
+                    "updated_at = datetime('now','localtime') "
+                    "WHERE id = ?",
+                    (pt_id,),
+                )
+                updated += 1
             continue
 
         new_progress = max(0, min(100, round(total_hours / planned * 100)))
-        if new_progress != (task.get("progress") or 0):
+        # 進捗100%到達時にステータスを「完了」へ昇格
+        new_status = task["status"]
+        if new_progress >= 100 and task["status"] not in ("完了", "停止"):
+            new_status = "完了"
+        if new_progress != (task.get("progress") or 0) or new_status != task["status"]:
             db.execute(
-                "UPDATE project_task SET progress = ?, "
+                "UPDATE project_task SET progress = ?, status = ?, "
                 "updated_at = datetime('now','localtime') "
                 "WHERE id = ?",
-                (new_progress, pt_id),
+                (new_progress, new_status, pt_id),
             )
             updated += 1
 
@@ -2533,6 +2549,7 @@ def import_brabio_excel(
                 assigned_to=assigned_to,
                 assigned_to_2=assigned_to_2,
                 is_milestone=is_milestone,
+                planned_hours=0.0,  # add_project_task 内で自動計算される
             )
             existing_names.add(title)
             result["imported"] += 1
@@ -2657,8 +2674,10 @@ def get_task_overview_summary() -> dict:
 
         # 担当者別
         user_name: str = task.get("assigned_name") or "（未割当）"
+        user_id_val: int | None = task.get("assigned_to")
         if user_name not in user_data:
-            user_data[user_name] = {"name": user_name, "count": 0, "progress_sum": 0.0,
+            user_data[user_name] = {"name": user_name, "user_id": user_id_val,
+                                    "count": 0, "progress_sum": 0.0,
                                     "completed": 0, "delayed": 0}
         user_data[user_name]["count"] += 1
         user_data[user_name]["progress_sum"] += prog
@@ -2733,3 +2752,177 @@ def get_accessible_users_for_dashboard(
 
     # 一般ユーザー: 空リスト
     return []
+
+
+# ---------------------------------------------------------------------------
+# 休日管理（土日・祝日・会社休日）
+# ---------------------------------------------------------------------------
+
+def _get_jpholidays(year: int) -> set[date]:
+    """指定年の日本の祝日をセットで返す。
+
+    jpholiday パッケージが利用可能な場合はそれを使用し、
+    利用できない場合は空のセットを返す。
+
+    Args:
+        year: 対象年
+
+    Returns:
+        set[date]: 祝日の日付セット
+    """
+    try:
+        import jpholiday
+        result: set[date] = set()
+        d = date(year, 1, 1)
+        end = date(year, 12, 31)
+        while d <= end:
+            if jpholiday.is_holiday(d):
+                result.add(d)
+            d += timedelta(days=1)
+        return result
+    except ImportError:
+        logger.warning("jpholiday パッケージが見つかりません。祝日は考慮されません。")
+        return set()
+
+
+def get_company_holidays(year: int | None = None) -> list[dict]:
+    """会社独自の休日一覧を返す。
+
+    Args:
+        year: 対象年。None の場合は全件返す。
+
+    Returns:
+        list[dict]: {id, holiday_date, holiday_name, created_at} のリスト
+    """
+    db = get_db()
+    if year is not None:
+        rows = db.execute(
+            "SELECT id, holiday_date, holiday_name, created_at "
+            "FROM company_holiday "
+            "WHERE strftime('%Y', holiday_date) = ? "
+            "ORDER BY holiday_date",
+            (str(year),),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT id, holiday_date, holiday_name, created_at "
+            "FROM company_holiday ORDER BY holiday_date"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_company_holiday(
+    holiday_date: str,
+    holiday_name: str,
+    created_by: int,
+) -> None:
+    """会社休日を登録する（マスタ権限のみ使用）。
+
+    Args:
+        holiday_date: 休日日付（YYYY-MM-DD）
+        holiday_name: 休日名称
+        created_by: 登録者ユーザーID
+    """
+    db = get_db()
+    db.execute(
+        "INSERT OR IGNORE INTO company_holiday (holiday_date, holiday_name, created_by) "
+        "VALUES (?, ?, ?)",
+        (holiday_date, holiday_name, created_by),
+    )
+    db.commit()
+
+
+def delete_company_holiday(holiday_id: int) -> None:
+    """会社休日を削除する。
+
+    Args:
+        holiday_id: 削除する会社休日のID
+    """
+    db = get_db()
+    db.execute("DELETE FROM company_holiday WHERE id = ?", (holiday_id,))
+    db.commit()
+
+
+def get_all_holidays(start: date, end: date) -> set[date]:
+    """指定期間の全休日（土日＋祝日＋会社休日）をセットで返す。
+
+    Args:
+        start: 開始日
+        end: 終了日
+
+    Returns:
+        set[date]: 期間内の休日日付セット
+    """
+    holidays: set[date] = set()
+
+    # 土日
+    d = start
+    while d <= end:
+        if d.weekday() >= 5:  # 5=土, 6=日
+            holidays.add(d)
+        d += timedelta(days=1)
+
+    # 日本の祝日（対象年をすべてカバー）
+    for year in range(start.year, end.year + 1):
+        holidays |= _get_jpholidays(year)
+
+    # 会社独自休日
+    db = get_db()
+    rows = db.execute(
+        "SELECT holiday_date FROM company_holiday "
+        "WHERE holiday_date BETWEEN ? AND ?",
+        (start.isoformat(), end.isoformat()),
+    ).fetchall()
+    for row in rows:
+        try:
+            holidays.add(date.fromisoformat(row["holiday_date"]))
+        except ValueError:
+            pass
+
+    return holidays
+
+
+def count_business_days(start: date, end: date) -> int:
+    """開始日〜終了日（両端含む）の営業日数を返す。
+
+    土日・祝日・会社休日を除いた日数を計算する。
+
+    Args:
+        start: 開始日
+        end: 終了日
+
+    Returns:
+        int: 営業日数（0以上）
+    """
+    if start > end:
+        return 0
+    holidays = get_all_holidays(start, end)
+    count = 0
+    d = start
+    while d <= end:
+        if d not in holidays:
+            count += 1
+        d += timedelta(days=1)
+    return count
+
+
+def calc_planned_hours(start_date_str: str, end_date_str: str, std_hours_per_day: float = 8.0) -> float:
+    """タスクの期間から予定工数（時間）を自動計算する。
+
+    営業日数（土日・祝日・会社休日除く）× 1日の標準時間で算出する。
+
+    Args:
+        start_date_str: 開始日（YYYY-MM-DD）
+        end_date_str: 終了日（YYYY-MM-DD）
+        std_hours_per_day: 1営業日あたりの標準時間（デフォルト8.0h）
+
+    Returns:
+        float: 予定工数（時間）。期間が不正な場合は 0.0 を返す。
+    """
+    try:
+        start = date.fromisoformat(start_date_str)
+        end = date.fromisoformat(end_date_str)
+    except ValueError:
+        return 0.0
+    bdays = count_business_days(start, end)
+    return round(bdays * std_hours_per_day, 1)

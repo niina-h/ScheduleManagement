@@ -612,6 +612,13 @@ def progress_dashboard() -> str:
     summary: dict = get_task_progress_summary(target_user_id)
     chart_json: dict = _build_chart_json(summary)
 
+    # 管理職・マスタは全体ステータスも同時表示
+    overview_summary: dict | None = None
+    overview_chart_json: dict | None = None
+    if privileged:
+        overview_summary = get_task_overview_summary()
+        overview_chart_json = _build_overview_chart_json(overview_summary)
+
     return render_template(
         "project_tasks_dashboard.html",
         summary=summary,
@@ -620,6 +627,8 @@ def progress_dashboard() -> str:
         selectable_users=selectable_users,
         selected_user_id=target_user_id,
         selected_user_name=target_user_name,
+        overview_summary=overview_summary,
+        overview_chart_json=overview_chart_json,
     )
 
 

@@ -25,10 +25,12 @@ from flask import (
 )
 
 from ..models import (
+    add_company_holiday,
     add_dept,
     add_user,
     clear_user_password,
     count_operation_logs,
+    delete_company_holiday,
     delete_dept,
     delete_user,
     get_all_categories,
@@ -38,6 +40,7 @@ from ..models import (
     get_all_users,
     get_all_users_daily_status,
     get_all_users_schedule_status,
+    get_company_holidays,
     get_mail_setting,
     get_operation_logs,
     get_user_by_id,
@@ -154,6 +157,12 @@ def dashboard() -> str:
         if u.get("role") == "ユーザー" and u.get("dept") == login_dept
     ]
 
+    # 会社休日（当年＋翌年分を表示）
+    current_year = date.today().year
+    company_holidays_this = get_company_holidays(current_year)
+    company_holidays_next = get_company_holidays(current_year + 1)
+    company_holidays = company_holidays_this + company_holidays_next
+
     return render_template(
         "admin.html",
         status_list=status_list,
@@ -169,6 +178,8 @@ def dashboard() -> str:
         login_id=login_id,
         manager_candidates=manager_candidates,
         assignable_users=assignable_users,
+        company_holidays=company_holidays,
+        current_year=current_year,
     )
 
 
@@ -805,4 +816,58 @@ def import_master_csv() -> Response:
     if not imported_tables and not error_tables:
         flash("インポート対象のデータが見つかりませんでした", "warning")
 
+    return redirect(url_for("admin_bp.dashboard"))
+
+
+@admin_bp.route("/company-holiday/add", methods=["POST"])
+def add_company_holiday_route() -> object:
+    """会社休日を登録する（マスタ権限のみ）。
+
+    Returns:
+        object: 管理者ダッシュボードへのリダイレクト
+    """
+    if session.get("user_role") != "マスタ":
+        abort(403)
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    holiday_date_str: str = request.form.get("holiday_date", "").strip()
+    holiday_name: str = request.form.get("holiday_name", "").strip()
+
+    if not holiday_date_str:
+        flash("日付を入力してください。", "warning")
+        return redirect(url_for("admin_bp.dashboard"))
+
+    try:
+        date.fromisoformat(holiday_date_str)
+    except ValueError:
+        flash("日付の形式が不正です（YYYY-MM-DD）。", "warning")
+        return redirect(url_for("admin_bp.dashboard"))
+
+    add_company_holiday(
+        holiday_date=holiday_date_str,
+        holiday_name=holiday_name or "会社休日",
+        created_by=int(session["user_id"]),
+    )
+    flash(f"{holiday_date_str}（{holiday_name or '会社休日'}）を登録しました。", "success")
+    return redirect(url_for("admin_bp.dashboard"))
+
+
+@admin_bp.route("/company-holiday/delete/<int:holiday_id>", methods=["POST"])
+def delete_company_holiday_route(holiday_id: int) -> object:
+    """会社休日を削除する（マスタ権限のみ）。
+
+    Args:
+        holiday_id: 削除する会社休日のID
+
+    Returns:
+        object: 管理者ダッシュボードへのリダイレクト
+    """
+    if session.get("user_role") != "マスタ":
+        abort(403)
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    delete_company_holiday(holiday_id)
+    flash("会社休日を削除しました。", "success")
     return redirect(url_for("admin_bp.dashboard"))

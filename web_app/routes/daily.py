@@ -16,6 +16,7 @@ from ..models import (
     add_carryover,
     defer_task_to_weekly_schedule,
     get_accessible_users,
+    get_all_project_tasks,
     get_all_users,
     get_daily_comment,
     get_daily_result,
@@ -42,6 +43,32 @@ daily_bp = Blueprint("daily_bp", __name__)
 # ---------------------------------------------------------------------------
 # ヘルパー関数
 # ---------------------------------------------------------------------------
+
+
+def _build_project_tasks_json(user_id: int) -> str:
+    """該当ユーザーに割り当てられたプロジェクトタスクをJSONに変換する。
+
+    実績画面でのタスク自動マッチング用。タスク名 → ID のマッピング。
+
+    Args:
+        user_id: 対象ユーザーID
+
+    Returns:
+        str: [{id, name, status, progress}] のJSON文字列
+    """
+    import json
+    tasks = get_all_project_tasks(assigned_to=user_id)
+    result = [
+        {
+            "id": t["id"],
+            "name": t["task_name"],
+            "status": t["status"],
+            "progress": t.get("progress", 0),
+        }
+        for t in tasks
+        if t["status"] not in ("完了", "停止")
+    ]
+    return json.dumps(result, ensure_ascii=False)
 
 
 def _get_monday(d: date) -> date:
@@ -288,6 +315,7 @@ def daily_view(date_str: str) -> Any:
         pending_carryovers=pending_carryovers,
         leave_dates_json=leave_dates_json,
         day_events=day_events,
+        project_tasks_json=_build_project_tasks_json(target_user_id),
     )
 
 

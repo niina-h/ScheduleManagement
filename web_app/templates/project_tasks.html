@@ -9,20 +9,21 @@
       <div class="d-flex gap-2">
         <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_tasks_bp.gantt') }}">ガントチャート</a>
         {% if privileged %}
-        <button class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#importBrabioModal">📥 ブラビオ取込</button>
-        <button class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#addForm">＋ タスク追加</button>
+        <button class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#addTaskForm">＋ タスク追加</button>
+        <button class="btn btn-outline-success btn-sm" data-bs-toggle="collapse" data-bs-target="#addEventForm">＋ イベント追加</button>
         {% endif %}
       </div>
     </div>
 
     {% if privileged %}
-    {# ── 追加フォーム（折りたたみ） ── #}
-    <div class="collapse mb-3" id="addForm">
-      <div class="card shadow-sm">
-        <div class="card-header bg-light fw-semibold">新規タスク登録</div>
+    {# ── タスク追加フォーム ── #}
+    <div class="collapse mb-2" id="addTaskForm">
+      <div class="card shadow-sm border-primary">
+        <div class="card-header bg-primary text-white fw-semibold small">新規タスク登録</div>
         <div class="card-body">
           <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="is_event" value="0">
             <div class="row g-2">
               <div class="col-md-2">
                 <label class="form-label small fw-semibold">大区分</label>
@@ -68,11 +69,11 @@
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-2">
+              <div class="col-md-1">
                 <label class="form-label small fw-semibold">開始日 <span class="text-danger">*</span></label>
                 <input type="date" name="start_date" class="form-control form-control-sm" required>
               </div>
-              <div class="col-md-2">
+              <div class="col-md-1">
                 <label class="form-label small fw-semibold">終了日 <span class="text-danger">*</span></label>
                 <input type="date" name="end_date" class="form-control form-control-sm" required>
               </div>
@@ -92,31 +93,8 @@
                 <label class="form-label small fw-semibold">進捗%</label>
                 <input type="number" name="progress" id="add-progress" class="form-control form-control-sm" value="0" min="0" max="200">
               </div>
-              <div class="col-md-1 d-flex align-items-end">
-                <div class="form-check">
-                  <input type="checkbox" name="is_milestone" class="form-check-input" id="add-milestone" value="1">
-                  <label class="form-check-label small" for="add-milestone">MS</label>
-                </div>
-              </div>
-              <div class="col-md-1 d-flex align-items-end">
-                <div class="form-check">
-                  <input type="checkbox" name="is_event" class="form-check-input" id="add-event" value="1"
-                         onchange="toggleEventFields(this, 'add')">
-                  <label class="form-check-label small" for="add-event">会議</label>
-                </div>
-              </div>
-              <div class="col-md-1 event-fields-add" style="display:none;">
-                <label class="form-label small fw-semibold">開始時刻</label>
-                <input type="time" name="event_start_time" class="form-control form-control-sm">
-              </div>
-              <div class="col-md-1 event-fields-add" style="display:none;">
-                <label class="form-label small fw-semibold">終了時刻</label>
-                <input type="time" name="event_end_time" class="form-control form-control-sm">
-              </div>
-              <div class="col-md-1">
-                <label class="form-label small fw-semibold">予定工数</label>
-                <input type="number" name="planned_hours" class="form-control form-control-sm" value="0" min="0" step="0.5">
-              </div>
+              <input type="hidden" name="is_milestone" value="0">
+              <input type="hidden" name="planned_hours" value="0">
               <div class="col-md-1 d-flex align-items-end">
                 <button type="submit" class="btn btn-primary btn-sm w-100">追加</button>
               </div>
@@ -125,42 +103,112 @@
         </div>
       </div>
     </div>
+
+    {# ── イベント追加フォーム ── #}
+    <div class="collapse mb-3" id="addEventForm">
+      <div class="card shadow-sm border-success">
+        <div class="card-header bg-success text-white fw-semibold small">新規イベント登録（会議・行事など）</div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}" id="eventAddFormEl">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="is_event" value="1">
+            <input type="hidden" name="status" value="未着手">
+            <input type="hidden" name="progress" value="0">
+            <input type="hidden" name="delay_days" value="0">
+            <input type="hidden" name="end_date" id="ev-end-date">
+            <input type="hidden" name="planned_hours" id="ev-planned-hours" value="0">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold">イベント名 <span class="text-danger">*</span></label>
+                <input type="text" name="task_name" class="form-control form-control-sm" required>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold">大区分</label>
+                <select name="category_id" class="form-select form-select-sm" id="ev-add-cat">
+                  <option value="">（なし）</option>
+                  {% for c in categories %}
+                  <option value="{{ c.id }}">{{ c.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-1">
+                <label class="form-label small fw-semibold">担当者</label>
+                <select name="assigned_to" class="form-select form-select-sm">
+                  <option value="">--</option>
+                  {% for u in users %}
+                  <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold">開催日 <span class="text-danger">*</span></label>
+                <input type="date" name="start_date" id="ev-start-date" class="form-control form-control-sm" required
+                       oninput="syncEvEndDate(this)">
+              </div>
+              <div class="col-md-1 d-flex align-items-end pb-1">
+                <div class="form-check">
+                  <input type="checkbox" name="is_milestone" class="form-check-input" id="ev-milestone" value="1"
+                         onchange="toggleEvMilestone(this)">
+                  <label class="form-check-label small" for="ev-milestone">MS</label>
+                </div>
+              </div>
+              <div class="col-md-1" id="ev-time-start-col">
+                <label class="form-label small fw-semibold">開始時刻</label>
+                <input type="time" name="event_start_time" id="ev-start-time" class="form-control form-control-sm"
+                       step="900" oninput="calcEvHours()" onblur="roundToQuarter(this); calcEvHours()">
+              </div>
+              <div class="col-md-1" id="ev-time-end-col">
+                <label class="form-label small fw-semibold">終了時刻</label>
+                <input type="time" name="event_end_time" id="ev-end-time" class="form-control form-control-sm"
+                       step="900" oninput="calcEvHours()" onblur="roundToQuarter(this); calcEvHours()">
+              </div>
+              <div class="col-md-1" id="ev-hours-col">
+                <label class="form-label small fw-semibold">所要時間</label>
+                <div class="input-group input-group-sm">
+                  <input type="text" id="ev-hours-display" class="form-control form-control-sm bg-light" readonly value="0h">
+                </div>
+              </div>
+              <div class="col-md-1 d-flex align-items-end">
+                <button type="submit" class="btn btn-success btn-sm w-100">追加</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
     {% endif %}
 
-    {# ── タスク一覧テーブル（一括保存フォーム） ── #}
+    {# ── タスク一覧テーブル ── #}
     {% set ns = namespace(current_cat='') %}
-    <div class="card shadow-sm">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-primary text-white fw-semibold small py-1">📋 タスク一覧</div>
       {% if privileged %}
       <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {% endif %}
       <div class="card-body p-0">
-        <div style="max-height: 70vh; overflow-y: auto;">
-        <table class="table table-sm table-hover mb-0">
+        <div style="max-height: 50vh; overflow-y: auto;">
+        <table class="table table-sm table-hover mb-0" id="taskTable">
           <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
             <tr>
               <th style="width:7%">中区分</th>
               <th style="width:13%">タスク名</th>
               <th style="width:11%">対応内容</th>
-              <th style="width:8%">担当者</th>
-              <th style="width:5%">開始日</th>
-              <th style="width:5%">終了日</th>
-              <th style="width:7%">状態</th>
-              <th style="width:3%">遅延</th>
+              <th style="width:14%">担当者</th>
+              <th style="width:4%">開始日</th>
+              <th style="width:4%">終了日</th>
+              <th style="width:5%">状態</th>
+              <th style="width:5%">遅延日数</th>
               <th style="width:5%">進捗</th>
-              <th style="width:10%">進捗バー</th>
-              <th style="width:3%">MS</th>
-              <th style="width:3%">会議</th>
-              <th style="width:4%">工数h</th>
               {% if privileged %}<th style="width:3%">削除</th>{% endif %}
             </tr>
           </thead>
           <tbody>
-            {% for t in tasks %}
+            {% for t in tasks if not t.is_event %}
             {% if (t.category_name or '（なし）') != ns.current_cat %}
               {% set ns.current_cat = t.category_name or '（なし）' %}
               <tr class="table-secondary">
-                <td colspan="{{ 14 if privileged else 13 }}" class="fw-bold">{{ ns.current_cat }}</td>
+                <td colspan="{{ 10 if privileged else 9 }}" class="fw-bold">{{ ns.current_cat }}</td>
               </tr>
             {% endif %}
             <tr{% if t.is_milestone %} class="table-warning"{% endif %}>
@@ -172,21 +220,23 @@
               <td><input type="text" form="bulkForm" name="task_name_{{ t.id }}" value="{{ t.task_name }}" class="form-control form-control-sm"></td>
               <td><input type="text" form="bulkForm" name="description_{{ t.id }}" value="{{ t.description or '' }}" class="form-control form-control-sm"></td>
               <td>
-                <select form="bulkForm" name="assigned_to_{{ t.id }}" class="form-select form-select-sm">
-                  <option value="">--</option>
-                  {% for u in users %}
-                  <option value="{{ u.id }}" {% if t.assigned_to == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
-                  {% endfor %}
-                </select>
-                <select form="bulkForm" name="assigned_to_2_{{ t.id }}" class="form-select form-select-sm mt-1">
-                  <option value="">--</option>
-                  {% for u in users %}
-                  <option value="{{ u.id }}" {% if t.assigned_to_2 == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
-                  {% endfor %}
-                </select>
+                <div class="d-flex gap-1">
+                  <select form="bulkForm" name="assigned_to_{{ t.id }}" class="form-select form-select-sm">
+                    <option value="">--</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}" {% if t.assigned_to == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <select form="bulkForm" name="assigned_to_2_{{ t.id }}" class="form-select form-select-sm">
+                    <option value="">--</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}" {% if t.assigned_to_2 == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
               </td>
-              <td><input type="date" form="bulkForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}" class="form-control form-control-sm px-1" style="min-width:0;font-size:0.75rem;"></td>
-              <td><input type="date" form="bulkForm" name="end_date_{{ t.id }}" value="{{ t.end_date }}" class="form-control form-control-sm px-1" style="min-width:0;font-size:0.75rem;"></td>
+              <td><input type="date" form="bulkForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}" class="form-control form-control-sm px-1" style="width:90px;font-size:0.75rem;"></td>
+              <td><input type="date" form="bulkForm" name="end_date_{{ t.id }}" value="{{ t.end_date }}" class="form-control form-control-sm px-1" style="width:90px;font-size:0.75rem;"></td>
               <td>
                 <select form="bulkForm" name="status_{{ t.id }}" data-tid="{{ t.id }}" class="form-select form-select-sm js-status
                   {% if t.status == '完了' %}text-success
@@ -218,39 +268,8 @@
               <td class="small">{{ t.delay_days or 0 }}日</td>
               <td class="small">{{ t.progress }}%</td>
               {% endif %}
-              <td>
-                <div class="progress" style="height:16px;">
-                  <div id="bar-{{ t.id }}" class="progress-bar
-                    {% if t.progress >= 100 %}bg-success{% elif t.status == '遅れ' %}bg-danger{% elif t.progress > 0 %}bg-primary{% else %}bg-secondary{% endif %}"
-                    style="width:{{ [t.progress, 100]|min }}%">
-                    <small>{{ t.progress }}%</small>
-                  </div>
-                </div>
-              </td>
-              <td class="text-center">
-                {% if privileged %}
-                  <input type="checkbox" form="bulkForm" name="is_milestone_{{ t.id }}" class="form-check-input" value="1" {% if t.is_milestone %}checked{% endif %}>
-                {% else %}
-                  {% if t.is_milestone %}◆{% endif %}
-                {% endif %}
-              </td>
-              <td class="text-center">
-                {% if privileged %}
-                  <input type="checkbox" form="bulkForm" name="is_event_{{ t.id }}" class="form-check-input" value="1" {% if t.is_event %}checked{% endif %}
-                         title="会議/イベント">
-                  <input type="hidden" form="bulkForm" name="event_start_time_{{ t.id }}" value="{{ t.event_start_time or '' }}">
-                  <input type="hidden" form="bulkForm" name="event_end_time_{{ t.id }}" value="{{ t.event_end_time or '' }}">
-                {% else %}
-                  {% if t.is_event %}📅{% endif %}
-                {% endif %}
-              </td>
-              <td class="small text-center">
-                {% if privileged %}
-                  <input type="number" form="bulkForm" name="planned_hours_{{ t.id }}" value="{{ t.planned_hours or 0 }}" min="0" step="0.5" class="form-control form-control-sm" style="width:55px">
-                {% else %}
-                  {{ t.planned_hours or 0 }}h
-                {% endif %}
-              </td>
+              <input type="hidden" form="bulkForm" name="is_milestone_{{ t.id }}" value="{{ '1' if t.is_milestone else '0' }}">
+              <input type="hidden" form="bulkForm" name="planned_hours_{{ t.id }}" value="{{ t.planned_hours or 0 }}">
               {% if privileged %}
               <td class="text-center">
                 <form method="post" action="{{ url_for('project_tasks_bp.delete_task', task_id=t.id) }}" class="d-inline"
@@ -261,17 +280,16 @@
               </td>
               {% endif %}
             </tr>
-            {% endfor %}
-            {% if not tasks %}
-            <tr><td colspan="{{ 14 if privileged else 13 }}" class="text-center text-muted py-3">
+            {% else %}
+            <tr><td colspan="{{ 10 if privileged else 9 }}" class="text-center text-muted py-3">
               {% if privileged %}タスクが登録されていません{% else %}割り当てられたタスクはありません{% endif %}
             </td></tr>
-            {% endif %}
+            {% endfor %}
           </tbody>
         </table>
         </div>
       </div>
-      {% if privileged and tasks %}
+      {% if privileged and tasks | selectattr('is_event', 'equalto', 0) | list %}
       <div class="card-footer d-flex justify-content-end">
         <button type="submit" form="bulkForm" class="btn btn-primary btn-sm">一括保存</button>
       </div>
@@ -281,50 +299,132 @@
       {% endif %}
     </div>
 
-    <div class="mt-3 small text-muted">
-      <strong>状態：</strong>
-      未着手＝0% / 着手＝10% / 順調 / 遅れ / 完了＝100% / 停止＝凍結
-      　<strong>MS</strong>＝マイルストーン（◆）
-    </div>
-
-  </div>
-</div>
-
-{# ── ブラビオ取込モーダル ── #}
-{% if privileged %}
-<div class="modal fade" id="importBrabioModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <form method="post" action="{{ url_for('project_tasks_bp.import_brabio') }}" enctype="multipart/form-data">
+    {# ── イベント一覧テーブル ── #}
+    {% set events = tasks | selectattr('is_event') | list %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-success text-white fw-semibold small py-1">📅 イベント一覧（会議・行事など）</div>
+      {% if privileged %}
+      <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkEventForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div class="modal-header">
-          <h6 class="modal-title fw-bold">ブラビオExcel取込</h6>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <p class="small text-muted mb-2">
-            ブラビオからエクスポートしたExcelファイルを取り込みます。<br>
-            同名タスクが既に存在する場合はスキップします。<br>
-            担当者はユーザー名の部分一致で自動マッチングします。
-          </p>
-          <div class="mb-3">
-            <label class="form-label small fw-semibold">Excelファイル（省略時はdata/ブラビオ商品開発業務.xlsx）</label>
-            <input type="file" name="brabio_file" class="form-control form-control-sm" accept=".xlsx">
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">キャンセル</button>
-          <button type="submit" class="btn btn-info btn-sm">取込実行</button>
-        </div>
+      {% endif %}
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width:18%">イベント名</th>
+              <th style="width:8%">担当者</th>
+              <th style="width:8%">開催日</th>
+              <th style="width:7%">開始時刻</th>
+              <th style="width:7%">終了時刻</th>
+              <th style="width:6%">工数h</th>
+              <th style="width:4%">MS</th>
+              {% if privileged %}<th style="width:4%">削除</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in events %}
+            <tr{% if t.is_milestone %} class="table-warning"{% endif %}>
+              {% if privileged %}
+              <input type="hidden" form="bulkEventForm" name="task_id" value="{{ t.id }}">
+              <input type="hidden" form="bulkEventForm" name="category_id_{{ t.id }}" value="{{ t.category_id or '' }}">
+              <input type="hidden" form="bulkEventForm" name="subcategory_id_{{ t.id }}" value="{{ t.subcategory_id or '' }}">
+              <input type="hidden" form="bulkEventForm" name="description_{{ t.id }}" value="{{ t.description or '' }}">
+              <input type="hidden" form="bulkEventForm" name="assigned_to_2_{{ t.id }}" value="">
+              <input type="hidden" form="bulkEventForm" name="status_{{ t.id }}" value="{{ t.status }}">
+              <input type="hidden" form="bulkEventForm" name="delay_days_{{ t.id }}" value="{{ t.delay_days or 0 }}">
+              <input type="hidden" form="bulkEventForm" name="progress_{{ t.id }}" value="{{ t.progress }}">
+              <input type="hidden" form="bulkEventForm" name="is_event_{{ t.id }}" value="1">
+              <input type="hidden" form="bulkEventForm" name="end_date_{{ t.id }}" id="ev-end-{{ t.id }}" value="{{ t.end_date }}">
+              <td><input type="text" form="bulkEventForm" name="task_name_{{ t.id }}" value="{{ t.task_name }}" class="form-control form-control-sm"></td>
+              <td>
+                <select form="bulkEventForm" name="assigned_to_{{ t.id }}" class="form-select form-select-sm">
+                  <option value="">--</option>
+                  {% for u in users %}
+                  <option value="{{ u.id }}" {% if t.assigned_to == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td><input type="date" form="bulkEventForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}"
+                         class="form-control form-control-sm px-1 ev-date-input" data-tid="{{ t.id }}"
+                         style="min-width:0;font-size:0.75rem;"
+                         oninput="syncEvEndDateEdit(this)"></td>
+              <td>
+                {% if not t.is_milestone %}
+                <input type="time" form="bulkEventForm" name="event_start_time_{{ t.id }}" value="{{ t.event_start_time or '' }}"
+                       class="form-control form-control-sm ev-start-time" data-tid="{{ t.id }}"
+                       step="900" oninput="calcEvHoursEdit('{{ t.id }}')" onblur="roundToQuarter(this); calcEvHoursEdit('{{ t.id }}')">
+                {% else %}
+                <span class="text-muted small">MS</span>
+                <input type="hidden" form="bulkEventForm" name="event_start_time_{{ t.id }}" value="">
+                {% endif %}
+              </td>
+              <td>
+                {% if not t.is_milestone %}
+                <input type="time" form="bulkEventForm" name="event_end_time_{{ t.id }}" value="{{ t.event_end_time or '' }}"
+                       class="form-control form-control-sm ev-end-time" data-tid="{{ t.id }}"
+                       step="900" oninput="calcEvHoursEdit('{{ t.id }}')" onblur="roundToQuarter(this); calcEvHoursEdit('{{ t.id }}')">
+                {% else %}
+                <span class="text-muted small">--</span>
+                <input type="hidden" form="bulkEventForm" name="event_end_time_{{ t.id }}" value="">
+                {% endif %}
+              </td>
+              <td>
+                <input type="number" form="bulkEventForm" name="planned_hours_{{ t.id }}" id="ev-ph-{{ t.id }}"
+                       value="{{ t.planned_hours or 0 }}" min="0" step="0.5"
+                       class="form-control form-control-sm" style="width:60px">
+              </td>
+              <td class="text-center">
+                <input type="checkbox" form="bulkEventForm" name="is_milestone_{{ t.id }}" class="form-check-input" value="1" {% if t.is_milestone %}checked{% endif %}>
+              </td>
+              {% else %}
+              <td class="small">{{ t.task_name }}{% if t.is_milestone %} <span class="badge bg-warning text-dark">MS</span>{% endif %}</td>
+              <td class="small">{{ t.assigned_name or '' }}</td>
+              <td class="small">{{ t.start_date }}</td>
+              <td class="small">{{ t.event_start_time or ('MS' if t.is_milestone else '--') }}</td>
+              <td class="small">{{ t.event_end_time or ('--') }}</td>
+              <td class="small">{{ t.planned_hours or 0 }}h</td>
+              <td class="text-center">{% if t.is_milestone %}◆{% endif %}</td>
+              {% endif %}
+              {% if privileged %}
+              <td class="text-center">
+                <form method="post" action="{{ url_for('project_tasks_bp.delete_task', task_id=t.id) }}" class="d-inline"
+                      onsubmit="return confirm('「{{ t.task_name }}」を削除しますか？')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1">✕</button>
+                </form>
+              </td>
+              {% endif %}
+            </tr>
+            {% else %}
+            <tr><td colspan="{{ 8 if privileged else 7 }}" class="text-center text-muted py-2">イベントが登録されていません</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if privileged and events %}
+      <div class="card-footer d-flex justify-content-end">
+        <button type="submit" form="bulkEventForm" class="btn btn-success btn-sm">イベント一括保存</button>
+      </div>
+      {% endif %}
+      {% if privileged %}
       </form>
+      {% endif %}
     </div>
+
+    <div class="mt-2 small text-muted">
+      <strong>状態：</strong>未着手＝0% / 着手＝10% / 順調 / 遅れ / 完了＝100% / 停止＝凍結
+      　<strong>MS</strong>＝マイルストーン（時刻・工数不要）
+    </div>
+
   </div>
 </div>
-{% endif %}
-
 {% endblock %}
 
 {% block scripts %}
+<style>
+#taskTable td, #taskTable th { padding-left: 2px; padding-right: 2px; }
+#taskTable .form-control, #taskTable .form-select { padding-left: 3px; padding-right: 3px; }
+</style>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
   /* 大区分→中区分連動 */
@@ -346,10 +446,6 @@ document.addEventListener('DOMContentLoaded', function () {
   /* 状態→進捗率の自動マッピング */
   var STATUS_PROGRESS = { '未着手': 0, '着手': 10, '完了': 100 };
 
-  /**
-   * 「順調」選択時に開始日・終了日・今日から進捗%を自動計算する。
-   * 計算式: (今日 - 開始日) / (終了日 - 開始日) × 100
-   */
   function calcProgressByDate(startStr, endStr) {
     if (!startStr || !endStr) return 0;
     var sp = startStr.split('-'), ep = endStr.split('-');
@@ -372,7 +468,6 @@ document.addEventListener('DOMContentLoaded', function () {
     var val = Math.max(0, Math.min(parseInt(progInput.value) || 0, 100));
     bar.style.width = val + '%';
     bar.querySelector('small').textContent = val + '%';
-    /* バー色更新 */
     bar.className = 'progress-bar';
     var st = statusSel ? statusSel.value : '';
     if (val >= 100) bar.classList.add('bg-success');
@@ -381,14 +476,12 @@ document.addEventListener('DOMContentLoaded', function () {
     else bar.classList.add('bg-secondary');
   }
 
-  /* 状態変更 → 進捗%自動更新 + バー更新 */
   document.querySelectorAll('.js-status').forEach(function (sel) {
     sel.addEventListener('change', function () {
       var tid = sel.dataset.tid;
       var status = sel.value;
       var progInput = document.querySelector('.js-progress[data-tid="' + tid + '"]');
       if (status === '順調') {
-        /* 順調: 日付から進捗%を自動計算 */
         var startInput = document.querySelector('[name="start_date_' + tid + '"]');
         var endInput = document.querySelector('[name="end_date_' + tid + '"]');
         if (progInput && startInput && endInput) {
@@ -397,7 +490,6 @@ document.addEventListener('DOMContentLoaded', function () {
       } else if (status in STATUS_PROGRESS) {
         if (progInput) progInput.value = STATUS_PROGRESS[status];
       }
-      /* 状態色クラス更新 */
       sel.className = 'form-select form-select-sm js-status';
       if (status === '完了') sel.classList.add('text-success');
       else if (status === '遅れ') sel.classList.add('text-danger');
@@ -406,15 +498,14 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
-  /* 追加フォームの状態変更 → 順調なら自動計算 */
   var addStatus = document.getElementById('add-status');
   if (addStatus) {
     addStatus.addEventListener('change', function () {
       var status = addStatus.value;
       var progInput = document.getElementById('add-progress');
       if (status === '順調') {
-        var startInput = document.querySelector('#addForm input[name="start_date"]');
-        var endInput = document.querySelector('#addForm input[name="end_date"]');
+        var startInput = document.querySelector('#addTaskForm input[name="start_date"]');
+        var endInput = document.querySelector('#addTaskForm input[name="end_date"]');
         if (progInput && startInput && endInput) {
           progInput.value = calcProgressByDate(startInput.value, endInput.value);
         }
@@ -424,20 +515,84 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  /* 進捗%入力 → バーリアルタイム更新 */
   document.querySelectorAll('.js-progress').forEach(function (inp) {
-    inp.addEventListener('input', function () {
-      updateBar(inp.dataset.tid);
-    });
+    inp.addEventListener('input', function () { updateBar(inp.dataset.tid); });
   });
 });
 
-/** イベントチェックボックスでフィールドの表示/非表示を切り替える */
-function toggleEventFields(checkbox, prefix) {
-  var fields = document.querySelectorAll('.event-fields-' + prefix);
-  fields.forEach(function (el) {
-    el.style.display = checkbox.checked ? '' : 'none';
-  });
+/* ── イベント追加フォーム: 開催日→終了日同期 ── */
+function syncEvEndDate(dateInput) {
+  var evEnd = document.getElementById('ev-end-date');
+  if (evEnd) evEnd.value = dateInput.value;
+}
+
+/* ── イベント追加フォーム: 開始/終了時刻→所要時間計算 ── */
+function calcEvHours() {
+  var st = document.getElementById('ev-start-time');
+  var et = document.getElementById('ev-end-time');
+  var ph = document.getElementById('ev-planned-hours');
+  var disp = document.getElementById('ev-hours-display');
+  if (!st || !et) return;
+  if (!st.value || !et.value) { if (ph) ph.value = 0; if (disp) disp.value = '0h'; return; }
+  var sm = timeToMin(st.value);
+  var em = timeToMin(et.value);
+  var diff = (em - sm) / 60;
+  if (diff < 0) diff = 0;
+  var h = Math.round(diff * 10) / 10;
+  if (ph) ph.value = h;
+  if (disp) disp.value = h + 'h';
+}
+
+/* ── イベント追加フォーム: MSチェック→時刻・所要時間フィールド切替 ── */
+function toggleEvMilestone(cb) {
+  var startCol = document.getElementById('ev-time-start-col');
+  var endCol = document.getElementById('ev-time-end-col');
+  var hoursCol = document.getElementById('ev-hours-col');
+  var ph = document.getElementById('ev-planned-hours');
+  var disp = document.getElementById('ev-hours-display');
+  var show = !cb.checked;
+  if (startCol) startCol.style.display = show ? '' : 'none';
+  if (endCol) endCol.style.display = show ? '' : 'none';
+  if (hoursCol) hoursCol.style.display = show ? '' : 'none';
+  if (!show) {
+    if (ph) ph.value = 0;
+    if (disp) disp.value = '0h';
+  }
+}
+
+/* ── 時刻を15分単位に丸める ── */
+function roundToQuarter(input) {
+  if (!input.value) return;
+  var parts = input.value.split(':');
+  var h = parseInt(parts[0]);
+  var m = Math.round(parseInt(parts[1]) / 15) * 15;
+  if (m >= 60) { h += Math.floor(m / 60); m = m % 60; }
+  if (h >= 24) { h = 23; m = 45; }
+  input.value = (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+}
+
+/* ── イベント一覧: 開催日→終了日同期 ── */
+function syncEvEndDateEdit(dateInput) {
+  var tid = dateInput.dataset.tid;
+  var endHidden = document.getElementById('ev-end-' + tid);
+  if (endHidden) endHidden.value = dateInput.value;
+}
+
+/* ── イベント一覧: 開始/終了時刻→工数自動計算 ── */
+function calcEvHoursEdit(tid) {
+  var st = document.querySelector('.ev-start-time[data-tid="' + tid + '"]');
+  var et = document.querySelector('.ev-end-time[data-tid="' + tid + '"]');
+  var ph = document.getElementById('ev-ph-' + tid);
+  if (!st || !et || !ph) return;
+  if (!st.value || !et.value) { ph.value = 0; return; }
+  var diff = (timeToMin(et.value) - timeToMin(st.value)) / 60;
+  if (diff < 0) diff = 0;
+  ph.value = Math.round(diff * 10) / 10;
+}
+
+function timeToMin(t) {
+  var parts = t.split(':');
+  return parseInt(parts[0]) * 60 + parseInt(parts[1]);
 }
 </script>
 {% endblock %}
