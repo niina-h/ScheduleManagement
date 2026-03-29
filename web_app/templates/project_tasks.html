@@ -200,7 +200,7 @@
               <th style="width:5%">状態</th>
               <th style="width:5%">遅延日数</th>
               <th style="width:5%">進捗</th>
-              {% if privileged %}<th style="width:3%">削除</th>{% endif %}
+              {% if privileged %}<th style="width:3%" class="text-center text-danger">削除</th>{% endif %}
             </tr>
           </thead>
           <tbody>
@@ -215,8 +215,14 @@
               {% if privileged %}
               <input type="hidden" form="bulkForm" name="task_id" value="{{ t.id }}">
               <input type="hidden" form="bulkForm" name="category_id_{{ t.id }}" value="{{ t.category_id or '' }}">
-              <input type="hidden" form="bulkForm" name="subcategory_id_{{ t.id }}" value="{{ t.subcategory_id or '' }}">
-              <td class="small text-muted">{{ t.subcategory_name or '' }}</td>
+              <td>
+                <select form="bulkForm" name="subcategory_id_{{ t.id }}" class="form-select form-select-sm">
+                  <option value="">（なし）</option>
+                  {% for s in subcategories %}
+                  <option value="{{ s.id }}" {% if t.subcategory_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
               <td><input type="text" form="bulkForm" name="task_name_{{ t.id }}" value="{{ t.task_name }}" class="form-control form-control-sm"></td>
               <td><input type="text" form="bulkForm" name="description_{{ t.id }}" value="{{ t.description or '' }}" class="form-control form-control-sm"></td>
               <td>
@@ -272,11 +278,9 @@
               <input type="hidden" form="bulkForm" name="planned_hours_{{ t.id }}" value="{{ t.planned_hours or 0 }}">
               {% if privileged %}
               <td class="text-center">
-                <form method="post" action="{{ url_for('project_tasks_bp.delete_task', task_id=t.id) }}" class="d-inline"
-                      onsubmit="return confirm('「{{ t.task_name }}」を削除しますか？')">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                  <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1">✕</button>
-                </form>
+                <input type="checkbox" form="bulkForm" name="delete_{{ t.id }}" value="1"
+                       class="form-check-input delete-check" style="width:1.1em;height:1.1em;"
+                       title="{{ t.task_name }}を削除">
               </td>
               {% endif %}
             </tr>
@@ -318,7 +322,7 @@
               <th style="width:7%">終了時刻</th>
               <th style="width:6%">工数h</th>
               <th style="width:4%">MS</th>
-              {% if privileged %}<th style="width:4%">削除</th>{% endif %}
+              {% if privileged %}<th style="width:4%" class="text-center text-danger">削除</th>{% endif %}
             </tr>
           </thead>
           <tbody>
@@ -387,11 +391,9 @@
               {% endif %}
               {% if privileged %}
               <td class="text-center">
-                <form method="post" action="{{ url_for('project_tasks_bp.delete_task', task_id=t.id) }}" class="d-inline"
-                      onsubmit="return confirm('「{{ t.task_name }}」を削除しますか？')">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                  <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1">✕</button>
-                </form>
+                <input type="checkbox" form="bulkEventForm" name="delete_{{ t.id }}" value="1"
+                       class="form-check-input delete-check" style="width:1.1em;height:1.1em;"
+                       title="{{ t.task_name }}を削除">
               </td>
               {% endif %}
             </tr>
@@ -589,6 +591,16 @@ function calcEvHoursEdit(tid) {
   if (diff < 0) diff = 0;
   ph.value = Math.round(diff * 10) / 10;
 }
+
+/* 削除チェックで行を赤くハイライト */
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.delete-check').forEach(function (cb) {
+    cb.addEventListener('change', function () {
+      var row = cb.closest('tr');
+      if (row) row.classList.toggle('table-danger', cb.checked);
+    });
+  });
+});
 
 function timeToMin(t) {
   var parts = t.split(':');

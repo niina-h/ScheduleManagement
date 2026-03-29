@@ -2246,7 +2246,7 @@ def import_events_to_weekly_schedule(
                 ).fetchone()
                 if row is None or not row["task_name"]:
                     # イベント名に時間を付与
-                    time_label = f"【{start_time}-{ev.get('event_end_time') or ''}】"
+                    time_label = f"【{start_time}】"
                     event_task_name = f"{time_label}{ev['task_name']}"
                     hours = ev.get("planned_hours") or 0.0
                     try:

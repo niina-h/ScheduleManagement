@@ -59,18 +59,6 @@
     {% endfor %}
   </datalist>
 
-  {# ---- イベント表示 ---- #}
-  {% if day_events is defined and day_events %}
-  <div class="alert alert-warning py-2 mb-2">
-    <strong>📅 本日のイベント：</strong>
-    {% for ev in day_events %}
-    <span class="badge" style="background:#f59e0b;color:#000;font-size:0.85em;margin:2px;">
-      {{ ev.event_start_time or '' }}-{{ ev.event_end_time or '' }} {{ ev.task_name }}
-      {% if ev.planned_hours %}({{ ev.planned_hours }}h){% endif %}
-    </span>
-    {% endfor %}
-  </div>
-  {% endif %}
 
   {# ---- 2カラムレイアウト ---- #}
   <div class="row g-3">

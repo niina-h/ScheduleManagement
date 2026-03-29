@@ -271,6 +271,7 @@ def bulk_update_tasks() -> object:
 
     task_ids_raw = request.form.getlist("task_id")
     updated_count = 0
+    deleted_count = 0
 
     for raw_id in task_ids_raw:
         try:
@@ -280,6 +281,12 @@ def bulk_update_tasks() -> object:
 
         existing = get_project_task_by_id(task_id)
         if not existing:
+            continue
+
+        # 削除チェックボックスが ON の場合は削除して次へ
+        if request.form.get(f"delete_{task_id}"):
+            delete_project_task(task_id)
+            deleted_count += 1
             continue
 
         sfx = f"_{task_id}"
@@ -349,7 +356,12 @@ def bulk_update_tasks() -> object:
         )
         updated_count += 1
 
-    flash(f"{updated_count}件のタスクを更新しました。", "success")
+    msgs = []
+    if updated_count:
+        msgs.append(f"{updated_count}件更新")
+    if deleted_count:
+        msgs.append(f"{deleted_count}件削除")
+    flash("、".join(msgs) + "しました。" if msgs else "変更はありませんでした。", "success")
     return redirect(url_for("project_tasks_bp.task_list"))
 
 

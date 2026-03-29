@@ -543,10 +543,12 @@
 <!-- ===== 会社休日管理（マスタのみ） ===== -->
 {% if login_role == 'マスタ' %}
 <div class="card shadow-sm mt-4">
-  <div class="card-header bg-warning text-dark fw-semibold d-flex align-items-center justify-content-between">
+  <div class="card-header bg-warning text-dark fw-semibold d-flex align-items-center justify-content-between"
+       style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#collapseHoliday" aria-expanded="false">
     <span>会社休日管理</span>
     <small class="text-muted">土日・祝日は自動除外。ここでは会社独自の休日を登録します。</small>
   </div>
+  <div id="collapseHoliday" class="collapse">
   <div class="card-body">
     <div class="row g-3">
       {# 登録フォーム #}
@@ -601,15 +603,18 @@
       </div>
     </div>
   </div>
+  </div>{# /collapseHoliday #}
 </div>
 {% endif %}
 
 <!-- ===== マスタデータ管理（マスタのみ） ===== -->
 {% if login_role == 'マスタ' %}
 <div class="card shadow-sm mt-4">
-  <div class="card-header bg-dark text-white fw-semibold">
+  <div class="card-header bg-dark text-white fw-semibold"
+       style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#collapseMaster" aria-expanded="false">
     マスタデータ管理（CSV エクスポート / インポート）
   </div>
+  <div id="collapseMaster" class="collapse">
   <div class="card-body">
 
     <h6 class="fw-bold mb-2">エクスポート（CSV ダウンロード）</h6>
@@ -639,6 +644,7 @@
     </form>
 
   </div>
+  </div>{# /collapseMaster #}
 </div>
 {% endif %}
 
