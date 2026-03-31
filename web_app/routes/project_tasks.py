@@ -24,6 +24,7 @@ from ..models import (
     add_project_task,
     delete_project_task,
     delete_routine_task,
+    get_accessible_users,
     get_accessible_users_for_dashboard,
     get_all_categories,
     get_all_project_tasks,
@@ -66,9 +67,21 @@ def task_list() -> str:
     """
     login_role = session.get("user_role", "")
     login_id = int(session["user_id"])
+    login_dept = session.get("user_dept", "")
     privileged = is_privileged(login_role)
 
-    if privileged:
+    # 権限別タスク取得
+    if login_role == "マスタ":
+        # マスタ: 同一部署のメンバーのタスクのみ
+        accessible = get_accessible_users(login_id, login_role, login_dept)
+        accessible_ids = [u["id"] for u in accessible]
+        tasks = get_all_project_tasks(user_ids=accessible_ids)
+    elif login_role == "管理職":
+        # 管理職: 担当メンバー全員のタスク
+        accessible = get_accessible_users(login_id, login_role, login_dept)
+        accessible_ids = [u["id"] for u in accessible]
+        tasks = get_all_project_tasks(user_ids=accessible_ids)
+    elif privileged:
         tasks = get_all_project_tasks()
     else:
         tasks = get_all_project_tasks(assigned_to=login_id)
@@ -76,8 +89,13 @@ def task_list() -> str:
     categories = get_all_categories()
     subcategories = get_all_subcategories()
 
-    # 担当者選択用のユーザーリスト（管理職・マスタのみ使用）
-    users = get_all_users(dept_filter=session.get("user_dept")) if privileged else []
+    # 担当者選択用のユーザーリスト（権限別に絞り込み）
+    if login_role in ("マスタ", "管理職"):
+        users = get_accessible_users(login_id, login_role, login_dept)
+    elif privileged:
+        users = get_all_users()
+    else:
+        users = []
 
     # 定例スケジュール
     routine_schedules = get_routine_schedules(login_id)

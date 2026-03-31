@@ -126,7 +126,7 @@ def get_accessible_users(login_id: int, login_role: str, login_dept: str) -> lis
 
     管理職は直属部下（manager_id=login_id）が設定されていればそれのみ、
     未設定の場合は同一部署（マスタ除く）を返す。
-    マスタはマスタ以外の全ユーザーを返す。
+    マスタは同一部署のマスタ以外全員を返す。
 
     Args:
         login_id: ログインユーザーのID。
@@ -137,10 +137,10 @@ def get_accessible_users(login_id: int, login_role: str, login_dept: str) -> lis
         list[dict]: アクセス可能なユーザーリスト。
     """
     if login_role == "マスタ":
-        # マスタは自分自身＋全部署全員（他マスタ除く）を返す
-        all_users = get_all_users()
-        others = [u for u in all_users if u.get("role") != "マスタ"]
-        self_user = next((u for u in all_users if u.get("id") == login_id), None)
+        # マスタは同一部署のマスタ以外全員を返す（所属外の部門は除外）
+        dept_users = get_all_users(dept_filter=login_dept if login_dept else None)
+        others = [u for u in dept_users if u.get("role") != "マスタ"]
+        self_user = next((u for u in dept_users if u.get("id") == login_id), None)
         if self_user and not any(u.get("id") == login_id for u in others):
             return [self_user] + others
         return others
@@ -1855,12 +1855,16 @@ def _calc_progress_by_date(start_date: str, end_date: str) -> int:
     return max(0, min(100, round(elapsed / total_days * 100)))
 
 
-def get_all_project_tasks(assigned_to: int | None = None) -> list[dict]:
+def get_all_project_tasks(
+    assigned_to: int | None = None,
+    user_ids: list[int] | None = None,
+) -> list[dict]:
     """プロジェクトタスクを大区分・中区分の表示順で取得する。
 
     Args:
         assigned_to: 指定時はそのユーザーに割り当てられたタスクのみ返す。
-                     None の場合は全タスクを返す。
+        user_ids: 指定時はそのユーザー群のいずれかに割り当てられたタスクを返す。
+                  None の場合は全タスクを返す。
 
     Returns:
         list[dict]: プロジェクトタスク一覧
@@ -1882,6 +1886,10 @@ def get_all_project_tasks(assigned_to: int | None = None) -> list[dict]:
     if assigned_to is not None:
         query += "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?) "
         params = (assigned_to, assigned_to)
+    elif user_ids is not None and len(user_ids) > 0:
+        placeholders = ",".join("?" * len(user_ids))
+        query += f"WHERE (pt.assigned_to IN ({placeholders}) OR pt.assigned_to_2 IN ({placeholders})) "
+        params = tuple(user_ids) * 2
     query += "ORDER BY tc.display_order, ts.display_order, pt.display_order"
     rows = db.execute(query, params).fetchall()
     return [dict(r) for r in rows]
