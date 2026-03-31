@@ -189,17 +189,25 @@ def daily_view(date_str: str) -> Any:
 
     # 対象ユーザーIDの決定（管理職・マスタは他ユーザーを閲覧可能・スコープ制限あり）
     req_user_id = request.args.get("user_id", "").strip()
-    if req_user_id and is_privileged(session.get("user_role", "")):
-        try:
-            target_user_id: int = int(req_user_id)
-        except ValueError:
+    if is_privileged(session.get("user_role", "")):
+        if req_user_id:
+            try:
+                target_user_id: int = int(req_user_id)
+            except ValueError:
+                target_user_id = int(session["user_id"])
+        elif session.get("selected_user_id"):
+            target_user_id = int(session["selected_user_id"])
+        else:
             target_user_id = int(session["user_id"])
         # スコープ制限チェック
         _target_check = get_user_by_id(target_user_id)
         if _target_check is not None:
             _login_user_dict = {"id": int(session["user_id"]), "role": session.get("user_role", ""), "dept": session.get("user_dept", "")}
             if not can_access_user(_login_user_dict, _target_check):
-                abort(403)
+                target_user_id = int(session["user_id"])
+                session.pop("selected_user_id", None)
+            else:
+                session["selected_user_id"] = target_user_id
     else:
         target_user_id = int(session["user_id"])
 

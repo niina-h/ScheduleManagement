@@ -23,15 +23,19 @@ from ..models import (
     PROJECT_TASK_STATUSES,
     add_project_task,
     delete_project_task,
+    delete_routine_task,
     get_accessible_users_for_dashboard,
     get_all_categories,
     get_all_project_tasks,
     get_all_subcategories,
     get_all_users,
     get_project_task_by_id,
+    get_routine_schedules,
+    get_task_master,
     get_task_overview_summary,
     get_task_progress_summary,
     import_brabio_excel,
+    save_routine_task,
     update_project_task,
 )
 
@@ -75,6 +79,13 @@ def task_list() -> str:
     # 担当者選択用のユーザーリスト（管理職・マスタのみ使用）
     users = get_all_users(dept_filter=session.get("user_dept")) if privileged else []
 
+    # 定例スケジュール
+    routine_schedules = get_routine_schedules(login_id)
+    # 作業登録から「定例作業」カテゴリの作業を取得
+    all_task_master = get_task_master(login_id)
+    routine_task_options = [t for t in all_task_master if t.get("category_name") in ("定例", "定例作業")]
+    used_rows = {r["row_number"] for r in routine_schedules}
+
     return render_template(
         "project_tasks.html",
         tasks=tasks,
@@ -83,6 +94,9 @@ def task_list() -> str:
         statuses=PROJECT_TASK_STATUSES,
         privileged=privileged,
         users=users,
+        routine_schedules=routine_schedules,
+        routine_task_options=routine_task_options,
+        used_rows=used_rows,
     )
 
 
@@ -105,6 +119,10 @@ def add_task() -> object:
     assigned_to_str = request.form.get("assigned_to", "").strip()
     start_date = request.form.get("start_date", "").strip()
     end_date = request.form.get("end_date", "").strip()
+    is_event_add = 1 if request.form.get("is_event") else 0
+    # イベントは開催日のみのため end_date が空の場合は start_date を使用
+    if is_event_add and not end_date:
+        end_date = start_date
     status = request.form.get("status", "未着手")
     progress_str = request.form.get("progress", "0").strip()
     delay_str = request.form.get("delay_days", "0").strip()
@@ -431,6 +449,60 @@ def delete_task(task_id: int) -> object:
     return redirect(url_for("project_tasks_bp.task_list"))
 
 
+@project_tasks_bp.route("/routine/save", methods=["POST"])
+def save_routine() -> object:
+    """定例スケジュールを登録する（ログインユーザー自身）。
+
+    Returns:
+        object: タスク管理画面へのリダイレクト
+    """
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+    user_id = int(session["user_id"])
+    task_name = request.form.get("task_name", "").strip()
+    subcategory_name = request.form.get("subcategory_name", "").strip()
+    row_number_str = request.form.get("row_number", "0").strip()
+    default_hours_str = request.form.get("default_hours", "0").strip()
+
+    if not task_name:
+        flash("作業名を選択してください。", "warning")
+        return redirect(url_for("project_tasks_bp.task_list"))
+    try:
+        row_number = int(row_number_str)
+        if not 1 <= row_number <= 10:
+            raise ValueError
+    except ValueError:
+        flash("行番号は1〜10で指定してください。", "warning")
+        return redirect(url_for("project_tasks_bp.task_list"))
+    try:
+        default_hours = max(0.0, float(default_hours_str))
+    except ValueError:
+        default_hours = 0.0
+
+    ok = save_routine_task(user_id, task_name, subcategory_name, default_hours, row_number)
+    flash("定例スケジュールを登録しました。" if ok else "登録に失敗しました（行番号重複の可能性）。",
+          "success" if ok else "warning")
+    return redirect(url_for("project_tasks_bp.task_list"))
+
+
+@project_tasks_bp.route("/routine/delete/<int:routine_id>", methods=["POST"])
+def delete_routine(routine_id: int) -> object:
+    """定例スケジュールを削除する（ログインユーザー自身）。
+
+    Args:
+        routine_id: 定例スケジュールID
+
+    Returns:
+        object: タスク管理画面へのリダイレクト
+    """
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+    user_id = int(session["user_id"])
+    delete_routine_task(routine_id, user_id)
+    flash("定例スケジュールを削除しました。", "success")
+    return redirect(url_for("project_tasks_bp.task_list"))
+
+
 # -- ステータス→色マッピング（ダッシュボード用） --
 _STATUS_COLOR_MAP: dict[str, str] = {
     "未着手": "#9ca3af",
@@ -502,13 +574,16 @@ def _resolve_dashboard_target(
     )
     privileged: bool = is_privileged(login_role)
 
-    # クエリパラメータからユーザーIDを取得
+    # クエリパラメータからユーザーIDを取得（なければセッションの選択ユーザーを維持）
     raw_user_id: str | None = request.args.get("user_id")
     if raw_user_id is not None:
         try:
             target_user_id: int = int(raw_user_id)
         except (ValueError, TypeError):
             abort(400)
+        session["selected_user_id"] = target_user_id
+    elif privileged and session.get("selected_user_id"):
+        target_user_id = int(session["selected_user_id"])
     else:
         target_user_id = login_id
 
@@ -756,9 +831,11 @@ def gantt() -> str:
     else:
         tasks = get_all_project_tasks(assigned_to=login_id)
 
-    # テンプレートに渡すJSON用データ
+    # テンプレートに渡すJSON用データ（イベント・定例は除外）
     gantt_data = []
     for t in tasks:
+        if t.get("is_event", 0):
+            continue
         # 担当者表示（姓のみ、2名対応）
         names = []
         ln1 = t.get("assigned_last_name") or t.get("assigned_name") or ""

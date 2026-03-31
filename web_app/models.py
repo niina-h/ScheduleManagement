@@ -619,8 +619,11 @@ def save_weekly_schedule(
             for idx, entry in enumerate(entries):
                 key = (day_int, slot, idx)
                 created_at = created_at_map.get(key) or now
-                # project_task_id: フォームから渡された値優先、なければ既存値を維持
-                pt_id = entry.get("project_task_id") or pt_id_map.get(key)
+                # project_task_id: task_nameが空なら必ずNULL、それ以外はフォーム値→既存値の順で採用
+                if entry.get("task_name", "").strip():
+                    pt_id = entry.get("project_task_id") or pt_id_map.get(key)
+                else:
+                    pt_id = None
                 db.execute(
                     "INSERT OR REPLACE INTO weekly_schedule "
                     "(user_id, week_start, day_of_week, time_slot, slot_index, "
@@ -2112,74 +2115,127 @@ def get_events_for_user_date(user_id: int, target_date: str) -> list[dict]:
 def import_tasks_to_weekly_schedule(
     user_id: int,
     week_start: str,
-    task_ids: list[int],
     updated_by: str = "",
 ) -> int:
-    """タスク管理のタスクを週間予定にインポートする。
+    """ログインユーザーに割り当てられた期間内タスクを週間予定に自動インポートする。
 
-    各タスクをAMスロットの空き枠に作業時間0で割り当てる。
-    既に同じ project_task_id で登録済みの場合はスキップする。
+    各曜日（月〜金）について、その日を含む期間のタスクをAM/PMに均等配分して配置する。
+    定例予約行はスキップする。
 
     Args:
         user_id: ユーザーID
         week_start: 週開始日（YYYY-MM-DD形式）
-        task_ids: インポートするタスクIDのリスト
         updated_by: 更新者名
 
     Returns:
         int: 実際にインポートした件数
     """
     import sqlite3 as _sqlite3
+    from datetime import timedelta as _timedelta
 
     db = get_db()
     now = datetime.now().isoformat()
+
+    ws = datetime.strptime(week_start, "%Y-%m-%d")
+    week_end: str = (ws + _timedelta(days=4)).strftime("%Y-%m-%d")
+
+    # 対象週と期間が重なる、ユーザー担当タスクを取得（start_date/end_dateも取得）
+    rows = db.execute(
+        "SELECT pt.id, pt.task_name, COALESCE(ts.name,'') AS subcategory_name,"
+        "       pt.start_date, pt.end_date "
+        "FROM project_task pt "
+        "LEFT JOIN task_subcategory ts ON ts.id = pt.subcategory_id "
+        "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?) "
+        "  AND pt.is_event = 0 "
+        "  AND pt.status NOT IN ('完了', '停止') "
+        "  AND pt.start_date <= ? AND pt.end_date >= ? "
+        "ORDER BY pt.start_date, pt.id",
+        (user_id, user_id, week_end, week_start),
+    ).fetchall()
+
+    if not rows:
+        return 0
+
+    # 定例予約行を除外
+    reserved = get_reserved_row_numbers(user_id)
+    reserved_am = {r - 1 for r in reserved if 1 <= r <= 5}
+    reserved_pm = {r - 6 for r in reserved if 6 <= r <= 10}
+
     imported = 0
 
-    # 既存の project_task_id を収集（重複防止）
-    existing_rows = db.execute(
-        "SELECT project_task_id FROM weekly_schedule "
-        "WHERE user_id = ? AND week_start = ? AND project_task_id IS NOT NULL",
-        (user_id, week_start),
-    ).fetchall()
-    existing_pt_ids: set[int] = {r["project_task_id"] for r in existing_rows}
+    # 曜日ごとに処理（月〜金）
+    for day_idx in range(5):
+        day_date: str = (ws + _timedelta(days=day_idx)).strftime("%Y-%m-%d")
 
-    for pt_id in task_ids:
-        if pt_id in existing_pt_ids:
-            continue
-        task = get_project_task_by_id(pt_id)
-        if not task:
+        # この曜日を含む期間のタスクを抽出
+        day_tasks = [r for r in rows if r["start_date"] <= day_date <= r["end_date"]]
+        if not day_tasks:
             continue
 
-        # 月曜のAMスロットから空き枠を探す
-        placed = False
-        for day in range(5):
-            if placed:
-                break
+        # この曜日に既に配置済みの project_task_id
+        existing_day: set[int] = {
+            r["project_task_id"]
+            for r in db.execute(
+                "SELECT project_task_id FROM weekly_schedule "
+                "WHERE user_id=? AND week_start=? AND day_of_week=? "
+                "  AND project_task_id IS NOT NULL",
+                (user_id, week_start, day_idx),
+            ).fetchall()
+        }
+
+        # この曜日の空きスロットを取得
+        def _free_slots(slot: str, reserved_set: set[int]) -> list[int]:
+            result = []
             for idx in range(5):
-                row = db.execute(
+                if idx in reserved_set:
+                    continue
+                r = db.execute(
                     "SELECT task_name FROM weekly_schedule "
-                    "WHERE user_id = ? AND week_start = ? AND day_of_week = ? "
-                    "  AND time_slot = 'am' AND slot_index = ?",
-                    (user_id, week_start, day, idx),
+                    "WHERE user_id=? AND week_start=? AND day_of_week=? "
+                    "  AND time_slot=? AND slot_index=?",
+                    (user_id, week_start, day_idx, slot, idx),
                 ).fetchone()
-                if row is None or not row["task_name"]:
-                    try:
-                        db.execute(
-                            "INSERT OR REPLACE INTO weekly_schedule "
-                            "(user_id, week_start, day_of_week, time_slot, slot_index, "
-                            " task_name, hours, subcategory_name, project_task_id, "
-                            " updated_at, updated_by) "
-                            "VALUES (?, ?, ?, 'am', ?, ?, 0.0, ?, ?, ?, ?)",
-                            (user_id, week_start, day, idx,
-                             task["task_name"],
-                             task.get("subcategory_name") or "",
-                             pt_id, now, updated_by),
-                        )
-                        placed = True
-                        imported += 1
-                    except _sqlite3.DatabaseError:
-                        pass
+                if r is None or not (r["task_name"] or "").strip():
+                    result.append(idx)
+            return result
+
+        am_free = _free_slots("am", reserved_am)
+        pm_free = _free_slots("pm", reserved_pm)
+        am_ptr, pm_ptr = 0, 0
+
+        for i, task in enumerate(day_tasks):
+            if task["id"] in existing_day:
+                continue
+            # AM/PM に交互配分
+            if i % 2 == 0:
+                if am_ptr < len(am_free):
+                    slot_name, idx = "am", am_free[am_ptr]; am_ptr += 1
+                elif pm_ptr < len(pm_free):
+                    slot_name, idx = "pm", pm_free[pm_ptr]; pm_ptr += 1
+                else:
                     break
+            else:
+                if pm_ptr < len(pm_free):
+                    slot_name, idx = "pm", pm_free[pm_ptr]; pm_ptr += 1
+                elif am_ptr < len(am_free):
+                    slot_name, idx = "am", am_free[am_ptr]; am_ptr += 1
+                else:
+                    break
+            try:
+                db.execute(
+                    "INSERT OR REPLACE INTO weekly_schedule "
+                    "(user_id, week_start, day_of_week, time_slot, slot_index, "
+                    " task_name, hours, subcategory_name, project_task_id, "
+                    " updated_at, updated_by) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 0.0, ?, ?, ?, ?)",
+                    (user_id, week_start, day_idx, slot_name, idx,
+                     task["task_name"], task["subcategory_name"],
+                     task["id"], now, updated_by),
+                )
+                imported += 1
+                existing_day.add(task["id"])
+            except _sqlite3.DatabaseError:
+                pass
 
     if imported > 0:
         db.commit()
@@ -2236,8 +2292,17 @@ def import_events_to_weekly_schedule(
                 hour = 9
             time_slot = "pm" if hour >= 12 else "am"
 
-            # 該当スロットの空き枠を探す
+            # 定例予約行をスキップ
+            reserved = get_reserved_row_numbers(user_id)
+            if time_slot == "am":
+                reserved_slots = {r - 1 for r in reserved if 1 <= r <= 5}
+            else:
+                reserved_slots = {r - 6 for r in reserved if 6 <= r <= 10}
+
+            # 該当スロットの空き枠を探す（定例行は除く）
             for idx in range(5):
+                if idx in reserved_slots:
+                    continue
                 row = db.execute(
                     "SELECT task_name FROM weekly_schedule "
                     "WHERE user_id = ? AND week_start = ? AND day_of_week = ? "
@@ -2926,3 +2991,147 @@ def calc_planned_hours(start_date_str: str, end_date_str: str, std_hours_per_day
         return 0.0
     bdays = count_business_days(start, end)
     return round(bdays * std_hours_per_day, 1)
+
+
+# ─────────────────────────────────────────────
+# 定例スケジュール管理
+# ─────────────────────────────────────────────
+
+def get_routine_schedules(user_id: int) -> list[dict]:
+    """ユーザーの定例スケジュール一覧を取得する。
+
+    Args:
+        user_id: ユーザーID
+
+    Returns:
+        list[dict]: row_number 昇順の定例スケジュール一覧
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, user_id, task_name, subcategory_name, default_hours, row_number"
+        " FROM routine_schedule WHERE user_id = ? ORDER BY row_number ASC",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_routine_task(
+    user_id: int,
+    task_name: str,
+    subcategory_name: str,
+    default_hours: float,
+    row_number: int,
+) -> bool:
+    """定例スケジュールを登録（または上書き）する。
+
+    同一ユーザーの同一行番号がある場合は置き換える。
+
+    Args:
+        user_id: ユーザーID
+        task_name: 作業名
+        subcategory_name: 中区分名
+        default_hours: デフォルト工数
+        row_number: 行番号（1〜10）
+
+    Returns:
+        bool: 成功時 True
+    """
+    if not 1 <= row_number <= 10:
+        return False
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT INTO routine_schedule"
+            " (user_id, task_name, subcategory_name, default_hours, row_number)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(user_id, row_number) DO UPDATE SET"
+            "   task_name=excluded.task_name,"
+            "   subcategory_name=excluded.subcategory_name,"
+            "   default_hours=excluded.default_hours",
+            (user_id, task_name, subcategory_name, default_hours, row_number),
+        )
+        db.commit()
+        return True
+    except Exception:
+        return False
+
+
+def delete_routine_task(routine_id: int, user_id: int) -> None:
+    """定例スケジュールを削除する。
+
+    Args:
+        routine_id: 定例スケジュールID
+        user_id: 所有ユーザーID（権限チェック用）
+    """
+    db = get_db()
+    db.execute(
+        "DELETE FROM routine_schedule WHERE id = ? AND user_id = ?",
+        (routine_id, user_id),
+    )
+    db.commit()
+
+
+def get_reserved_row_numbers(user_id: int) -> set[int]:
+    """ユーザーの定例スケジュールで使用中の行番号セットを返す。
+
+    タスク管理反映時に定例行をスキップするために使用する。
+
+    Args:
+        user_id: ユーザーID
+
+    Returns:
+        set[int]: 使用中の行番号（1〜10）
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT row_number FROM routine_schedule WHERE user_id = ?",
+        (user_id,),
+    ).fetchall()
+    return {r["row_number"] for r in rows}
+
+
+def apply_routine_to_week(user_id: int, week_start: str, updated_by: str = "") -> None:
+    """定例スケジュールを週間予定の空き行に適用する。
+
+    定例スケジュールの row_number (1〜10) を AM(1-5) / PM(6-10) に変換し、
+    当該スロットが空の場合のみ書き込む。
+
+    Args:
+        user_id: ユーザーID
+        week_start: 週開始日（YYYY-MM-DD）
+        updated_by: 更新者名
+    """
+    routines = get_routine_schedules(user_id)
+    if not routines:
+        return
+
+    db = get_db()
+    now = datetime.now().isoformat()
+
+    for r in routines:
+        row_num = r["row_number"]  # 1-10
+        if row_num <= 5:
+            time_slot = "am"
+            slot_index = row_num - 1
+        else:
+            time_slot = "pm"
+            slot_index = row_num - 6
+
+        for day_idx in range(5):
+            existing = db.execute(
+                "SELECT task_name FROM weekly_schedule"
+                " WHERE user_id=? AND week_start=? AND day_of_week=?"
+                "   AND time_slot=? AND slot_index=?",
+                (user_id, week_start, day_idx, time_slot, slot_index),
+            ).fetchone()
+            if existing is None or not (existing["task_name"] or "").strip():
+                db.execute(
+                    "INSERT OR REPLACE INTO weekly_schedule"
+                    " (user_id, week_start, day_of_week, time_slot, slot_index,"
+                    "  task_name, hours, subcategory_name, updated_at, updated_by)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, week_start, day_idx, time_slot, slot_index,
+                     r["task_name"], r["default_hours"],
+                     r["subcategory_name"] or "", now, updated_by),
+                )
+    db.commit()

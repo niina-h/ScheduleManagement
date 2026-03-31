@@ -26,7 +26,7 @@
       <span><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#93c5fd,#3b82f6);border-radius:3px;vertical-align:middle;"></span> 予定期間</span>
       <span><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#6ee7b7,#10b981);border-radius:3px;vertical-align:middle;"></span> 進捗（実績）</span>
       <span><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#fca5a5,#ef4444);border-radius:3px;vertical-align:middle;"></span> 遅延</span>
-      <span><span style="display:inline-block;width:14px;height:14px;background:#a78bfa;border:1px solid #7c3aed;vertical-align:middle;transform:rotate(45deg);"></span> マイルストーン</span>
+      <span><span style="display:inline-block;width:2px;height:14px;background:#7c3aed;vertical-align:middle;border-left:2px dashed #7c3aed;"></span> マイルストーン（縦線）</span>
       <span>｜<span style="color:#dc3545;">赤線</span> = 今日</span>
     </div>
 
@@ -244,6 +244,7 @@
     var ctx = canvas.getContext('2d');
     catClickAreas = [];
     barAreas = [];
+    var msLabels = [];
 
     var endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + DISPLAY_DAYS - 1);
@@ -480,30 +481,30 @@
         var taskStart = parseDate(task.start);
         var taskEnd = parseDate(task.end);
 
-        /* ── マイルストーン（ひし形） ── */
+        /* ── マイルストーン（縦線）── */
         if (task.is_milestone) {
           var msOffset = Math.floor((taskStart - rangeStart) / 86400000);
-          if (msOffset >= -1 && msOffset <= DISPLAY_DAYS) {
-            var msx = leftMargin + (msOffset + 0.5) * dayWidth;
-            var msSize = 10;
-            /* 影 */
-            ctx.shadowColor = 'rgba(124,58,237,0.4)'; ctx.shadowBlur = 6;
-            ctx.shadowOffsetX = 1; ctx.shadowOffsetY = 2;
-            ctx.fillStyle = task.status === '完了'
-              ? barGradient(ctx, msx, midY - msSize, msSize * 2, '#6ee7b7', '#059669')
-              : barGradient(ctx, msx, midY - msSize, msSize * 2, '#c4b5fd', '#8b5cf6');
+          if (msOffset >= 0 && msOffset < DISPLAY_DAYS) {
+            var mlx = leftMargin + (msOffset + 0.5) * dayWidth;
+            var lineColor = task.status === '完了' ? '#059669' : '#7c3aed';
+            /* 縦線（グリッド全体） */
+            ctx.strokeStyle = lineColor;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 3]);
             ctx.beginPath();
-            ctx.moveTo(msx, midY - msSize); ctx.lineTo(msx + msSize, midY);
-            ctx.lineTo(msx, midY + msSize); ctx.lineTo(msx - msSize, midY);
+            ctx.moveTo(mlx, headerHeight);
+            ctx.lineTo(mlx, totalHeight);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            /* 行内マーカー（▼） */
+            ctx.fillStyle = lineColor;
+            ctx.beginPath();
+            ctx.moveTo(mlx - 5, headerHeight + 2);
+            ctx.lineTo(mlx + 5, headerHeight + 2);
+            ctx.lineTo(mlx, headerHeight + 10);
             ctx.closePath(); ctx.fill();
-            ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
-            ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-            /* 枠線 */
-            ctx.strokeStyle = task.status === '完了' ? '#047857' : '#6d28d9';
-            ctx.lineWidth = 1.5; ctx.stroke();
-            /* ラベル */
-            ctx.fillStyle = '#6d28d9'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'left';
-            ctx.fillText(fmtDate(taskStart), msx + msSize + 4, midY + 3);
+            /* 最上部ラベル収集 */
+            msLabels.push({ x: mlx, name: task.name, color: lineColor, date: fmtDate(taskStart) });
           }
           currentY += rowHeight; return;
         }
@@ -596,6 +597,19 @@
 
         currentY += rowHeight;
       });
+    });
+
+    /* ── マイルストーンラベルを最上部（ヘッダー内）に描画 ── */
+    msLabels.forEach(function (ml) {
+      ctx.save();
+      ctx.translate(ml.x, headerHeight - 6);
+      ctx.rotate(-Math.PI / 2);
+      ctx.font = 'bold 8px "游ゴシック", "Yu Gothic", sans-serif';
+      ctx.fillStyle = ml.color;
+      ctx.textAlign = 'left';
+      var label = ml.name.length > 10 ? ml.name.substring(0, 10) + '…' : ml.name;
+      ctx.fillText(label + ' ' + ml.date, 2, 0);
+      ctx.restore();
     });
 
     /* 最終パス：縦の区切り罫線を最前面に再描画 */

@@ -37,6 +37,8 @@ from ..models import (
     get_weekly_leave,
     get_weekly_schedule,
     get_weekly_schedule_meta,
+    apply_routine_to_week,
+    get_routine_schedules,
     import_events_to_weekly_schedule,
     import_tasks_to_weekly_schedule,
     save_weekly_leave,
@@ -142,10 +144,17 @@ def weekly() -> Any:
 
     # 管理職・マスタは他ユーザーの予定を表示できる（スコープ制限あり）
     req_user_id: str = request.args.get("user_id", "").strip()
-    if req_user_id and is_privileged(session.get("user_role", "")):
-        try:
-            target_user_id: int = int(req_user_id)
-        except ValueError:
+    if is_privileged(session.get("user_role", "")):
+        if req_user_id:
+            # URLに user_id が指定された場合はセッションに保存
+            try:
+                target_user_id: int = int(req_user_id)
+            except ValueError:
+                target_user_id = int(login_user_id)
+        elif session.get("selected_user_id"):
+            # URLに指定がなければセッションの選択ユーザーを維持
+            target_user_id = int(session["selected_user_id"])
+        else:
             target_user_id = int(login_user_id)
         # スコープ制限チェック
         target = get_user_by_id(target_user_id)
@@ -154,8 +163,10 @@ def weekly() -> Any:
             abort(404)
         login_user_dict = {"id": int(login_user_id), "role": session.get("user_role", ""), "dept": session.get("user_dept", "")}
         if not can_access_user(login_user_dict, target):
-            from flask import abort
-            abort(403)
+            target_user_id = int(login_user_id)
+            session.pop("selected_user_id", None)
+        else:
+            session["selected_user_id"] = target_user_id
     else:
         target_user_id = int(login_user_id)
 
@@ -536,31 +547,27 @@ def import_tasks_and_events() -> Any:
     is_admin_view: bool = (target_user_id != int(login_user_id))
     updated_by: str = session.get("user_name", "")
 
-    # タスク取込
-    task_ids_raw: list[str] = request.form.getlist("import_task_ids")
-    task_ids: list[int] = []
-    for raw in task_ids_raw:
-        try:
-            task_ids.append(int(raw))
-        except ValueError:
-            continue
-
-    task_count = 0
-    if task_ids:
-        task_count = import_tasks_to_weekly_schedule(
-            target_user_id, week_start, task_ids, updated_by,
-        )
+    # タスク取込（担当者が一致し週と期間が重なるタスクを自動検索）
+    task_count = import_tasks_to_weekly_schedule(
+        target_user_id, week_start, updated_by,
+    )
 
     # イベント取込
     event_count = import_events_to_weekly_schedule(
         target_user_id, week_start, updated_by,
     )
 
+    # 定例スケジュールを空き行に適用（反映後に定例行を補完）
+    routine_count = len(get_routine_schedules(target_user_id))
+    apply_routine_to_week(target_user_id, week_start, updated_by)
+
     msgs = []
     if task_count > 0:
         msgs.append(f"タスク{task_count}件")
     if event_count > 0:
         msgs.append(f"イベント{event_count}件")
+    if routine_count > 0:
+        msgs.append(f"定例{routine_count}件")
 
     if msgs:
         flash("・".join(msgs) + "を取り込みました", "success")

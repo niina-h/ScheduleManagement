@@ -8,19 +8,21 @@
       <h5 class="fw-bold mb-0">タスク管理</h5>
       <div class="d-flex gap-2">
         <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_tasks_bp.gantt') }}">ガントチャート</a>
-        {% if privileged %}
-        <button class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#addTaskForm">＋ タスク追加</button>
-        <button class="btn btn-outline-success btn-sm" data-bs-toggle="collapse" data-bs-target="#addEventForm">＋ イベント追加</button>
-        {% endif %}
       </div>
     </div>
 
-    {% if privileged %}
-    {# ── タスク追加フォーム ── #}
-    <div class="collapse mb-2" id="addTaskForm">
-      <div class="card shadow-sm border-primary">
-        <div class="card-header bg-primary text-white fw-semibold small">新規タスク登録</div>
-        <div class="card-body">
+    {# ── タスク一覧テーブル ── #}
+    {% set ns = namespace(current_cat='') %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-primary text-white fw-semibold small py-1 d-flex justify-content-between align-items-center">
+        <span>📋 タスク一覧</span>
+        {% if privileged %}
+        <button type="button" class="btn btn-outline-light btn-sm py-0" data-bs-toggle="collapse" data-bs-target="#addTaskForm">＋ タスク追加</button>
+        {% endif %}
+      </div>
+      {% if privileged %}
+      <div class="collapse" id="addTaskForm">
+        <div class="card-body border-bottom p-2">
           <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="is_event" value="0">
@@ -102,86 +104,7 @@
           </form>
         </div>
       </div>
-    </div>
-
-    {# ── イベント追加フォーム ── #}
-    <div class="collapse mb-3" id="addEventForm">
-      <div class="card shadow-sm border-success">
-        <div class="card-header bg-success text-white fw-semibold small">新規イベント登録（会議・行事など）</div>
-        <div class="card-body">
-          <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}" id="eventAddFormEl">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="is_event" value="1">
-            <input type="hidden" name="status" value="未着手">
-            <input type="hidden" name="progress" value="0">
-            <input type="hidden" name="delay_days" value="0">
-            <input type="hidden" name="end_date" id="ev-end-date">
-            <input type="hidden" name="planned_hours" id="ev-planned-hours" value="0">
-            <div class="row g-2 align-items-end">
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold">イベント名 <span class="text-danger">*</span></label>
-                <input type="text" name="task_name" class="form-control form-control-sm" required>
-              </div>
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold">大区分</label>
-                <select name="category_id" class="form-select form-select-sm" id="ev-add-cat">
-                  <option value="">（なし）</option>
-                  {% for c in categories %}
-                  <option value="{{ c.id }}">{{ c.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-md-1">
-                <label class="form-label small fw-semibold">担当者</label>
-                <select name="assigned_to" class="form-select form-select-sm">
-                  <option value="">--</option>
-                  {% for u in users %}
-                  <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold">開催日 <span class="text-danger">*</span></label>
-                <input type="date" name="start_date" id="ev-start-date" class="form-control form-control-sm" required
-                       oninput="syncEvEndDate(this)">
-              </div>
-              <div class="col-md-1 d-flex align-items-end pb-1">
-                <div class="form-check">
-                  <input type="checkbox" name="is_milestone" class="form-check-input" id="ev-milestone" value="1"
-                         onchange="toggleEvMilestone(this)">
-                  <label class="form-check-label small" for="ev-milestone">MS</label>
-                </div>
-              </div>
-              <div class="col-md-1" id="ev-time-start-col">
-                <label class="form-label small fw-semibold">開始時刻</label>
-                <input type="time" name="event_start_time" id="ev-start-time" class="form-control form-control-sm"
-                       step="900" oninput="calcEvHours()" onblur="roundToQuarter(this); calcEvHours()">
-              </div>
-              <div class="col-md-1" id="ev-time-end-col">
-                <label class="form-label small fw-semibold">終了時刻</label>
-                <input type="time" name="event_end_time" id="ev-end-time" class="form-control form-control-sm"
-                       step="900" oninput="calcEvHours()" onblur="roundToQuarter(this); calcEvHours()">
-              </div>
-              <div class="col-md-1" id="ev-hours-col">
-                <label class="form-label small fw-semibold">所要時間</label>
-                <div class="input-group input-group-sm">
-                  <input type="text" id="ev-hours-display" class="form-control form-control-sm bg-light" readonly value="0h">
-                </div>
-              </div>
-              <div class="col-md-1 d-flex align-items-end">
-                <button type="submit" class="btn btn-success btn-sm w-100">追加</button>
-              </div>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-    {% endif %}
-
-    {# ── タスク一覧テーブル ── #}
-    {% set ns = namespace(current_cat='') %}
-    <div class="card shadow-sm mb-3">
-      <div class="card-header bg-primary text-white fw-semibold small py-1">📋 タスク一覧</div>
+      {% endif %}
       {% if privileged %}
       <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -241,8 +164,8 @@
                   </select>
                 </div>
               </td>
-              <td><input type="date" form="bulkForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}" class="form-control form-control-sm px-1" style="width:90px;font-size:0.75rem;"></td>
-              <td><input type="date" form="bulkForm" name="end_date_{{ t.id }}" value="{{ t.end_date }}" class="form-control form-control-sm px-1" style="width:90px;font-size:0.75rem;"></td>
+              <td><input type="date" form="bulkForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}" class="form-control form-control-sm px-1" style="width:100px;"></td>
+              <td><input type="date" form="bulkForm" name="end_date_{{ t.id }}" value="{{ t.end_date }}" class="form-control form-control-sm px-1" style="width:100px;"></td>
               <td>
                 <select form="bulkForm" name="status_{{ t.id }}" data-tid="{{ t.id }}" class="form-select form-select-sm js-status
                   {% if t.status == '完了' %}text-success
@@ -303,25 +226,191 @@
       {% endif %}
     </div>
 
+    {# ── 定例作業 ＋ イベント 上段2カラム ── #}
+    <div class="row g-3 mb-3">
+
+      {# ── 定例作業 ── #}
+      <div class="col-md-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-header fw-semibold small py-1 d-flex justify-content-between align-items-center" style="background:#6d4c41;color:#fff;">
+            <span>🔁 定例 <span class="ms-2 small fw-normal text-warning">ガントチャート対象外・反映で定例行をキープ</span></span>
+            {% if privileged %}
+            <button type="button" class="btn btn-outline-light btn-sm py-0" data-bs-toggle="collapse" data-bs-target="#addRoutineForm">＋ 定例追加</button>
+            {% endif %}
+          </div>
+          {% if privileged %}
+          <div class="collapse" id="addRoutineForm">
+            <div class="card-body border-bottom p-2">
+              {% if routine_task_options %}
+              <form method="post" action="{{ url_for('project_tasks_bp.save_routine') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="row g-1 align-items-end">
+                  <div class="col">
+                    <label class="form-label small mb-0">作業選択（大区分：定例）</label>
+                    <select name="task_name" class="form-select form-select-sm" id="routineTaskSel" required
+                            onchange="fillRoutineSubcat(this)">
+                      <option value="">-- 作業を選択 --</option>
+                      {% for t in routine_task_options %}
+                      <option value="{{ t.task_name }}"
+                              data-subcat="{{ t.subcategory_name or '' }}"
+                              data-hours="{{ t.default_hours or 0 }}">{{ t.task_name }}</option>
+                      {% endfor %}
+                    </select>
+                    <input type="hidden" name="subcategory_name" id="routineSubcat">
+                    <input type="hidden" name="default_hours" id="routineHours">
+                  </div>
+                  <div class="col-auto">
+                    <label class="form-label small mb-0">行（1〜10）</label>
+                    <select name="row_number" class="form-select form-select-sm" style="width:100px;" required>
+                      <option value="">--</option>
+                      {% for n in range(1, 11) %}
+                      <option value="{{ n }}" {% if n in used_rows %}disabled class="text-muted"{% endif %}>
+                        {{ n }}{% if n in used_rows %} ✓{% endif %}
+                        {% if n <= 5 %}（AM{{ n }}）{% else %}（PM{{ n-5 }}）{% endif %}
+                      </option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-auto">
+                    <button type="submit" class="btn btn-sm btn-warning">登録</button>
+                  </div>
+                </div>
+              </form>
+              {% else %}
+              <div class="alert alert-info small py-1 mb-0">
+                作業登録に「定例」カテゴリの作業が登録されていません。<br>
+                <a href="{{ url_for('tasks.task_list') }}">作業登録</a> で大区分「定例」の作業を追加してください。
+              </div>
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
+          <div class="card-body p-2">
+            {# 登録済み一覧 #}
+            <table class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width:12%">行</th>
+                  <th>作業名</th>
+                  <th style="width:12%">工数h</th>
+                  <th style="width:10%"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in routine_schedules %}
+                <tr>
+                  <td class="small text-center">
+                    {% if r.row_number <= 5 %}AM{{ r.row_number }}{% else %}PM{{ r.row_number - 5 }}{% endif %}
+                  </td>
+                  <td class="small">{{ r.task_name }}</td>
+                  <td class="small text-center">{{ r.default_hours }}h</td>
+                  <td class="text-center">
+                    <form method="post" action="{{ url_for('project_tasks_bp.delete_routine', routine_id=r.id) }}"
+                          class="d-inline" onsubmit="return confirm('削除しますか？')">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1">✕</button>
+                    </form>
+                  </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="4" class="text-center text-muted small py-2">定例が登録されていません</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {# ── イベント（右カラム）── #}
+      <div class="col-md-8">
+
     {# ── イベント一覧テーブル ── #}
     {% set events = tasks | selectattr('is_event') | list %}
     <div class="card shadow-sm mb-3">
-      <div class="card-header bg-success text-white fw-semibold small py-1">📅 イベント一覧（会議・行事など）</div>
+      <div class="card-header bg-success text-white fw-semibold small py-1 d-flex justify-content-between align-items-center">
+        <span>📅 イベント一覧（会議・行事など）</span>
+        {% if privileged %}
+        <button type="button" class="btn btn-outline-light btn-sm py-0" data-bs-toggle="collapse" data-bs-target="#addEventForm">＋ イベント追加</button>
+        {% endif %}
+      </div>
+      {% if privileged %}
+      <div class="collapse" id="addEventForm">
+        <div class="card-body border-bottom p-2">
+          <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}" id="eventAddFormEl">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="is_event" value="1">
+            <input type="hidden" name="status" value="未着手">
+            <input type="hidden" name="progress" value="0">
+            <input type="hidden" name="delay_days" value="0">
+            <input type="hidden" name="end_date" id="ev-end-date">
+            <input type="hidden" name="planned_hours" id="ev-planned-hours" value="0">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-3">
+                <label class="form-label small fw-semibold">イベント名 <span class="text-danger">*</span></label>
+                <input type="text" name="task_name" class="form-control form-control-sm" required>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold">大区分</label>
+                <select name="category_id" class="form-select form-select-sm" id="ev-add-cat">
+                  <option value="">（なし）</option>
+                  {% for c in categories %}
+                  <option value="{{ c.id }}">{{ c.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-1">
+                <label class="form-label small fw-semibold">担当者</label>
+                <select name="assigned_to" class="form-select form-select-sm">
+                  <option value="">--</option>
+                  {% for u in users %}
+                  <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-auto">
+                <label class="form-label small fw-semibold">開催日 <span class="text-danger">*</span></label>
+                <input type="date" name="start_date" id="ev-start-date" class="form-control form-control-sm px-1" required
+                       style="width:100px;" oninput="syncEvEndDate(this)">
+              </div>
+              <div class="col-auto d-flex align-items-end pb-1">
+                <div class="form-check">
+                  <input type="checkbox" name="is_milestone" class="form-check-input" id="ev-milestone" value="1"
+                         onchange="toggleEvMilestone(this)">
+                  <label class="form-check-label small" for="ev-milestone">MS</label>
+                </div>
+              </div>
+              <div class="col-auto">
+                <label class="form-label small fw-semibold">開始時刻</label>
+                <input type="time" name="event_start_time" id="ev-start-time" class="form-control form-control-sm"
+                       style="width:90px;font-size:0.75rem;" step="900" oninput="calcEvHours()" onblur="roundToQuarter(this); calcEvHours()">
+              </div>
+              <div class="col-auto">
+                <label class="form-label small fw-semibold">終了時刻</label>
+                <input type="time" name="event_end_time" id="ev-end-time" class="form-control form-control-sm"
+                       style="width:90px;font-size:0.75rem;" step="900" oninput="calcEvHours()" onblur="roundToQuarter(this); calcEvHours()">
+              </div>
+              <div class="col-md-1 d-flex align-items-end">
+                <button type="submit" class="btn btn-success btn-sm w-100">追加</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% endif %}
       {% if privileged %}
       <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkEventForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       {% endif %}
       <div class="card-body p-0">
-        <table class="table table-sm table-hover mb-0">
+        <table class="table table-sm table-hover mb-0" id="eventTable">
           <thead class="table-light">
             <tr>
-              <th style="width:18%">イベント名</th>
-              <th style="width:8%">担当者</th>
+              <th style="width:28%">イベント名</th>
+              <th style="width:15%">担当者</th>
               <th style="width:8%">開催日</th>
-              <th style="width:7%">開始時刻</th>
-              <th style="width:7%">終了時刻</th>
-              <th style="width:6%">工数h</th>
-              <th style="width:4%">MS</th>
+              <th style="width:4%" class="text-center">MS</th>
+              <th style="width:8%">開始時刻</th>
+              <th style="width:8%">終了時刻</th>
               {% if privileged %}<th style="width:4%" class="text-center text-danger">削除</th>{% endif %}
             </tr>
           </thead>
@@ -350,44 +439,42 @@
               </td>
               <td><input type="date" form="bulkEventForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}"
                          class="form-control form-control-sm px-1 ev-date-input" data-tid="{{ t.id }}"
-                         style="min-width:0;font-size:0.75rem;"
+                         style="width:100px;"
                          oninput="syncEvEndDateEdit(this)"></td>
-              <td>
-                {% if not t.is_milestone %}
-                <input type="time" form="bulkEventForm" name="event_start_time_{{ t.id }}" value="{{ t.event_start_time or '' }}"
-                       class="form-control form-control-sm ev-start-time" data-tid="{{ t.id }}"
-                       step="900" oninput="calcEvHoursEdit('{{ t.id }}')" onblur="roundToQuarter(this); calcEvHoursEdit('{{ t.id }}')">
-                {% else %}
-                <span class="text-muted small">MS</span>
-                <input type="hidden" form="bulkEventForm" name="event_start_time_{{ t.id }}" value="">
-                {% endif %}
-              </td>
-              <td>
-                {% if not t.is_milestone %}
-                <input type="time" form="bulkEventForm" name="event_end_time_{{ t.id }}" value="{{ t.event_end_time or '' }}"
-                       class="form-control form-control-sm ev-end-time" data-tid="{{ t.id }}"
-                       step="900" oninput="calcEvHoursEdit('{{ t.id }}')" onblur="roundToQuarter(this); calcEvHoursEdit('{{ t.id }}')">
-                {% else %}
-                <span class="text-muted small">--</span>
-                <input type="hidden" form="bulkEventForm" name="event_end_time_{{ t.id }}" value="">
-                {% endif %}
-              </td>
-              <td>
-                <input type="number" form="bulkEventForm" name="planned_hours_{{ t.id }}" id="ev-ph-{{ t.id }}"
-                       value="{{ t.planned_hours or 0 }}" min="0" step="0.5"
-                       class="form-control form-control-sm" style="width:60px">
-              </td>
               <td class="text-center">
-                <input type="checkbox" form="bulkEventForm" name="is_milestone_{{ t.id }}" class="form-check-input" value="1" {% if t.is_milestone %}checked{% endif %}>
+                <input type="checkbox" form="bulkEventForm" name="is_milestone_{{ t.id }}"
+                       class="form-check-input ev-ms-check" value="1"
+                       data-tid="{{ t.id }}"
+                       {% if t.is_milestone %}checked{% endif %}
+                       onchange="toggleEvMilestoneEdit(this, '{{ t.id }}')">
+                <input type="hidden" form="bulkEventForm" name="planned_hours_{{ t.id }}" id="ev-ph-{{ t.id }}"
+                       value="{{ t.planned_hours or 0 }}">
+              </td>
+              <td>
+                <input type="time" form="bulkEventForm" name="event_start_time_{{ t.id }}"
+                       value="{{ t.event_start_time or '' }}"
+                       class="form-control form-control-sm ev-start-time px-1" data-tid="{{ t.id }}"
+                       step="900"
+                       {% if t.is_milestone %}disabled{% endif %}
+                       oninput="calcEvHoursEdit('{{ t.id }}')"
+                       onblur="roundToQuarter(this); calcEvHoursEdit('{{ t.id }}')">
+              </td>
+              <td>
+                <input type="time" form="bulkEventForm" name="event_end_time_{{ t.id }}"
+                       value="{{ t.event_end_time or '' }}"
+                       class="form-control form-control-sm ev-end-time px-1" data-tid="{{ t.id }}"
+                       step="900"
+                       {% if t.is_milestone %}disabled{% endif %}
+                       oninput="calcEvHoursEdit('{{ t.id }}')"
+                       onblur="roundToQuarter(this); calcEvHoursEdit('{{ t.id }}')">
               </td>
               {% else %}
               <td class="small">{{ t.task_name }}{% if t.is_milestone %} <span class="badge bg-warning text-dark">MS</span>{% endif %}</td>
               <td class="small">{{ t.assigned_name or '' }}</td>
               <td class="small">{{ t.start_date }}</td>
-              <td class="small">{{ t.event_start_time or ('MS' if t.is_milestone else '--') }}</td>
+              <td class="text-center small">{% if t.is_milestone %}◆{% endif %}</td>
+              <td class="small">{{ t.event_start_time or ('--') }}</td>
               <td class="small">{{ t.event_end_time or ('--') }}</td>
-              <td class="small">{{ t.planned_hours or 0 }}h</td>
-              <td class="text-center">{% if t.is_milestone %}◆{% endif %}</td>
               {% endif %}
               {% if privileged %}
               <td class="text-center">
@@ -411,7 +498,9 @@
       {% if privileged %}
       </form>
       {% endif %}
-    </div>
+    </div>{# /イベントカード #}
+      </div>{# /col-md-6 右カラム #}
+    </div>{# /row 上段2カラム #}
 
     <div class="mt-2 small text-muted">
       <strong>状態：</strong>未着手＝0% / 着手＝10% / 順調 / 遅れ / 完了＝100% / 停止＝凍結
@@ -424,8 +513,11 @@
 
 {% block scripts %}
 <style>
-#taskTable td, #taskTable th { padding-left: 2px; padding-right: 2px; }
-#taskTable .form-control, #taskTable .form-select { padding-left: 3px; padding-right: 3px; }
+#taskTable td, #taskTable th { padding-left: 1px; padding-right: 1px; }
+#taskTable .form-control, #taskTable .form-select { padding-left: 2px; padding-right: 2px; }
+#eventTable td, #eventTable th { padding-left: 2px; padding-right: 2px; }
+#eventTable .form-control, #eventTable .form-select { padding-left: 3px; padding-right: 3px; }
+#eventTable .ev-start-time, #eventTable .ev-end-time { width: 100% !important; min-width: 0; font-size: 0.75rem; padding: 1px 2px; }
 </style>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
@@ -545,20 +637,33 @@ function calcEvHours() {
   if (disp) disp.value = h + 'h';
 }
 
-/* ── イベント追加フォーム: MSチェック→時刻・所要時間フィールド切替 ── */
+/* ── イベント追加フォーム: MSチェック→時刻入力をdisabled制御 ── */
 function toggleEvMilestone(cb) {
-  var startCol = document.getElementById('ev-time-start-col');
-  var endCol = document.getElementById('ev-time-end-col');
-  var hoursCol = document.getElementById('ev-hours-col');
+  var st = document.getElementById('ev-start-time');
+  var et = document.getElementById('ev-end-time');
   var ph = document.getElementById('ev-planned-hours');
-  var disp = document.getElementById('ev-hours-display');
-  var show = !cb.checked;
-  if (startCol) startCol.style.display = show ? '' : 'none';
-  if (endCol) endCol.style.display = show ? '' : 'none';
-  if (hoursCol) hoursCol.style.display = show ? '' : 'none';
-  if (!show) {
+  if (cb.checked) {
+    if (st) { st.disabled = true; st.value = ''; }
+    if (et) { et.disabled = true; et.value = ''; }
     if (ph) ph.value = 0;
-    if (disp) disp.value = '0h';
+  } else {
+    if (st) st.disabled = false;
+    if (et) et.disabled = false;
+  }
+}
+
+/* ── イベント一覧: MSチェック→時刻入力をdisabled制御 ── */
+function toggleEvMilestoneEdit(cb, tid) {
+  var st = document.querySelector('.ev-start-time[data-tid="' + tid + '"]');
+  var et = document.querySelector('.ev-end-time[data-tid="' + tid + '"]');
+  var ph = document.getElementById('ev-ph-' + tid);
+  if (cb.checked) {
+    if (st) { st.disabled = true; st.value = ''; }
+    if (et) { et.disabled = true; et.value = ''; }
+    if (ph) ph.value = 0;
+  } else {
+    if (st) st.disabled = false;
+    if (et) et.disabled = false;
   }
 }
 
@@ -590,6 +695,15 @@ function calcEvHoursEdit(tid) {
   var diff = (timeToMin(et.value) - timeToMin(st.value)) / 60;
   if (diff < 0) diff = 0;
   ph.value = Math.round(diff * 10) / 10;
+}
+
+/* 定例作業選択 → subcategory_name / default_hours を hidden に転写 */
+function fillRoutineSubcat(sel) {
+  var opt = sel.options[sel.selectedIndex];
+  var sc = document.getElementById('routineSubcat');
+  var hr = document.getElementById('routineHours');
+  if (sc) sc.value = opt ? (opt.dataset.subcat || '') : '';
+  if (hr) hr.value = opt ? (opt.dataset.hours || '0') : '0';
 }
 
 /* 削除チェックで行を赤くハイライト */

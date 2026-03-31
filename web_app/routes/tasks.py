@@ -57,10 +57,15 @@ def _resolve_target_user_id() -> int:
     login_user_id: int = int(session["user_id"])
     req_user_id = request.args.get("user_id", "") or request.form.get("target_user_id", "")
     req_user_id = req_user_id.strip()
-    if req_user_id and is_privileged(session.get("user_role", "")):
-        try:
-            target_user_id = int(req_user_id)
-        except ValueError:
+    if is_privileged(session.get("user_role", "")):
+        if req_user_id:
+            try:
+                target_user_id = int(req_user_id)
+            except ValueError:
+                return login_user_id
+        elif session.get("selected_user_id"):
+            target_user_id = int(session["selected_user_id"])
+        else:
             return login_user_id
         target = get_user_by_id(target_user_id)
         if target is None:
@@ -72,6 +77,7 @@ def _resolve_target_user_id() -> int:
         }
         if not can_access_user(login_user_dict, dict(target)):
             abort(403)
+        session["selected_user_id"] = target_user_id
         return target_user_id
     return login_user_id
 

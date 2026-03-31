@@ -290,22 +290,13 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <p class="small text-muted mb-2">選択したタスクをAMスロットに取り込み、イベントも自動配置します。</p>
-          <div style="max-height:300px; overflow-y:auto;">
-          {% if active_project_tasks %}
-          {% for pt in active_project_tasks %}
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" name="import_task_ids" value="{{ pt.id }}" id="import-pt-{{ pt.id }}">
-              <label class="form-check-label small" for="import-pt-{{ pt.id }}">
-                {{ pt.task_name }}
-                <span class="text-muted">（{{ pt.status }} {{ pt.progress }}%）</span>
-              </label>
-            </div>
-          {% endfor %}
-          {% else %}
-          <p class="text-muted small">取り込み可能なタスクがありません。イベントのみ配置されます。</p>
-          {% endif %}
-          </div>
+          <p class="small mb-1">以下の条件でタスクを自動取込します。</p>
+          <ul class="small text-muted mb-0">
+            <li>担当者（1または2）にログインユーザーが設定されているタスク</li>
+            <li>タスク期間が対象週と重なるもの（完了・停止除く）</li>
+            <li>AMとPMスロットに均等配分（定例行は除く）</li>
+            <li>イベントも対象週のものを自動配置</li>
+          </ul>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">キャンセル</button>

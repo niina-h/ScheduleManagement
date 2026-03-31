@@ -154,6 +154,16 @@ CREATE TABLE IF NOT EXISTS company_holiday (
     created_by INTEGER REFERENCES users(id),
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS routine_schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    task_name TEXT NOT NULL DEFAULT '',
+    subcategory_name TEXT DEFAULT '',
+    default_hours REAL DEFAULT 0.0,
+    row_number INTEGER NOT NULL,
+    UNIQUE(user_id, row_number)
+);
 """
 
 # users.json のパス
