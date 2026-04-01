@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>{{ subject }}</title>
+<style>
+  @page { size: A4; margin: 12mm 15mm; }
+  body {
+    font-family: "游ゴシック", "Yu Gothic", "メイリオ", sans-serif;
+    font-size: 10pt;
+    line-height: 1.5;
+    margin: 0; padding: 0;
+    color: #000;
+  }
+  .subject {
+    font-size: 12pt; font-weight: bold;
+    border-bottom: 2px solid #333;
+    padding-bottom: 4px; margin-bottom: 10px;
+  }
+  .body {
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-size: 10pt;
+    line-height: 1.5;
+    margin: 0;
+  }
+  @media screen {
+    body { max-width: 800px; margin: 20px auto; padding: 0 20px; }
+    .no-print { display: block; margin-bottom: 16px; text-align: center; }
+    .no-print button {
+      font-size: 14px; padding: 8px 24px; cursor: pointer;
+      background: #0d6efd; color: #fff; border: none; border-radius: 6px;
+    }
+    .no-print button:hover { background: #0b5ed7; }
+    .no-print a {
+      font-size: 14px; margin-left: 12px; color: #666; text-decoration: underline;
+    }
+  }
+  @media print {
+    .no-print { display: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()">印刷 / PDF保存</button>
+    <a href="javascript:window.close()">閉じる</a>
+  </div>
+  <div class="subject">{{ subject }}</div>
+  <pre class="body">{{ body }}</pre>
+</body>
+</html>

@@ -101,7 +101,11 @@ def task_list() -> str:
     routine_schedules = get_routine_schedules(login_id)
     # 作業登録から「定例作業」カテゴリの作業を取得
     all_task_master = get_task_master(login_id)
-    routine_task_options = [t for t in all_task_master if t.get("category_name") in ("定例", "定例作業")]
+    routine_task_options = [
+        t for t in all_task_master
+        if t.get("category_name") in ("定例", "定例作業")
+        or t.get("subcategory_name") in ("定例", "定例作業")
+    ]
     used_rows = {r["row_number"] for r in routine_schedules}
 
     return render_template(
@@ -427,10 +431,24 @@ def import_brabio() -> object:
         uploaded.save(tmp.name)
         file_path = tmp.name
     else:
-        # data/ ディレクトリのデフォルトファイル
-        base = pathlib.Path(__file__).resolve().parent.parent.parent / "data"
-        file_path = str(base / "ブラビオ商品開発業務.xlsx")
-        if not pathlib.Path(file_path).exists():
+        # data/ または reports/ ディレクトリのデフォルトファイルを検索
+        project_root = pathlib.Path(__file__).resolve().parent.parent.parent
+        candidates = [
+            project_root / "reports" / "商品開発業務.xlsx",
+            project_root / "data" / "ブラビオ商品開発業務.xlsx",
+        ]
+        # reports/ 内の .xlsx を追加検索
+        reports_dir = project_root / "reports"
+        if reports_dir.is_dir():
+            for f in reports_dir.glob("*.xlsx"):
+                if f not in candidates:
+                    candidates.append(f)
+        file_path = None
+        for cand in candidates:
+            if cand.exists():
+                file_path = str(cand)
+                break
+        if file_path is None:
             flash("インポートファイルが見つかりません", "warning")
             return redirect(url_for("project_tasks_bp.task_list"))
 
@@ -440,10 +458,15 @@ def import_brabio() -> object:
         updated_by=session.get("user_name", ""),
     )
 
-    msg = f"インポート完了: {result['imported']}件取込 / {result['skipped']}件スキップ（重複）"
+    parts = []
+    if result["imported"]:
+        parts.append(f"{result['imported']}件取込")
+    if result.get("updated"):
+        parts.append(f"{result['updated']}件更新")
+    msg = f"インポート完了: {' / '.join(parts) if parts else '変更なし'}"
     if result["errors"]:
         msg += f" / {len(result['errors'])}件エラー"
-    flash(msg, "success" if result["imported"] > 0 else "info")
+    flash(msg, "success" if (result["imported"] > 0 or result.get("updated", 0) > 0) else "info")
     return redirect(url_for("project_tasks_bp.task_list"))
 
 
@@ -831,6 +854,101 @@ def gantt_update_dates(task_id: int) -> tuple:
     return jsonify({"ok": True, "start_date": start_date, "end_date": end_date}), 200
 
 
+@project_tasks_bp.route("/gantt/update-fields/<int:task_id>", methods=["POST"])
+def gantt_update_fields(task_id: int) -> tuple:
+    """ガントチャートから状態・進捗・遅延日を更新するAPI。
+
+    管理職・マスタのみ使用可能。JSON形式で status / progress / delay_days を受け取る。
+
+    Args:
+        task_id: 更新対象のタスクID。
+
+    Returns:
+        tuple: (Response, status_code) JSON形式のレスポンス。
+    """
+    if not is_privileged(session.get("user_role", "")):
+        abort(403)
+
+    csrf = request.headers.get("X-CSRF-Token", "")
+    if csrf != session.get("csrf_token"):
+        abort(400)
+
+    existing = get_project_task_by_id(task_id)
+    if not existing:
+        abort(404)
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSONデータが必要です"}), 400
+
+    status: str = data.get("status", existing["status"])
+    if status not in PROJECT_TASK_STATUSES:
+        status = existing["status"]
+
+    try:
+        progress: int = max(0, min(int(data.get("progress", existing.get("progress", 0))), 100))
+    except (ValueError, TypeError):
+        progress = existing.get("progress", 0) or 0
+
+    try:
+        delay_days: int = max(0, int(data.get("delay_days", existing.get("delay_days", 0))))
+    except (ValueError, TypeError):
+        delay_days = existing.get("delay_days", 0) or 0
+
+    update_project_task(
+        task_id=task_id,
+        category_id=existing.get("category_id"),
+        subcategory_id=existing.get("subcategory_id"),
+        task_name=existing["task_name"],
+        description=existing.get("description", ""),
+        start_date=existing["start_date"],
+        end_date=existing["end_date"],
+        status=status,
+        progress=progress,
+        delay_days=delay_days,
+        updated_by=session.get("user_name", ""),
+        assigned_to=existing.get("assigned_to"),
+        assigned_to_2=existing.get("assigned_to_2"),
+        is_milestone=existing.get("is_milestone", 0),
+    )
+
+    return jsonify({
+        "ok": True, "status": status,
+        "progress": progress, "delay_days": delay_days,
+    }), 200
+
+
+@project_tasks_bp.route("/gantt/reorder", methods=["POST"])
+def gantt_reorder() -> tuple:
+    """ガントチャート上でタスクの表示順を入れ替えるAPI。
+
+    JSON: { "order": [id1, id2, ...] } — カテゴリ内の表示順を更新する。
+
+    Returns:
+        tuple: (Response, status_code)
+    """
+    if not is_privileged(session.get("user_role", "")):
+        abort(403)
+
+    csrf = request.headers.get("X-CSRF-Token", "")
+    if csrf != session.get("csrf_token"):
+        abort(400)
+
+    data = request.get_json(silent=True)
+    if not data or "order" not in data:
+        return jsonify({"error": "orderが必要です"}), 400
+
+    db = get_db()
+    order_list = data["order"]
+    for idx, task_id in enumerate(order_list):
+        db.execute(
+            "UPDATE project_task SET display_order = ? WHERE id = ?",
+            (idx, int(task_id)),
+        )
+    db.commit()
+    return jsonify({"ok": True}), 200
+
+
 @project_tasks_bp.route("/gantt")
 def gantt() -> str:
     """ガントチャート画面を表示する。
@@ -842,18 +960,26 @@ def gantt() -> str:
     """
     login_role = session.get("user_role", "")
     login_id = int(session["user_id"])
+    login_dept = session.get("user_dept", "")
     privileged = is_privileged(login_role)
 
-    if privileged:
+    # タスク一覧と同じスコープで取得
+    if login_role == "マスタ":
+        accessible = get_accessible_users(login_id, login_role, login_dept)
+        accessible_ids = [u["id"] for u in accessible]
+        tasks = get_all_project_tasks(user_ids=accessible_ids)
+    elif login_role == "管理職":
+        accessible = get_accessible_users(login_id, login_role, login_dept)
+        accessible_ids = [u["id"] for u in accessible]
+        tasks = get_all_project_tasks(user_ids=accessible_ids)
+    elif privileged:
         tasks = get_all_project_tasks()
     else:
         tasks = get_all_project_tasks(assigned_to=login_id)
 
-    # テンプレートに渡すJSON用データ（イベント・定例は除外）
+    # テンプレートに渡すJSON用データ
     gantt_data = []
     for t in tasks:
-        if t.get("is_event", 0):
-            continue
         # 担当者表示（姓のみ、2名対応）
         names = []
         ln1 = t.get("assigned_last_name") or t.get("assigned_name") or ""
@@ -862,17 +988,21 @@ def gantt() -> str:
             names.append(ln1)
         if ln2:
             names.append(ln2)
+        # イベントはマイルストーンとして表示
+        is_event = t.get("is_event", 0)
+        is_ms = t.get("is_milestone", 0) or is_event
         gantt_data.append({
             "id": t["id"],
             "name": t["task_name"],
             "assigned": "・".join(names),
-            "category": t.get("category_name") or "",
+            "category": (t.get("category_name") or "（イベント）") if is_event else (t.get("category_name") or ""),
             "subcategory": t.get("subcategory_name") or "",
             "start": t["start_date"],
             "end": t["end_date"],
             "progress": t.get("progress", 0),
             "status": t["status"],
-            "is_milestone": t.get("is_milestone", 0),
+            "delay_days": t.get("delay_days", 0) or 0,
+            "is_milestone": is_ms,
         })
 
     return render_template(

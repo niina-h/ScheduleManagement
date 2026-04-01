@@ -5,7 +5,7 @@
 {# ---- 日付ナビゲーション ---- #}
 <div class="week-nav mb-2">
   <a class="btn btn-outline-secondary btn-sm"
-     href="{{ url_for('daily_bp.daily_view', date_str=prev_date) }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user.id }}{% endif %}">
+     href="{{ url_for('daily_bp.daily_view', date_str=prev_date) }}{% if is_admin_view is defined and is_admin_view %}?user_id={{ target_user.id }}{% endif %}">
     ◀ 前日
   </a>
   <h5 class="mb-0">
@@ -15,7 +15,7 @@
     {% endif %}
   </h5>
   <a class="btn btn-outline-secondary btn-sm"
-     href="{{ url_for('daily_bp.daily_view', date_str=next_date) }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user.id }}{% endif %}">
+     href="{{ url_for('daily_bp.daily_view', date_str=next_date) }}{% if is_admin_view is defined and is_admin_view %}?user_id={{ target_user.id }}{% endif %}">
     次日 ▶
   </a>
   <a class="btn btn-outline-primary btn-sm ms-2"

@@ -85,6 +85,9 @@
       <div class="d-flex gap-2 mb-4">
         <a href="{{ mailto_url }}" class="btn btn-primary mailto-btn" data-body="{{ body | e }}">📨 Outlookで開く</a>
         <button type="button" class="btn btn-outline-secondary copy-btn" data-body="{{ body | e }}">📋 本文をコピー（テキスト）</button>
+        {% if prefix == 'master' %}
+        <a href="{{ url_for('mail_report_bp.print_master', date=date_str) }}" target="_blank" class="btn btn-outline-dark">🖨 印刷 / PDF</a>
+        {% endif %}
         {% if session.user_role == 'マスタ' %}
         <a href="{{ url_for('mail_report_bp.settings') }}" class="btn btn-outline-warning btn-sm ms-auto">⚙ メール設定</a>
         {% endif %}

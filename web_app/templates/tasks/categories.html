@@ -15,13 +15,15 @@
         <table class="table table-sm table-hover mb-0">
           <thead class="table-light">
             <tr>
+              <th style="width:36px"></th>
               <th>大区分名</th>
               <th class="text-end" style="width:80px">操作</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="catSortable">
             {% for cat in categories %}
-            <tr>
+            <tr data-id="{{ cat.id }}" style="cursor:grab">
+              <td class="align-middle text-muted px-1">☰</td>
               <td class="align-middle">{{ cat.name }}</td>
               <td class="text-end">
                 <form method="post"
@@ -85,13 +87,15 @@
                   <table class="table table-sm table-hover mb-2">
                     <thead class="table-light">
                       <tr>
+                        <th style="width:36px"></th>
                         <th>中区分名</th>
                         <th class="text-end" style="width:80px">操作</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody class="subSortable" data-cat-id="{{ cat.id }}">
                       {% for sub in sub_list %}
-                      <tr>
+                      <tr data-id="{{ sub.id }}" style="cursor:grab">
+                        <td class="align-middle text-muted px-1">☰</td>
                         <td class="align-middle">{{ sub.name }}</td>
                         <td class="text-end">
                           <form method="post"
@@ -161,4 +165,43 @@
   </div>
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  /* 大区分の並び替え */
+  var catEl = document.getElementById('catSortable');
+  if (catEl) {
+    Sortable.create(catEl, {
+      animation: 150,
+      handle: 'tr',
+      onEnd: function() {
+        var ids = Array.from(catEl.querySelectorAll('tr[data-id]')).map(function(r){ return +r.dataset.id; });
+        fetch('{{ url_for("tasks.category_reorder") }}', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({order: ids})
+        });
+      }
+    });
+  }
+  /* 中区分の並び替え */
+  document.querySelectorAll('.subSortable').forEach(function(el) {
+    Sortable.create(el, {
+      animation: 150,
+      handle: 'tr',
+      onEnd: function() {
+        var ids = Array.from(el.querySelectorAll('tr[data-id]')).map(function(r){ return +r.dataset.id; });
+        fetch('{{ url_for("tasks.subcategory_reorder") }}', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({order: ids})
+        });
+      }
+    });
+  });
+});
+</script>
 {% endblock %}

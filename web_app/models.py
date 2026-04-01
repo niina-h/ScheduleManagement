@@ -1667,6 +1667,36 @@ def delete_category(category_id: int) -> None:
     db.commit()
 
 
+def update_category_order(order_list: list[int]) -> None:
+    """大区分の表示順を一括更新する。
+
+    Args:
+        order_list: 大区分IDのリスト（表示順）
+    """
+    db = get_db()
+    for idx, cat_id in enumerate(order_list):
+        db.execute(
+            "UPDATE task_category SET display_order = ? WHERE id = ?",
+            (idx, cat_id),
+        )
+    db.commit()
+
+
+def update_subcategory_order(order_list: list[int]) -> None:
+    """中区分の表示順を一括更新する。
+
+    Args:
+        order_list: 中区分IDのリスト（表示順）
+    """
+    db = get_db()
+    for idx, sub_id in enumerate(order_list):
+        db.execute(
+            "UPDATE task_subcategory SET display_order = ? WHERE id = ?",
+            (idx, sub_id),
+        )
+    db.commit()
+
+
 def delete_subcategory(subcategory_id: int) -> None:
     """中区分を削除する。
 
@@ -2511,9 +2541,10 @@ def import_brabio_excel(
     ws = wb.worksheets[0]
     all_users = get_all_users()
 
-    # 既存タスク名の集合（重複チェック用）
+    # 既存タスク名→IDのマップ（重複時は更新用）
     existing_tasks = get_all_project_tasks()
-    existing_names: set[str] = {t["task_name"] for t in existing_tasks}
+    existing_name_to_id: dict[str, int] = {t["task_name"]: t["id"] for t in existing_tasks}
+    result["updated"] = 0
 
     # 大区分・中区分のキャッシュ
     categories = get_all_categories()
@@ -2529,6 +2560,32 @@ def import_brabio_excel(
     current_cat_id: int | None = None
     current_subcat_name: str = ""
     current_subcat_id: int | None = None
+
+    def _ensure_category(name: str) -> int | None:
+        """大区分をDBに登録し、IDを返す。既存なら既存IDを返す。"""
+        if name in cat_name_map:
+            return cat_name_map[name]
+        add_category(name)
+        refreshed = get_all_categories()
+        for c in refreshed:
+            if c["name"] == name:
+                cat_name_map[name] = c["id"]
+                return c["id"]
+        return None
+
+    def _ensure_subcategory(cat_id: int, name: str) -> int | None:
+        """中区分をDBに登録し、IDを返す。既存なら既存IDを返す。"""
+        if name in subcat_name_map:
+            return subcat_name_map[name]
+        if cat_id is None:
+            return None
+        add_subcategory(cat_id, name)
+        refreshed = get_all_subcategories()
+        for s in refreshed:
+            if s["name"] == name:
+                subcat_name_map[name] = s["id"]
+                return s["id"]
+        return None
 
     for r in range(5, ws.max_row + 1):
         row_type = str(ws.cell(r, 1).value or "").strip()
@@ -2561,12 +2618,12 @@ def import_brabio_excel(
         if row_type == "folder":
             if outline_level == 1:
                 current_cat_name = title
-                current_cat_id = cat_name_map.get(title)
+                current_cat_id = _ensure_category(title)
                 current_subcat_name = ""
                 current_subcat_id = None
             elif outline_level == 2:
                 current_subcat_name = title
-                current_subcat_id = subcat_name_map.get(title)
+                current_subcat_id = _ensure_subcategory(current_cat_id, title)
             continue
 
         # project 行 → スキップ
@@ -2579,11 +2636,6 @@ def import_brabio_excel(
 
         # 改行含むタイトルは最初の行のみ
         title = title.split("\n")[0].strip()
-
-        # 重複チェック
-        if title in existing_names:
-            result["skipped"] += 1
-            continue
 
         # ステータスマッピング
         status = _map_brabio_status(status_raw, progress)
@@ -2606,6 +2658,30 @@ def import_brabio_excel(
         if not end_date:
             end_date = start_date
 
+        # 既存タスク → 更新、新規 → 追加
+        if title in existing_name_to_id:
+            try:
+                update_project_task(
+                    task_id=existing_name_to_id[title],
+                    category_id=current_cat_id,
+                    subcategory_id=current_subcat_id,
+                    task_name=title,
+                    description="",
+                    start_date=start_date,
+                    end_date=end_date,
+                    status=status,
+                    progress=progress,
+                    delay_days=0,
+                    updated_by=updated_by,
+                    assigned_to=assigned_to,
+                    assigned_to_2=assigned_to_2,
+                    is_milestone=is_milestone,
+                )
+                result["updated"] += 1
+            except Exception as exc:
+                result["errors"].append(f"行{r}「{title}」更新エラー: {exc}")
+            continue
+
         try:
             add_project_task(
                 category_id=current_cat_id,
@@ -2622,9 +2698,9 @@ def import_brabio_excel(
                 assigned_to=assigned_to,
                 assigned_to_2=assigned_to_2,
                 is_milestone=is_milestone,
-                planned_hours=0.0,  # add_project_task 内で自動計算される
+                planned_hours=0.0,
             )
-            existing_names.add(title)
+            existing_name_to_id[title] = -1  # ダミーID（再重複防止）
             result["imported"] += 1
         except Exception as exc:
             result["errors"].append(f"行{r}「{title}」: {exc}")

@@ -26,6 +26,8 @@ from ..models import (
     add_subcategory,
     delete_category,
     delete_subcategory,
+    update_category_order,
+    update_subcategory_order,
 )
 from ..auth_helpers import is_privileged, can_access_user
 
@@ -434,3 +436,47 @@ def subcategory_delete(sub_id: int) -> str:
     delete_subcategory(sub_id)
     flash("中区分を削除しました", "success")
     return redirect(url_for("tasks.task_list"))
+
+
+@tasks_bp.route("/categories/reorder", methods=["POST"], endpoint="category_reorder")
+def category_reorder() -> object:
+    """大区分の表示順を更新する（Ajax対応）。
+
+    JSON body: {"order": [id, id, ...]}
+
+    Returns:
+        object: JSON レスポンスまたはリダイレクト
+    """
+    redir = _require_login()
+    if redir is not None:
+        return redir
+    _require_privileged()
+
+    data = request.get_json(silent=True)
+    if data and "order" in data:
+        order_list: list[int] = [int(x) for x in data["order"]]
+        update_category_order(order_list)
+        return jsonify({"ok": True})
+    abort(400)
+
+
+@tasks_bp.route("/subcategories/reorder", methods=["POST"], endpoint="subcategory_reorder")
+def subcategory_reorder() -> object:
+    """中区分の表示順を更新する（Ajax対応）。
+
+    JSON body: {"order": [id, id, ...]}
+
+    Returns:
+        object: JSON レスポンスまたはリダイレクト
+    """
+    redir = _require_login()
+    if redir is not None:
+        return redir
+    _require_privileged()
+
+    data = request.get_json(silent=True)
+    if data and "order" in data:
+        order_list: list[int] = [int(x) for x in data["order"]]
+        update_subcategory_order(order_list)
+        return jsonify({"ok": True})
+    abort(400)

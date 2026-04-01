@@ -738,6 +738,7 @@ def import_master_csv() -> Response:
     current_columns: list[str] = []
     imported_tables: list[str] = []
     error_tables: list[str] = []
+    valid_col_indices: list[int] = []
 
     for row_data in reader:
         if not row_data or all(c.strip() == "" for c in row_data):
@@ -748,22 +749,34 @@ def import_master_csv() -> Response:
         if first.startswith("[") and first.endswith("]"):
             current_table = first[1:-1]
             current_columns = []
+            valid_col_indices = []
             if current_table in _EXPORT_TABLES:
-                # テーブルの既存データを削除
-                try:
-                    db.execute(f"DELETE FROM {current_table}")
+                # UPSERT対象テーブル（DELETE せず既存行を更新、新規行を挿入）
+                _UPSERT_TABLES = {"users", "task_category", "task_subcategory", "project_task"}
+                if current_table in _UPSERT_TABLES:
                     imported_tables.append(_EXPORT_TABLES[current_table]["label"])
-                except Exception:
-                    logger.exception("テーブル %s のクリアに失敗", current_table)
-                    error_tables.append(current_table)
-                    current_table = None
+                else:
+                    try:
+                        db.execute(f"DELETE FROM {current_table}")
+                        imported_tables.append(_EXPORT_TABLES[current_table]["label"])
+                    except Exception:
+                        logger.exception("テーブル %s のクリアに失敗", current_table)
+                        error_tables.append(current_table)
+                        current_table = None
             else:
                 current_table = None
             continue
 
         # カラムヘッダー行
         if current_table and not current_columns:
-            current_columns = [c.strip() for c in row_data]
+            # 空列名を除外し、有効な列のインデックスを記録
+            raw_columns = [c.strip() for c in row_data]
+            current_columns = []
+            valid_col_indices = []
+            for i, c in enumerate(raw_columns):
+                if c:  # 空文字の列名はスキップ
+                    current_columns.append(c)
+                    valid_col_indices.append(i)
             continue
 
         # データ行
@@ -771,18 +784,20 @@ def import_master_csv() -> Response:
             tbl = _EXPORT_TABLES.get(current_table)
             if not tbl:
                 continue
-            # 列数チェック
-            if len(row_data) < len(current_columns):
-                row_data.extend([""] * (len(current_columns) - len(row_data)))
 
             # id列はAUTOINCREMENTなので除外してINSERT（idが空でないならそのまま使う）
             col_names = []
             col_values = []
-            for i, col in enumerate(current_columns):
-                val = row_data[i].strip() if i < len(row_data) else ""
+            for idx, col in zip(valid_col_indices, current_columns):
+                val = row_data[idx].strip() if idx < len(row_data) else ""
                 if col == "id" and val == "":
                     continue  # id空の場合は自動採番
                 col_names.append(col)
+                # 日付カラムのスラッシュ→ハイフン正規化 (2026/4/1 → 2026-04-01)
+                if val and col in ("start_date", "end_date"):
+                    _m = re.match(r"^(\d{4})/(\d{1,2})/(\d{1,2})$", val)
+                    if _m:
+                        val = f"{_m.group(1)}-{int(_m.group(2)):02d}-{int(_m.group(3)):02d}"
                 # 数値カラムの空文字をNULLに変換
                 if val == "" and col in ("id", "category_id", "subcategory_id",
                                           "display_order", "manager_id", "created_by",
@@ -795,12 +810,28 @@ def import_master_csv() -> Response:
             placeholders = ", ".join(["?"] * len(col_names))
             cols_str = ", ".join(col_names)
             try:
-                db.execute(
-                    f"INSERT INTO {current_table} ({cols_str}) VALUES ({placeholders})",
-                    col_values,
-                )
-            except Exception:
-                logger.exception("テーブル %s へのINSERTに失敗 (data=%s)", current_table, row_data)
+                _UPSERT_TABLES = {"users", "task_category", "task_subcategory", "project_task"}
+                if current_table in _UPSERT_TABLES and "id" in col_names:
+                    # UPSERT: CSVの列のみ更新、DB固有の列は保持
+                    update_cols = [c for c in col_names if c != "id"]
+                    update_set = ", ".join(f"{c}=excluded.{c}" for c in update_cols)
+                    db.execute(
+                        f"INSERT INTO {current_table} ({cols_str}) VALUES ({placeholders})"
+                        f" ON CONFLICT(id) DO UPDATE SET {update_set}",
+                        col_values,
+                    )
+                else:
+                    db.execute(
+                        f"INSERT INTO {current_table} ({cols_str}) VALUES ({placeholders})",
+                        col_values,
+                    )
+            except Exception as exc:
+                # UNIQUE制約エラーは名前重複のため警告レベルで記録
+                exc_msg = str(exc)
+                if "UNIQUE constraint" in exc_msg:
+                    logger.warning("テーブル %s: 名前重複のためスキップ (data=%s)", current_table, row_data[:4])
+                else:
+                    logger.exception("テーブル %s へのINSERTに失敗 (data=%s)", current_table, row_data)
 
     try:
         db.commit()

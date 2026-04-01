@@ -77,11 +77,10 @@ def _build_mgr_self_body(login_user: dict, target_date: date) -> tuple[str, str]
     dd = f"{target_date.day:02d}"
     subject = f"{mm}/{dd}業務報告"
 
-    # 振り返り・要点
+    # 振り返り・朝礼での気づき
     comment_row = get_daily_comment(uid, date_str)
     reflection = comment_row.get("reflection", "").strip() or "（未入力）"
     action = comment_row.get("action", "").strip() or "（未入力）"
-
     # 実施内容（本日の作業実績 - 同一作業名は時間を合算）
     result = get_daily_result(uid, date_str)
     work_totals: dict[str, float] = {}
@@ -257,26 +256,18 @@ def _build_master_body(
         """時間を整数 or 小数1桁で表示する。"""
         return str(int(h)) if h == int(h) else f"{h:.1f}"
 
-    # 日次実績の時間集計（中区分単位）: {subcategory_name: hours}
-    daily_subcat_hours: dict[str, float] = {}
-    # 計画外時間（中区分単位）
-    daily_subcat_unplanned: dict[str, float] = {}
+    # 当日実績のあったタスク名を収集（○判定用）
+    today_worked_tasks: set[str] = set()
     for md in member_data:
         for slot in ("am", "pm"):
             for item in md["result"].get(slot, []):
                 task = item.get("task_name", "").strip()
                 hours = float(item.get("hours", 0.0))
-                if not task or hours == 0.0:
-                    continue
-                cat_info = md["task_cat_map"].get(task, {})
-                subcat = cat_info.get("subcategory_name") or ""
-                daily_subcat_hours[subcat] = daily_subcat_hours.get(subcat, 0.0) + hours
-                if not int(item.get("is_carryover", 0)) and task not in md["scheduled_tasks"]:
-                    daily_subcat_unplanned[subcat] = daily_subcat_unplanned.get(subcat, 0.0) + hours
+                if task and hours > 0:
+                    today_worked_tasks.add(task)
 
-    # 業務内容セクション（project_task ベース）
+    # 業務内容セクション（project_task ベース、大区分・中区分でグループ化）
     project_tasks = get_all_project_tasks()
-    # 全大区分・中区分をマスタから取得
     all_cats = get_all_categories()
     all_subcats = get_all_subcategories()
     cat_id_name: dict[int, str] = {c["id"]: c["name"] for c in all_cats}
@@ -295,33 +286,36 @@ def _build_master_body(
         sname = pt.get("subcategory_name") or ""
         pt_by_subcat.setdefault((cname, sname), []).append(pt)
 
-    content_lines: list[str] = ["業務内容\t対応内容\t本日達成\t実入力\t計画外"]
+    content_lines: list[str] = ["業務内容\t対応内容\t本日達成"]
+
+    def _format_task_list(pts: list[dict]) -> tuple[str, str]:
+        """タスク一覧をカンマ区切り文字列と達成マークで返す。"""
+        names: list[str] = []
+        worked = False
+        for pt in pts:
+            tname = pt["task_name"]
+            if tname in today_worked_tasks:
+                names.append(f"○{tname}")
+                worked = True
+            else:
+                names.append(tname)
+        return "、".join(names), ("○" if worked else "")
+
     for cat_name in cat_subcats_ordered:
         content_lines.append(f"・{cat_name}")
-        for subcat_name in cat_subcats_ordered[cat_name]:
+        subcats = cat_subcats_ordered[cat_name]
+        for subcat_name in subcats:
             pts = pt_by_subcat.get((cat_name, subcat_name), [])
-            sub_h = daily_subcat_hours.get(subcat_name, 0.0)
-            sub_unp = daily_subcat_unplanned.get(subcat_name, 0.0)
             if pts:
-                # タスク名と対応内容を結合
-                descs: list[str] = []
-                for pt in pts:
-                    desc = pt.get("description", "").strip()
-                    if desc:
-                        descs.append(f"{pt['task_name']}　{desc}")
-                    else:
-                        descs.append(pt["task_name"])
-                tasks_str = "、".join(descs)
-                # 進捗率はproject_taskの最大値を表示
-                max_progress = max(pt["progress"] for pt in pts)
-                line = f"　　{subcat_name}　{tasks_str}　[{max_progress}%]"
-                if sub_h > 0:
-                    line += f"　{_fmt_h(sub_h)}"
-                if sub_unp > 0:
-                    line += f"　{_fmt_h(sub_unp)}"
-                content_lines.append(line)
+                tasks_str, achieved = _format_task_list(pts)
+                content_lines.append(f"　　{subcat_name}\t{tasks_str}\t{achieved}")
             else:
                 content_lines.append(f"　　{subcat_name}")
+        # 中区分なしで大区分直属のタスクがある場合
+        pts_no_sub = pt_by_subcat.get((cat_name, ""), [])
+        if pts_no_sub:
+            tasks_str, achieved = _format_task_list(pts_no_sub)
+            content_lines.append(f"　　（未分類）\t{tasks_str}\t{achieved}")
 
     # メンバー AM/PM サマリ（定例作業は除外、両方なしなら重複表示しない）
     member_lines: list[str] = []
@@ -351,8 +345,6 @@ def _build_master_body(
     # マスタ自身の振り返り・対策
     master_comment = get_daily_comment(login_id, date_str)
     reflection = master_comment.get("reflection", "").strip() or "（未入力）"
-    action = master_comment.get("action", "").strip() or "（未入力）"
-
     # ＜開発状況＞: AI開発関連タスク（同一人物・同一タスクは時間を合算）
     ai_totals: dict[tuple[str, str], float] = {}  # (name, task) -> hours
     ai_order: list[tuple[str, str]] = []
@@ -403,14 +395,11 @@ def _build_master_body(
     parts.extend([
         f"お疲れ様です。{dept}の業務報告となります。",
         "",
-        f"□予定：100%（作業計画：100%）\t\t{_fmt_h(total_planned_hours)}",
-        f"■実績：{jisseki_rate}%（計画：{plan_rate}%　突発：{sudden_rate}%　リスケ：{resc_rate}%）\t{_fmt_h(total_actual_hours)}\t{_fmt_h(sudden_hours)}",
+        "□予定：100%（作業計画：100%）",
+        f"■実績：{jisseki_rate}%（計画：{plan_rate}%　突発：{sudden_rate}%　リスケ：{resc_rate}%）",
         "\n".join(content_lines),
         "",
         "\n".join(member_lines),
-        "",
-        "＜朝礼での気づき＞",
-        action,
         "",
         "＜本日の振り返り＞",
         reflection,
@@ -631,6 +620,44 @@ def preview():
         master_body=master_body,
         master_mailto=master_mailto,
         csrf_token=session.get("csrf_token", ""),
+    )
+
+
+@mail_report_bp.route("/print-master")
+def print_master() -> object:
+    """マスタ用メール本文の印刷専用ページを返す。
+
+    A4 1ページに収まる最小限のHTMLを返し、ブラウザの印刷／PDF保存で使用する。
+
+    Returns:
+        str: 印刷用HTML
+    """
+    redir = _require_privileged()
+    if redir:
+        return redir
+
+    raw_date = request.args.get("date", "").strip()
+    try:
+        target_date = date.fromisoformat(raw_date)
+    except ValueError:
+        target_date = date.today()
+
+    login_user = get_user_by_id(int(session["user_id"]))
+    if not login_user:
+        abort(404)
+
+    dept = login_user.get("dept", "")
+    members = get_accessible_users(login_user["id"], login_user["role"], dept)
+    master_subject = _build_master_subject(dept, target_date)
+    master_greeting = get_mail_setting("マスタ").get("body_template", "")
+    master_body = _build_master_body(login_user, target_date, members, master_greeting)
+
+    escaped_body = html_mod.escape(master_body)
+
+    return render_template(
+        "mail_report_print.html",
+        subject=master_subject,
+        body=escaped_body,
     )
 
 
