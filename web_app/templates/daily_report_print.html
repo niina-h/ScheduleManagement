@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>日次業務報告（{{ date_str }}）{{ user.name }}</title>
+<style>
+  @page { size: A4; margin: 12mm 15mm; }
+  body {
+    font-family: "Meiryo";
+    font-size: 10pt;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0;
+    color: #000;
+  }
+  h1 {
+    font-size: 14pt;
+    text-align: center;
+    border-bottom: 2px solid #333;
+    padding-bottom: 4px;
+    margin: 0 0 10px 0;
+  }
+  h2 {
+    font-size: 11pt;
+    margin: 12px 0 4px 0;
+    padding: 2px 6px;
+    background: #f0f0f0;
+    border-left: 4px solid #333;
+  }
+  .meta { margin-bottom: 8px; }
+  .meta span { margin-right: 24px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9pt;
+    margin-bottom: 8px;
+  }
+  th, td {
+    border: 1px solid #999;
+    padding: 3px 6px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #e8e8e8;
+    font-weight: bold;
+    white-space: nowrap;
+  }
+  td.center { text-align: center; }
+  td.right { text-align: right; }
+  .status-riske { background: #FFF3CD; }
+  .status-carry { background: #D1ECF1; }
+  .status-done  { background: #D4EDDA; }
+  .comment-box {
+    min-height: 36px;
+    padding: 4px 6px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-size: 10pt;
+    line-height: 1.5;
+  }
+  .next-plan { font-size: 10pt; }
+  .next-plan span { margin-right: 8px; }
+</style>
+</head>
+<body>
+  <h1>日次業務報告（{{ date_str }}）</h1>
+
+  <div class="meta">
+    <span><b>報告者：</b>{{ user.name }}</span>
+    {% if member_names %}
+    <span><b>対象メンバー：</b>{{ member_names | join('、') }}</span>
+    {% endif %}
+  </div>
+  <div class="meta">
+    <span><b>勤務時間：</b>予定 [ {{ "%.1f" | format(plan_total) }} ] h ／ 実績 [ {{ "%.1f" | format(result_total) }} ] h</span>
+  </div>
+
+  <h2>業務予定と実績</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:12%">区分</th>
+        <th style="width:28%">予定タスク</th>
+        <th style="width:28%">実績タスク・内容</th>
+        <th style="width:10%">状態</th>
+        <th style="width:10%">勤務時間</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in entries %}
+      <tr class="{% if e.status == 'リスケ' %}status-riske{% elif e.status == '着手' %}status-carry{% elif e.status == '完了' %}status-done{% endif %}">
+        <td>{{ e.subcategory or '' }}</td>
+        <td>{{ e.planned_task or '' }}</td>
+        <td>{{ e.result_task or '' }}{% if e.defer_date %}<br><small>→{{ e.defer_date }}</small>{% endif %}</td>
+        <td class="center">{{ e.status }}</td>
+        <td class="right">{% if e.hours > 0 %}{{ "%.1f" | format(e.hours) }}h{% endif %}</td>
+      </tr>
+      {% endfor %}
+      {% if not entries %}
+      <tr><td colspan="5" class="center">（データなし）</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  <h2>本日の振り返り</h2>
+  <div class="comment-box">{{ reflection or '（未入力）' }}</div>
+
+  <h2>今後の対策・事前行動</h2>
+  <div class="comment-box">{{ action or '（未入力）' }}</div>
+
+  <h2>明日の作業予定</h2>
+  <div class="next-plan">
+    {% if next_am_tasks or next_pm_tasks %}
+    <b>AM：</b>{{ next_am_tasks | join('、') if next_am_tasks else '（なし）' }}<br>
+    <b>PM：</b>{{ next_pm_tasks | join('、') if next_pm_tasks else '（なし）' }}
+    {% else %}
+    （予定未入力）
+    {% endif %}
+  </div>
+</body>
+</html>

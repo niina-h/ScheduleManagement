@@ -231,12 +231,20 @@
 | `/admin/api/daily_status` | GET | — | 実績状況API（30秒ポーリング） |
 | `/admin/logs` | GET | admin_logs.html | 操作ログ |
 
-### 4-6. Excel出力
+### 4-6. Excel出力・日次業務報告
 | URL | メソッド | 画面 | 概要 |
 |-----|---------|------|------|
 | `/export/schedule` | GET | — | 週間予定Excel |
 | `/export/schedule_with_results` | GET | — | 予定+実績Excel |
 | `/export/import` | GET/POST | import_schedule.html | Excelインポート（マスタのみ） |
+| `/export/report/download` | GET | — | 日次業務報告Excel（テンプレート形式） |
+| `/export/report/print` | GET | daily_report_print.html / PDF | 日報PDF出力（Edge headless） |
+| `/export/report/team` | GET | — | チーム日次業務報告Excel（メンバー別シート） |
+
+**日次業務報告の出力形式**:
+- **Excel**: テンプレートファイル（`reports/tpl/日次業務報告_テンプレート.xlsx`）を元に生成。ファイル名は `日次業務報告_氏名_日付.xlsx`
+- **PDF**: Edge headlessモードで印刷用HTML→PDF変換。ファイル名は `日次業務報告_氏名_日付.pdf`。コマンドプロンプト非表示（`CREATE_NO_WINDOW`フラグ使用）
+- **チームExcel**: 管理職・マスタ用。担当メンバー分をシート別にまとめて出力。ファイル名は `日次業務報告_チーム_日付.xlsx`
 
 ### 4-7. 日報メール
 | URL | メソッド | 画面 | 概要 |
@@ -333,6 +341,15 @@
   ・計画値と実績値を並記
   ・突発（計画にない作業）にマーク付け
   ・AM/PM ごとのセット比較で判定
+```
+
+### 6-3b. 日次業務報告PDF出力フロー
+```
+日次実績 + コメント → Jinja2 → 印刷用HTML(daily_report_print.html)
+    → Edge headless (--print-to-pdf) → PDF生成 → ダウンロード
+  ・A4縦・余白10mm・ヘッダー/フッターなし
+  ・ファイル名: 日次業務報告_氏名_日付.pdf
+  ・Windows環境でCREATE_NO_WINDOWフラグによりコンソール非表示
 ```
 
 ### 6-4. 日報メールフロー

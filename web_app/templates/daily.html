@@ -490,7 +490,9 @@
     <button type="submit" class="btn btn-primary">💾 実績を保存</button>
     {% endif %}
     <a href="{{ url_for('export_bp.download_report', date=date_str) }}"
-       class="btn btn-outline-success">📥 日報 Excel ダウンロード</a>
+       class="btn btn-outline-success">📥 日報 Excel</a>
+    <a href="{{ url_for('export_bp.print_report', date=date_str) }}"
+       class="btn btn-outline-dark" id="pdf-download-btn">📄 日報 PDF</a>
     {% if session.user_role == '管理職' or session.user_role == 'マスタ' %}
     <a href="{{ url_for('export_bp.download_team_report', date=date_str) }}"
        class="btn btn-outline-info">📋 チーム日報 Excel</a>
@@ -953,4 +955,21 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
 })();
 </script>
 <script type="application/json" id="project-tasks-data">{{ project_tasks_json | safe }}</script>
+<script>
+// PDF ダウンロード: クリック後にローディング表示（ダウンロード自体はブラウザ標準動作）
+(function() {
+  var btn = document.getElementById('pdf-download-btn');
+  if (!btn) return;
+  var originalText = btn.innerHTML;
+  btn.addEventListener('click', function() {
+    // ブラウザ標準のリンク動作でダウンロード（preventDefaultしない）
+    btn.classList.add('disabled');
+    btn.innerHTML = '⏳ PDF生成中…';
+    setTimeout(function() {
+      btn.classList.remove('disabled');
+      btn.innerHTML = originalText;
+    }, 12000);
+  });
+})();
+</script>
 {% endblock %}

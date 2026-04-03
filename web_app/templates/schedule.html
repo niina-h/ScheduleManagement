@@ -82,6 +82,8 @@
   <input type="hidden" name="target_user_id" value="{{ target_user_id }}">
   {% endif %}
   <input type="hidden" id="std-hours" value="{{ user.std_hours if user and user.std_hours else 8.0 }}">
+  <input type="hidden" id="std-hours-am" value="{{ user.std_hours_am if user and user.std_hours_am else 3.875 }}">
+  <input type="hidden" id="std-hours-pm" value="{{ user.std_hours_pm if user and user.std_hours_pm else 3.875 }}">
   <input type="hidden" id="today-date" value="{{ today }}">
   <script id="task-map-data"     type="application/json">{{ task_map_json | safe }}</script>
   <script id="week-plan-data"    type="application/json">{{ schedule | tojson }}</script>
@@ -327,9 +329,12 @@
 
 {% block scripts %}
 <script>
-const STD_HOURS = parseFloat(document.getElementById('std-hours').value);
+const STD_HOURS    = parseFloat(document.getElementById('std-hours').value);
+const STD_HOURS_AM = parseFloat(document.getElementById('std-hours-am').value);
+const STD_HOURS_PM = parseFloat(document.getElementById('std-hours-pm').value);
 const TASK_MAP  = JSON.parse(document.getElementById('task-map-data').textContent);
 const TODAY     = document.getElementById('today-date').value;
+const PRIVILEGED = {{ 'true' if privileged else 'false' }};
 const WEEK_ADMIN_COMMENTS = {{ week_admin_comments | tojson }};
 
 function showAdminCommentModal(dayIdx, dateStr) {
@@ -354,14 +359,17 @@ try {
 
 let isDirty = false;
 
-// 過去日・当日の入力フィールドを無効化する（週間予定は当日以前編集不可）
+// 過去日・当日の入力フィールドを無効化する
+// マスタ・管理職は当日も編集可能
 document.querySelectorAll('.task-input, .hours-input').forEach(inp => {
     if (!inp.dataset.date) return;
     if (inp.dataset.date < TODAY) {
+        // 過去日: マスタ・管理職でも編集不可
         inp.disabled = true;
         inp.style.backgroundColor = '#f0f0f0';
         inp.title = '過去の日付は編集できません';
-    } else if (inp.dataset.date === TODAY) {
+    } else if (inp.dataset.date === TODAY && !PRIVILEGED) {
+        // 当日: 一般ユーザーのみ編集不可
         inp.disabled = true;
         inp.style.backgroundColor = '#ffffff';
         inp.title = '当日の予定は編集できません';
@@ -443,8 +451,8 @@ document.querySelectorAll('.task-input').forEach(inp => {
 function getEffectiveStdHours(day) {
     const sel = document.querySelector(`[name="leave_${day}"]`);
     const lt = sel ? sel.value : '';
-    if (lt === 'AM半休')  return Math.max(0, STD_HOURS - 3);
-    if (lt === 'PM半休')  return Math.max(0, STD_HOURS - 4.75);
+    if (lt === 'AM半休')  return STD_HOURS_PM;
+    if (lt === 'PM半休')  return STD_HOURS_AM;
     if (['1日有休', '祝日', '特休', 'その他休み'].includes(lt)) return 0;
     return STD_HOURS;
 }
@@ -498,11 +506,14 @@ function applyLeaveType(day, leaveType, markDirty = true) {
     [amInputs, pmInputs].forEach((inputs, idx) => {
         const shouldDisable = idx === 0 ? disableAm : disablePm;
         inputs.forEach(inp => {
-            // 過去日フィールドは元々 disabled なので上書きしない
-            if (!shouldDisable && inp.dataset.date && inp.dataset.date < TODAY) return;
-            inp.disabled = shouldDisable;
-            inp.style.backgroundColor = shouldDisable ? '#f0f0f0' : '';
-            inp.title = shouldDisable ? leaveType + 'のため編集不可' : (inp.dataset.date && inp.dataset.date < TODAY ? '過去の日付は編集できません' : '');
+            const d = inp.dataset.date;
+            const isPast = d && d < TODAY;
+            const isTodayNonPriv = d && d === TODAY && !PRIVILEGED;
+            // 過去日・当日(一般)フィールドは元々 disabled なので上書きしない
+            if (!shouldDisable && (isPast || isTodayNonPriv)) return;
+            inp.disabled = shouldDisable || isPast || isTodayNonPriv;
+            inp.style.backgroundColor = (shouldDisable || isPast || isTodayNonPriv) ? '#f0f0f0' : '';
+            inp.title = shouldDisable ? leaveType + 'のため編集不可' : (isPast ? '過去の日付は編集できません' : (isTodayNonPriv ? '当日の予定は編集できません' : ''));
         });
     });
     updateTotals(day);

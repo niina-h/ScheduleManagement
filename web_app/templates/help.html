@@ -105,6 +105,14 @@
       <ul>
         <li>「実績クリア」を押すと実績を予定の値に戻して保存します。予定通りの状態から再編集できます（振り返り・対策・上司コメントは保持されます）。</li>
       </ul>
+
+      <h6 class="mt-3">📄 日報PDF / 📥 日報Excel</h6>
+      <ul>
+        <li><strong>📄 日報 PDF</strong>：当日の日次業務報告をPDFファイルでダウンロードします。ファイル名は「日次業務報告_氏名_日付.pdf」です。</li>
+        <li><strong>📥 日報 Excel</strong>：当日の日次業務報告をテンプレート形式のExcelファイルでダウンロードします。ファイル名は「日次業務報告_氏名_日付.xlsx」です。</li>
+        <li>管理職・マスタは「👥 チーム日報Excel」で担当メンバー全員分の日報を1つのExcelファイル（メンバー別シート）でダウンロードできます。</li>
+      </ul>
+      <div class="alert alert-info py-2 small">💡 PDF生成にはMicrosoft Edgeが必要です。生成中はボタンが「⏳ PDF生成中…」に変わります。</div>
     </div></div>
   </div>
 
@@ -358,7 +366,17 @@
         </thead>
         <tbody>
           <tr>
-            <td><span class="badge bg-primary">1.8.0</span></td>
+            <td><span class="badge bg-primary">1.8.1</span></td>
+            <td>2026-04-03</td>
+            <td>
+              日報PDFのダウンロードファイル名をExcelと統一（「日次業務報告_氏名_日付.pdf」形式）<br>
+              PDF生成時のコマンドプロンプト表示を抑制<br>
+              PDFダウンロード中のローディング表示を追加<br>
+              ヘルプに日報PDF/Excel出力の操作手順を追加
+            </td>
+          </tr>
+          <tr>
+            <td><span class="badge bg-secondary">1.8.0</span></td>
             <td>2026-04-01</td>
             <td>
               ブラビオExcelインポートの改善（reports/ディレクトリ対応・カテゴリ自動作成・既存タスク更新）<br>

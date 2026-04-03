@@ -339,11 +339,23 @@ def update_user(
     if not last_name:
         last_name = name
     try:
+        # 既存のAM/PM比率を維持
+        row = db.execute(
+            "SELECT std_hours, std_hours_am, std_hours_pm FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if row and row["std_hours"] and row["std_hours"] > 0:
+            ratio_am = row["std_hours_am"] / row["std_hours"]
+            new_am = round(std_hours * ratio_am, 3)
+            new_pm = round(std_hours - new_am, 3)
+        else:
+            new_am = std_hours / 2
+            new_pm = std_hours / 2
         db.execute(
             "UPDATE users SET name = ?, role = ?, dept = ?, "
             "std_hours = ?, std_hours_am = ?, std_hours_pm = ?, "
             "last_name = ?, first_name = ? WHERE id = ?",
-            (name, role, dept, std_hours, std_hours / 2, std_hours / 2,
+            (name, role, dept, std_hours, new_am, new_pm,
              last_name, first_name, user_id),
         )
         db.commit()
@@ -372,16 +384,29 @@ def update_user_std_hours(
     """
     ユーザーの標準勤務時間を更新する。
 
-    std_hours_am / std_hours_pm は互換性のため std_hours / 2 で同時更新する。
+    既存のAM/PM比率を維持したまま合計を変更する。
+    AM/PMが未設定（両方0）の場合のみ均等割りにフォールバックする。
 
     Args:
         user_id: ユーザーID
         std_hours: 1日あたりの標準勤務時間
     """
     db = get_db()
+    row = db.execute(
+        "SELECT std_hours, std_hours_am, std_hours_pm FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if row and row["std_hours"] and row["std_hours"] > 0:
+        # 既存比率を維持
+        ratio_am = row["std_hours_am"] / row["std_hours"]
+        new_am = round(std_hours * ratio_am, 3)
+        new_pm = round(std_hours - new_am, 3)
+    else:
+        new_am = std_hours / 2
+        new_pm = std_hours / 2
     db.execute(
         "UPDATE users SET std_hours = ?, std_hours_am = ?, std_hours_pm = ? WHERE id = ?",
-        (std_hours, std_hours / 2, std_hours / 2, user_id),
+        (std_hours, new_am, new_pm, user_id),
     )
     db.commit()
 
@@ -671,8 +696,9 @@ def get_weekly_schedule_meta(user_id: int, week_start: str) -> dict | None:
 
 
 def copy_last_week_schedule(user_id: int, week_start: str) -> bool:
-    """
-    1週間前の週間予定をコピーする。
+    """1週間前の週間予定を空き枠にのみコピーする。
+
+    コピー先に既にデータがある枠（リスケ済みなど）は上書きしない。
 
     Args:
         user_id: ユーザーID
@@ -698,7 +724,23 @@ def copy_last_week_schedule(user_id: int, week_start: str) -> bool:
     if not has_data:
         return False
 
-    save_weekly_schedule(user_id, week_start, last_week_data)
+    # コピー先の既存データを取得し、データがある枠はスキップ
+    current_data = get_weekly_schedule(user_id, week_start)
+    merged_data: dict = {}
+    for day, slots in last_week_data.items():
+        merged_data[day] = {}
+        for slot, entries in slots.items():
+            merged_data[day][slot] = []
+            for idx, entry in enumerate(entries):
+                cur_entry = current_data[day][slot][idx]
+                if cur_entry["task_name"] or cur_entry.get("hours", 0.0) > 0.0:
+                    # コピー先に既存データあり → 既存データを維持
+                    merged_data[day][slot].append(cur_entry)
+                else:
+                    # 空き枠 → 前週データをコピー
+                    merged_data[day][slot].append(entry)
+
+    save_weekly_schedule(user_id, week_start, merged_data)
     return True
 
 

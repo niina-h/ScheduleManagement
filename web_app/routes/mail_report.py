@@ -256,7 +256,8 @@ def _build_master_body(
         """時間を整数 or 小数1桁で表示する。"""
         return str(int(h)) if h == int(h) else f"{h:.1f}"
 
-    # 当日実績のあったタスク名を収集（○判定用）
+    # 業務内容セクション（project_task の登録タスクを表示、実績があれば○）
+    # 全メンバーの当日実績タスク名を収集
     today_worked_tasks: set[str] = set()
     for md in member_data:
         for slot in ("am", "pm"):
@@ -266,56 +267,49 @@ def _build_master_body(
                 if task and hours > 0:
                     today_worked_tasks.add(task)
 
-    # 業務内容セクション（project_task ベース、大区分・中区分でグループ化）
-    project_tasks = get_all_project_tasks()
+    # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ）
+    member_ids = [m["id"] for m in members]
+    project_tasks = get_all_project_tasks(user_ids=member_ids)
     all_cats = get_all_categories()
     all_subcats = get_all_subcategories()
     cat_id_name: dict[int, str] = {c["id"]: c["name"] for c in all_cats}
+    cat_order: list[str] = [c["name"] for c in all_cats]
     cat_subcats_ordered: dict[str, list[str]] = {c["name"]: [] for c in all_cats}
-    subcat_id_name: dict[int, str] = {}
     for s in all_subcats:
         cname = cat_id_name.get(s["category_id"], "")
-        subcat_id_name[s["id"]] = s["name"]
         if cname and cname in cat_subcats_ordered:
             cat_subcats_ordered[cname].append(s["name"])
 
     # project_task を (cat_name, subcat_name) でグループ化
-    pt_by_subcat: dict[tuple[str, str], list[dict]] = {}
+    pt_by_subcat: dict[tuple[str, str], list[str]] = {}
     for pt in project_tasks:
         cname = pt.get("category_name") or "その他"
         sname = pt.get("subcategory_name") or ""
-        pt_by_subcat.setdefault((cname, sname), []).append(pt)
+        key = (cname, sname)
+        tname = pt["task_name"]
+        if key not in pt_by_subcat:
+            pt_by_subcat[key] = []
+        if tname not in pt_by_subcat[key]:
+            pt_by_subcat[key].append(tname)
 
-    content_lines: list[str] = ["業務内容\t対応内容\t本日達成"]
-
-    def _format_task_list(pts: list[dict]) -> tuple[str, str]:
-        """タスク一覧をカンマ区切り文字列と達成マークで返す。"""
-        names: list[str] = []
-        worked = False
-        for pt in pts:
-            tname = pt["task_name"]
-            if tname in today_worked_tasks:
-                names.append(f"○{tname}")
-                worked = True
-            else:
-                names.append(tname)
-        return "、".join(names), ("○" if worked else "")
-
-    for cat_name in cat_subcats_ordered:
+    content_lines: list[str] = ["業務内容\t対応内容\t達成"]
+    for cat_name in cat_order:
+        subcats = cat_subcats_ordered.get(cat_name, [])
+        # この大区分にタスクがあるかチェック
+        has_tasks = any(pt_by_subcat.get((cat_name, sn)) for sn in subcats)
+        if not has_tasks and not pt_by_subcat.get((cat_name, "")):
+            continue
         content_lines.append(f"・{cat_name}")
-        subcats = cat_subcats_ordered[cat_name]
-        for subcat_name in subcats:
-            pts = pt_by_subcat.get((cat_name, subcat_name), [])
-            if pts:
-                tasks_str, achieved = _format_task_list(pts)
-                content_lines.append(f"　　{subcat_name}\t{tasks_str}\t{achieved}")
-            else:
-                content_lines.append(f"　　{subcat_name}")
-        # 中区分なしで大区分直属のタスクがある場合
-        pts_no_sub = pt_by_subcat.get((cat_name, ""), [])
-        if pts_no_sub:
-            tasks_str, achieved = _format_task_list(pts_no_sub)
-            content_lines.append(f"　　（未分類）\t{tasks_str}\t{achieved}")
+        for sub_name in subcats:
+            tasks = pt_by_subcat.get((cat_name, sub_name), [])
+            if not tasks:
+                continue
+            achieved = "○" if any(t in today_worked_tasks for t in tasks) else ""
+            content_lines.append(f"　　{sub_name}\t{'、'.join(tasks)}\t{achieved}")
+        tasks_no_sub = pt_by_subcat.get((cat_name, ""), [])
+        if tasks_no_sub:
+            achieved = "○" if any(t in today_worked_tasks for t in tasks_no_sub) else ""
+            content_lines.append(f"　　（未分類）\t{'、'.join(tasks_no_sub)}\t{achieved}")
 
     # メンバー AM/PM サマリ（定例作業は除外、両方なしなら重複表示しない）
     member_lines: list[str] = []

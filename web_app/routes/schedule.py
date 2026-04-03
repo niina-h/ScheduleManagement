@@ -269,6 +269,7 @@ def weekly() -> Any:
         all_subcategories=all_subcategories,
         active_project_tasks=active_project_tasks,
         week_events=week_events,
+        privileged=is_privileged(session.get("user_role", "")),
     )
 
 
