@@ -4,121 +4,206 @@
 <meta charset="UTF-8">
 <title>日次業務報告（{{ date_str }}）{{ user.name }}</title>
 <style>
-  @page { size: A4; margin: 12mm 15mm; }
+  @page {
+    size: A4 portrait;
+    margin: 12mm 15mm;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: "Meiryo";
-    font-size: 10pt;
-    line-height: 1.6;
-    margin: 0;
-    padding: 0;
+    font-family: "Meiryo", "Yu Gothic", "Hiragino Kaku Gothic Pro", sans-serif;
+    font-size: 9pt;
+    line-height: 1.4;
     color: #000;
+    max-width: 210mm;
+    margin: 0 auto;
+    padding: 16px 24px;
   }
-  h1 {
-    font-size: 14pt;
+
+  /* ---- タイトル ---- */
+  .title {
+    background: #1F3864;
+    color: #fff;
     text-align: center;
-    border-bottom: 2px solid #333;
-    padding-bottom: 4px;
-    margin: 0 0 10px 0;
+    font-size: 15pt;
+    font-weight: bold;
+    padding: 6px 0;
+    margin-bottom: 6px;
   }
-  h2 {
-    font-size: 11pt;
-    margin: 12px 0 4px 0;
-    padding: 2px 6px;
-    background: #f0f0f0;
-    border-left: 4px solid #333;
+
+  /* ---- セクション見出し ---- */
+  .sec-head {
+    color: #1F3864;
+    font-size: 10pt;
+    font-weight: bold;
+    margin: 18px 0 6px 0;
   }
-  .meta { margin-bottom: 8px; }
-  .meta span { margin-right: 24px; }
-  table {
+
+  /* ---- 基本情報テーブル ---- */
+  .info-table {
     width: 100%;
     border-collapse: collapse;
+    margin-bottom: 4px;
     font-size: 9pt;
-    margin-bottom: 8px;
   }
-  th, td {
-    border: 1px solid #999;
-    padding: 3px 6px;
+  .info-table th {
+    background: #D6E4F0;
+    border: 1px solid #B4C6D9;
+    padding: 3px 8px;
     text-align: left;
-    vertical-align: top;
-  }
-  th {
-    background: #e8e8e8;
     font-weight: bold;
+    width: 15%;
     white-space: nowrap;
   }
-  td.center { text-align: center; }
-  td.right { text-align: right; }
-  .status-riske { background: #FFF3CD; }
-  .status-carry { background: #D1ECF1; }
-  .status-done  { background: #D4EDDA; }
-  .comment-box {
-    min-height: 36px;
-    padding: 4px 6px;
-    border: 1px solid #ccc;
-    border-radius: 3px;
+  .info-table td {
+    border: 1px solid #B4C6D9;
+    padding: 3px 8px;
+  }
+
+  /* ---- 業務テーブル ---- */
+  .task-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 4px;
+    font-size: 8pt;
+  }
+  .task-table thead th {
+    background: #1F3864;
+    color: #fff;
+    border: 1px solid #1F3864;
+    padding: 3px 6px;
+    font-weight: bold;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .task-table tbody td {
+    border: 1px solid #B4C6D9;
+    padding: 2px 6px;
+    vertical-align: top;
+  }
+  .task-table .c { text-align: center; }
+  .task-table .r { text-align: right; }
+  .task-table .total-label {
+    background: #D6E4F0;
+    font-weight: bold;
+    text-align: right;
+    padding-right: 8px;
+  }
+  .task-table .total-val { font-weight: bold; text-align: right; }
+  .bg-done  { background: #E2EFDA; }
+  .bg-carry { background: #BDD7EE; }
+  .bg-riske { background: #FFF3CD; }
+
+  /* ---- コメント欄 ---- */
+  .comment {
+    border: 1px solid #B4C6D9;
+    padding: 4px 8px;
+    min-height: 150px;
+    font-size: 9pt;
+    line-height: 1.4;
     white-space: pre-wrap;
     word-break: break-all;
-    font-size: 10pt;
-    line-height: 1.5;
+    margin-bottom: 2px;
   }
-  .next-plan { font-size: 10pt; }
-  .next-plan span { margin-right: 8px; }
+
+  /* ---- 翌日予定 ---- */
+  .next-plan { font-size: 9pt; margin-bottom: 2px; }
+
+  /* ---- 凡例 ---- */
+  .legend { font-size: 7pt; color: #666; margin-top: 6px; }
+
+  /* ---- 印刷ボタン ---- */
+  .print-bar {
+    text-align: center;
+    margin-bottom: 12px;
+    padding: 6px;
+    background: #f0f0f0;
+    border-radius: 4px;
+  }
+  .print-bar button {
+    font-size: 13px;
+    padding: 6px 28px;
+    margin: 0 6px;
+    cursor: pointer;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+  }
+  .btn-print { background: #1F3864; color: #fff; border-color: #1F3864; }
+  .btn-back  { background: #6c757d; color: #fff; border-color: #6c757d; }
+
+  @media print {
+    body { padding: 0; }
+    .print-bar { display: none; }
+  }
 </style>
 </head>
 <body>
-  <h1>日次業務報告（{{ date_str }}）</h1>
-
-  <div class="meta">
-    <span><b>報告者：</b>{{ user.name }}</span>
-    {% if member_names %}
-    <span><b>対象メンバー：</b>{{ member_names | join('、') }}</span>
-    {% endif %}
-  </div>
-  <div class="meta">
-    <span><b>勤務時間：</b>予定 [ {{ "%.1f" | format(plan_total) }} ] h ／ 実績 [ {{ "%.1f" | format(result_total) }} ] h</span>
+  <div class="print-bar">
+    <button class="btn-print" onclick="window.print()">🖨 印刷 / PDF保存</button>
+    <button class="btn-back" onclick="window.close(); return false;">← 閉じる</button>
   </div>
 
-  <h2>業務予定と実績</h2>
-  <table>
+  <div class="title">日次業務報告</div>
+
+  <div class="sec-head">■ 基本情報</div>
+  <table class="info-table">
+    <tr>
+      <th>報告日</th>
+      <td colspan="3">{{ date_str }}</td>
+    </tr>
+    <tr>
+      <th>報告者</th>
+      <td colspan="3">{{ user.name }}</td>
+    </tr>
+    <tr>
+      <th>総稼働時間</th>
+      <th style="text-align:center; width:10%">予定</th>
+      <td style="width:25%">{{ "%.2f"|format(plan_total) }}h</td>
+      <td><b>実績</b>&nbsp;&nbsp;{{ "%.2f"|format(result_total) }}h</td>
+    </tr>
+  </table>
+
+  <div class="sec-head">■ 業務予定と実績</div>
+  <table class="task-table">
     <thead>
       <tr>
-        <th style="width:12%">区分</th>
-        <th style="width:28%">予定タスク</th>
-        <th style="width:28%">実績タスク・内容</th>
-        <th style="width:10%">状態</th>
-        <th style="width:10%">勤務時間</th>
+        <th style="width:35%">予定タスク</th>
+        <th style="width:35%">実績タスク・結果</th>
+        <th style="width:12%">状態</th>
+        <th style="width:10%">時間</th>
       </tr>
     </thead>
     <tbody>
       {% for e in entries %}
-      <tr class="{% if e.status == 'リスケ' %}status-riske{% elif e.status == '着手' %}status-carry{% elif e.status == '完了' %}status-done{% endif %}">
-        <td>{{ e.subcategory or '' }}</td>
-        <td>{{ e.planned_task or '' }}</td>
-        <td>{{ e.result_task or '' }}{% if e.defer_date %}<br><small>→{{ e.defer_date }}</small>{% endif %}</td>
-        <td class="center">{{ e.status }}</td>
-        <td class="right">{% if e.hours > 0 %}{{ "%.1f" | format(e.hours) }}h{% endif %}</td>
+      <tr class="{% if e.status == '完了' %}bg-done{% elif e.status == '着手' %}bg-carry{% elif e.status == 'リスケ' %}bg-riske{% endif %}">
+        <td>{{ e.plan }}</td>
+        <td>{{ e.result }}</td>
+        <td class="c">{{ e.status }}</td>
+        <td class="r">{% if e.hours > 0 %}{{ "%.1f"|format(e.hours) }}{% endif %}</td>
       </tr>
       {% endfor %}
       {% if not entries %}
-      <tr><td colspan="5" class="center">（データなし）</td></tr>
+      <tr><td colspan="4" class="c">（データなし）</td></tr>
       {% endif %}
+      <tr>
+        <td colspan="2"></td>
+        <td class="total-label">合計</td>
+        <td class="total-val">{{ "%.2f"|format(result_total) }}h</td>
+      </tr>
     </tbody>
   </table>
 
-  <h2>本日の振り返り</h2>
-  <div class="comment-box">{{ reflection or '（未入力）' }}</div>
+  <div class="sec-head">■ 本日の振り返り</div>
+  <div class="comment">{{ reflection or '（未入力）' }}</div>
 
-  <h2>今後の対策・事前行動</h2>
-  <div class="comment-box">{{ action or '（未入力）' }}</div>
+  <div class="sec-head">■ 今後の対策・懸念事項</div>
+  <div class="comment">{{ action or '（未入力）' }}</div>
 
-  <h2>明日の作業予定</h2>
+  <div class="sec-head">■ 翌日の作業予定</div>
   <div class="next-plan">
-    {% if next_am_tasks or next_pm_tasks %}
     <b>AM：</b>{{ next_am_tasks | join('、') if next_am_tasks else '（なし）' }}<br>
     <b>PM：</b>{{ next_pm_tasks | join('、') if next_pm_tasks else '（なし）' }}
-    {% else %}
-    （予定未入力）
-    {% endif %}
   </div>
+
+  <div class="legend">【状態凡例】　完了 = 完了タスク　／　リスケ = 翌日以降に再スケジュール　／　繰越 = 着手済みで翌日継続</div>
 </body>
 </html>

@@ -238,21 +238,26 @@
 | `/export/schedule_with_results` | GET | — | 予定+実績Excel |
 | `/export/import` | GET/POST | import_schedule.html | Excelインポート（マスタのみ） |
 | `/export/report/download` | GET | — | 日次業務報告Excel（テンプレート形式） |
-| `/export/report/print` | GET | daily_report_print.html / PDF | 日報PDF出力（Edge headless） |
+| `/export/report/print` | GET | daily_report_print.html | 日報印刷用HTML表示（ブラウザ印刷でPDF保存） |
 | `/export/report/team` | GET | — | チーム日次業務報告Excel（メンバー別シート） |
 
 **日次業務報告の出力形式**:
-- **Excel**: テンプレートファイル（`reports/tpl/日次業務報告_テンプレート.xlsx`）を元に生成。ファイル名は `日次業務報告_氏名_日付.xlsx`
-- **PDF**: Edge headlessモードで印刷用HTML→PDF変換。ファイル名は `日次業務報告_氏名_日付.pdf`。コマンドプロンプト非表示（`CREATE_NO_WINDOW`フラグ使用）
+- **Excel**: テンプレートファイル（`reports/tpl/日次業務報告_テンプレート.xlsx`）を元に生成。ファイル名は `日次業務報告_氏名_日付.xlsx`。区分列なし・1ページ印刷固定・翌日予定カンマ区切り
+- **PDF（ブラウザ印刷）**: Excelテンプレート準拠のHTMLを表示し、ブラウザの印刷機能でPDF保存。外部ライブラリ不要
 - **チームExcel**: 管理職・マスタ用。担当メンバー分をシート別にまとめて出力。ファイル名は `日次業務報告_チーム_日付.xlsx`
 
 ### 4-7. 日報メール
 | URL | メソッド | 画面 | 概要 |
 |-----|---------|------|------|
-| `/mail-report/preview` | GET | mail_report_preview.html | メールプレビュー |
-| `/mail-report/save-address` | POST | — | 宛先保存 |
+| `/mail-report/preview` | GET | mail_report_preview.html | 管理職・マスタ用メールプレビュー |
+| `/mail-report/save-address` | POST | — | 管理職・マスタ用宛先保存 |
+| `/mail-report/save-friday-report` | POST | — | 金曜日管理業務報告テキスト保存 |
 | `/mail-report/download_eml` | GET | — | EMLダウンロード |
-| `/mail-report/settings` | GET/POST | mail_report_settings.html | メール設定 |
+| `/mail-report/user-preview` | GET | mail_user_preview.html | ユーザー用日報メールプレビュー |
+| `/mail-report/save-user-address` | POST | — | ユーザー用宛先保存 |
+| `/mail-report/save-user-body` | POST | — | ユーザー用本文テンプレート保存 |
+| `/mail-report/download-user-eml` | GET | — | ユーザー用EMLダウンロード |
+| `/mail-report/settings` | GET/POST | mail_report_settings.html | メール設定（マスタのみ） |
 
 ### 4-8. ヘルプ
 | URL | メソッド | 画面 | 概要 |
@@ -343,13 +348,14 @@
   ・AM/PM ごとのセット比較で判定
 ```
 
-### 6-3b. 日次業務報告PDF出力フロー
+### 6-3b. 日次業務報告PDF出力フロー（ブラウザ印刷方式）
 ```
 日次実績 + コメント → Jinja2 → 印刷用HTML(daily_report_print.html)
-    → Edge headless (--print-to-pdf) → PDF生成 → ダウンロード
-  ・A4縦・余白10mm・ヘッダー/フッターなし
-  ・ファイル名: 日次業務報告_氏名_日付.pdf
-  ・Windows環境でCREATE_NO_WINDOWフラグによりコンソール非表示
+    → ブラウザ新タブで表示 → ユーザーが「印刷/PDF保存」ボタン押下
+    → ブラウザの印刷ダイアログで「PDFに保存」を選択
+  ・Excelテンプレート準拠のデザイン（紺ヘッダー・背景色・罫線）
+  ・外部ライブラリ不要（サーバー側はHTMLを返すのみ）
+  ・@media print で操作ボタンを非表示
 ```
 
 ### 6-4. 日報メールフロー

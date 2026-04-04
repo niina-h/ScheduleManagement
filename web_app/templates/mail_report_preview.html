@@ -64,6 +64,29 @@
     </div>
     {% endfor %}
 
+    {# ── 金曜日: 管理業務のご報告（マスタタブのみ） ── #}
+    {% if is_friday is defined and is_friday %}
+    <div class="address-block" id="friday-report-block"
+         style="{% if login_role != 'マスタ' %}display:none;{% endif %}">
+      <div class="card shadow-sm mb-3 border-warning">
+        <div class="card-header bg-warning bg-opacity-25 fw-semibold">📝 管理業務のご報告（金曜日用）</div>
+        <div class="card-body py-2">
+          <form method="post" action="{{ url_for('mail_report_bp.save_friday_report') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="date_str" value="{{ date_str }}">
+            <textarea class="form-control form-control-sm mb-2" name="friday_report" rows="10"
+                      style="font-size:0.85rem; white-space:pre-wrap;"
+                      placeholder="【管理業務のご報告】&#10;　今週の管理業務を以下の通り行い…">{{ friday_report if friday_report is defined else '' }}</textarea>
+            <div class="d-flex justify-content-between align-items-center">
+              <small class="text-muted">挨拶文の直後に挿入されます。保存後にプレビューに反映。</small>
+              <button type="submit" class="btn btn-outline-warning btn-sm">💾 保存して反映</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     {# ── メール内容プレビュー（タブ別） ── #}
     {% for prefix, subject, body, mailto_url in [
         ('mgr',    mgr_subject,    mgr_body,    mgr_mailto),
@@ -118,6 +141,11 @@
         document.getElementById('panel-' + t).style.display   = (t === tab) ? '' : 'none';
         document.getElementById('addr-' + t).style.display    = (t === tab) ? '' : 'none';
       });
+      // 金曜報告ブロック（マスタタブのみ表示）
+      var fridayBlock = document.getElementById('friday-report-block');
+      if (fridayBlock) {
+        fridayBlock.style.display = (tab === 'master') ? '' : 'none';
+      }
     }
 
     // 初期タブ

@@ -569,6 +569,10 @@ function setViewMode(mode) {
           if (rc && (rc.task_name || rc.defer_date || rc.hours > 0)) {
             taskVal  = rc.task_name || planTask;
             hoursVal = rc.hours > 0 ? rc.hours : '';
+          } else {
+            // 実績モードで日に実績がある場合、実績未入力のスロットは空にする
+            taskVal  = '';
+            hoursVal = '';
           }
         }
 

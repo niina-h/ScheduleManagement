@@ -134,6 +134,114 @@ def _build_mgr_self_body(login_user: dict, target_date: date) -> tuple[str, str]
     return subject, body
 
 
+def _build_friday_report_default(login_user: dict, target_date: date) -> str:
+    """金曜日用「管理業務のご報告」のデフォルトテキストを生成する。
+
+    マスタ権限ユーザーの月〜金の実績を大区分ごとに集計し、
+    (管理)(週間)(随時) の3カテゴリに分類して表示する。
+
+    Args:
+        login_user: ログインユーザー情報。
+        target_date: 対象日（金曜日）。
+
+    Returns:
+        str: デフォルトの管理業務報告テキスト。
+    """
+    uid: int = login_user["id"]
+    # 月〜金の日付を算出
+    dow = target_date.weekday()  # 金曜=4
+    monday = target_date - timedelta(days=dow)
+    week_dates = [(monday + timedelta(days=d)).isoformat() for d in range(5)]
+
+    # タスク→大区分マップ
+    global_cat_map = get_global_task_category_map()
+    task_master_list = get_task_master(uid)
+    task_cat_map: dict[str, dict] = dict(global_cat_map)
+    task_cat_map.update({
+        t["task_name"]: {
+            "category_name": t.get("category_name") or "",
+            "subcategory_name": t.get("subcategory_name") or "",
+        }
+        for t in task_master_list if t.get("task_name")
+    })
+
+    # 大区分グループ別の累計時間を集計
+    kanri_hours: float = 0.0   # 管理 + 事務
+    weekly_hours: float = 0.0  # 開発 + ITインフラ
+    zuiji_hours: float = 0.0   # サポート
+    total_hours: float = 0.0
+
+    for d_str in week_dates:
+        result = get_daily_result(uid, d_str)
+        for slot in ("am", "pm"):
+            for item in result.get(slot, []):
+                task = item.get("task_name", "").strip()
+                hours = float(item.get("hours", 0.0))
+                if not task or hours <= 0:
+                    continue
+                total_hours += hours
+                cat = task_cat_map.get(task, {}).get("category_name", "")
+                if cat in ("管理", "事務", "定例"):
+                    kanri_hours += hours
+                elif cat in ("開発", "ITインフラ"):
+                    weekly_hours += hours
+                elif cat in ("サポート",):
+                    zuiji_hours += hours
+                else:
+                    kanri_hours += hours  # 未分類は管理に含む
+
+    lines: list[str] = [
+        "【管理業務のご報告】",
+        "",
+        "",
+        "",
+        "",
+        "",
+        f"　(管理）教育・進捗・事務　　　{kanri_hours:g}ｈ",
+        f"　(週間）開発・AI・インフラ対応　{weekly_hours:g}ｈ",
+        f"　(随時）問合せ対応　　　　　　　{zuiji_hours:g}ｈ",
+    ]
+    return "\n".join(lines)
+
+
+def _get_friday_report(login_user: dict | None = None, target_date: date | None = None) -> str:
+    """金曜日用「管理業務のご報告」テキストを取得する。
+
+    保存済みテキストがあればそれを返し、なければデフォルトを生成する。
+
+    Args:
+        login_user: ログインユーザー情報（デフォルト生成用）。
+        target_date: 対象日（デフォルト生成用）。
+
+    Returns:
+        str: 管理業務報告テキスト。
+    """
+    setting = get_mail_setting("マスタ_週次管理報告")
+    saved = setting.get("body_template", "").strip()
+    if saved:
+        return saved
+    if login_user and target_date:
+        return _build_friday_report_default(login_user, target_date)
+    return ""
+
+
+def _save_friday_report(text: str) -> None:
+    """金曜日用「管理業務のご報告」テキストを保存する。
+
+    Args:
+        text: 管理業務報告テキスト。
+    """
+    current = get_mail_setting("マスタ_週次管理報告")
+    save_mail_setting(
+        role="マスタ_週次管理報告",
+        to_address=current.get("to_address", ""),
+        cc_address=current.get("cc_address", ""),
+        subject_template=current.get("subject_template", ""),
+        body_template=text,
+        bcc_address=current.get("bcc_address", ""),
+    )
+
+
 def _build_master_subject(dept: str, target_date: date) -> str:
     """マスタ用メール件名を生成する（金曜は「管理・」付き）。
 
@@ -154,18 +262,21 @@ def _build_master_subject(dept: str, target_date: date) -> str:
 
 
 def _build_master_body(
-    login_user: dict, target_date: date, members: list[dict], greeting: str
+    login_user: dict, target_date: date, members: list[dict], greeting: str,
+    friday_report: str = "",
 ) -> str:
     """マスタ用メール本文を動的生成する。
 
     大区分・中区分でグループ化した作業実績と、メンバー別AM/PMサマリ、
     振り返り、AI開発状況、次回予定を含む。
+    金曜日の場合は「管理業務のご報告」セクションを挨拶文の直後に挿入する。
 
     Args:
         login_user: ログインユーザー情報
         target_date: 対象日
         members: アクセス可能なメンバー一覧
         greeting: 宛先挨拶文（設定から取得）
+        friday_report: 金曜日用「管理業務のご報告」テキスト（空なら挿入しない）
 
     Returns:
         str: メール本文
@@ -386,9 +497,15 @@ def _build_master_body(
     if greeting.strip():
         parts.append(greeting.strip())
         parts.append("")
+    parts.append(f"お疲れ様です。{dept}の業務報告となります。")
+    parts.append("")
+
+    # 金曜日: 管理業務のご報告を挿入
+    if target_date.weekday() == 4 and friday_report.strip():
+        parts.append(friday_report.strip())
+        parts.append("")
+
     parts.extend([
-        f"お疲れ様です。{dept}の業務報告となります。",
-        "",
         "□予定：100%（作業計画：100%）",
         f"■実績：{jisseki_rate}%（計画：{plan_rate}%　突発：{sudden_rate}%　リスケ：{resc_rate}%）",
         "\n".join(content_lines),
@@ -545,7 +662,7 @@ def download_eml():
         members = get_accessible_users(login_user["id"], login_user["role"], dept)
         subject = _build_master_subject(dept, target_date)
         greeting = setting.get("body_template", "")
-        body = _build_master_body(login_user, target_date, members, greeting)
+        body = _build_master_body(login_user, target_date, members, greeting, _get_friday_report(login_user, target_date))
     else:
         setting = get_mail_setting("管理職")
         subject, body = _build_mgr_self_body(login_user, target_date)
@@ -596,8 +713,12 @@ def preview():
     members = get_accessible_users(login_user["id"], login_user["role"], dept)
     master_subject = _build_master_subject(dept, target_date)
     master_greeting = master_setting.get("body_template", "")
-    master_body = _build_master_body(login_user, target_date, members, master_greeting)
+    master_body = _build_master_body(login_user, target_date, members, master_greeting, _get_friday_report(login_user, target_date))
     master_mailto = _build_mailto(master_setting, master_subject)
+
+    # 金曜日判定・管理業務報告テキスト
+    is_friday: bool = target_date.weekday() == 4
+    friday_report: str = _get_friday_report(login_user, target_date) if is_friday else ""
 
     return render_template(
         "mail_report_preview.html",
@@ -614,6 +735,8 @@ def preview():
         master_body=master_body,
         master_mailto=master_mailto,
         csrf_token=session.get("csrf_token", ""),
+        is_friday=is_friday,
+        friday_report=friday_report,
     )
 
 
@@ -644,7 +767,7 @@ def print_master() -> object:
     members = get_accessible_users(login_user["id"], login_user["role"], dept)
     master_subject = _build_master_subject(dept, target_date)
     master_greeting = get_mail_setting("マスタ").get("body_template", "")
-    master_body = _build_master_body(login_user, target_date, members, master_greeting)
+    master_body = _build_master_body(login_user, target_date, members, master_greeting, _get_friday_report(login_user, target_date))
 
     escaped_body = html_mod.escape(master_body)
 
@@ -687,6 +810,24 @@ def save_address() -> object:
     return redirect(url_for("mail_report_bp.preview", date=date_str))
 
 
+@mail_report_bp.route("/save-friday-report", methods=["POST"])
+def save_friday_report() -> object:
+    """金曜日用「管理業務のご報告」テキストを保存する。
+
+    Returns:
+        object: プレビュー画面へのリダイレクト。
+    """
+    redir = _require_privileged()
+    if redir:
+        return redir
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    _save_friday_report(request.form.get("friday_report", ""))
+    date_str = request.form.get("date_str", "")
+    return redirect(url_for("mail_report_bp.preview", date=date_str))
+
+
 @mail_report_bp.route("/settings", methods=["GET", "POST"])
 def settings():
     """メール設定画面（マスタのみ）。"""
@@ -722,4 +863,193 @@ def settings():
         mgr_setting=mgr_setting,
         master_setting=master_setting,
         csrf_token=session.get("csrf_token", ""),
+    )
+
+
+# ====================================================================
+# ユーザー用 日報メール
+# ====================================================================
+
+_USER_DEFAULT_BODY = (
+    "お疲れ様です。\n"
+    "\n"
+    "本日の作業内容について、作業報告書を送付いたします。\n"
+    "\n"
+    "よろしくお願いいたします。\n"
+)
+
+
+def _build_user_subject(user: dict, target_date: date) -> str:
+    """ユーザー用メール件名を生成する。
+
+    Args:
+        user: ユーザー情報辞書（'last_name' を含む）。
+        target_date: 対象日。
+
+    Returns:
+        str: 件名文字列。
+    """
+    WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
+    dow = WEEKDAY_JA[target_date.weekday()]
+    last_name = user.get("last_name", "") or user.get("name", "")
+    return f'日次作業報告「{last_name}」：{target_date.year}/{target_date.month:02d}/{target_date.day:02d}（{dow}）'
+
+
+def _get_user_mail_setting(user_id: int) -> dict:
+    """ユーザー個別のメール設定を取得する。
+
+    Args:
+        user_id: ユーザーID。
+
+    Returns:
+        dict: メール設定辞書。
+    """
+    return get_mail_setting(f"ユーザー_{user_id}")
+
+
+def _get_user_body_template(user_id: int) -> str:
+    """ユーザー個別の本文テンプレートを取得する。
+
+    Args:
+        user_id: ユーザーID。
+
+    Returns:
+        str: 本文テンプレート文字列。
+    """
+    setting = _get_user_mail_setting(user_id)
+    body = setting.get("body_template", "").strip()
+    return body if body else _USER_DEFAULT_BODY
+
+
+@mail_report_bp.route("/user-preview")
+def user_preview():
+    """ユーザー用日報メールのプレビュー画面。
+
+    Returns:
+        str: プレビューHTML
+    """
+    if not session.get("user_id"):
+        return redirect(url_for("auth.login"))
+
+    raw_date = request.args.get("date", "").strip()
+    try:
+        target_date = date.fromisoformat(raw_date)
+        date_str = target_date.isoformat()
+    except ValueError:
+        target_date = date.today()
+        date_str = target_date.isoformat()
+
+    WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
+    day_of_week = WEEKDAY_JA[target_date.weekday()]
+    date_display = f"{target_date.year}/{target_date.month:02d}/{target_date.day:02d}"
+
+    login_user = get_user_by_id(int(session["user_id"]))
+    if not login_user:
+        abort(404)
+
+    uid = login_user["id"]
+    setting = _get_user_mail_setting(uid)
+    subject = _build_user_subject(login_user, target_date)
+    body = _get_user_body_template(uid)
+    mailto_url = _build_mailto(setting, subject)
+
+    return render_template(
+        "mail_user_preview.html",
+        date_str=date_str,
+        date_display=date_display,
+        day_of_week=day_of_week,
+        setting=setting,
+        subject=subject,
+        body=body,
+        mailto_url=mailto_url,
+        csrf_token=session.get("csrf_token", ""),
+    )
+
+
+@mail_report_bp.route("/save-user-address", methods=["POST"])
+def save_user_address() -> object:
+    """ユーザー用メールの宛先設定を保存する。
+
+    Returns:
+        object: プレビュー画面へのリダイレクト。
+    """
+    if not session.get("user_id"):
+        return redirect(url_for("auth.login"))
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    uid = int(session["user_id"])
+    current = _get_user_mail_setting(uid)
+    save_mail_setting(
+        role=f"ユーザー_{uid}",
+        to_address=request.form.get("to_address", "").strip(),
+        cc_address=request.form.get("cc_address", "").strip(),
+        subject_template=current.get("subject_template", ""),
+        body_template=current.get("body_template", ""),
+        bcc_address=request.form.get("bcc_address", "").strip(),
+    )
+
+    date_str = request.form.get("date_str", "")
+    return redirect(url_for("mail_report_bp.user_preview", date=date_str))
+
+
+@mail_report_bp.route("/save-user-body", methods=["POST"])
+def save_user_body() -> object:
+    """ユーザー用メールの本文テンプレートを保存する。
+
+    Returns:
+        object: プレビュー画面へのリダイレクト。
+    """
+    if not session.get("user_id"):
+        return redirect(url_for("auth.login"))
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    uid = int(session["user_id"])
+    current = _get_user_mail_setting(uid)
+    save_mail_setting(
+        role=f"ユーザー_{uid}",
+        to_address=current.get("to_address", ""),
+        cc_address=current.get("cc_address", ""),
+        subject_template=current.get("subject_template", ""),
+        body_template=request.form.get("body_template", "").strip(),
+        bcc_address=current.get("bcc_address", ""),
+    )
+
+    date_str = request.form.get("date_str", "")
+    return redirect(url_for("mail_report_bp.user_preview", date=date_str))
+
+
+@mail_report_bp.route("/download-user-eml")
+def download_user_eml():
+    """ユーザー用メールを.emlファイルとしてダウンロードする。
+
+    Returns:
+        Response: .emlファイルのダウンロードレスポンス。
+    """
+    if not session.get("user_id"):
+        return redirect(url_for("auth.login"))
+
+    raw_date = request.args.get("date", "").strip()
+    try:
+        target_date = date.fromisoformat(raw_date)
+    except ValueError:
+        target_date = date.today()
+
+    login_user = get_user_by_id(int(session["user_id"]))
+    if not login_user:
+        abort(404)
+
+    uid = login_user["id"]
+    setting = _get_user_mail_setting(uid)
+    subject = _build_user_subject(login_user, target_date)
+    body = _get_user_body_template(uid)
+
+    eml_content = _build_eml(setting, subject, body)
+    filename = f"daily_report_{target_date.isoformat()}_user.eml"
+
+    return Response(
+        eml_content,
+        mimetype="message/rfc822",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )

@@ -1753,15 +1753,14 @@ def _fill_report_sheet(
         next_am: 翌日AM予定タスクリスト（最大5要素）。
         next_pm: 翌日PM予定タスクリスト（最大5要素）。
     """
-    # 書き込みセルのフォント色を黒に統一するヘルパー
+    # 書き込みセルのフォント色を黒・斜体を通常に統一するヘルパー
     def _set_cell(cell_ref: str, value: object) -> None:
-        """セルに値を設定し、フォント色を黒にする。"""
+        """セルに値を設定し、フォント色を黒、斜体を通常にする。"""
         cell = ws[cell_ref]
         cell.value = value
-        # 既存フォントのサイズ・太字等を維持しつつ色のみ黒に変更
         old = cell.font
         cell.font = Font(
-            name=old.name, size=old.size, bold=old.bold, italic=old.italic,
+            name=old.name, size=old.size, bold=old.bold, italic=False,
             underline=old.underline, strike=old.strike, color="000000",
         )
 
@@ -1769,7 +1768,7 @@ def _fill_report_sheet(
     _set_cell("C5", date_str)
     _set_cell("C6", user.get("name", ""))
 
-    # 累積勤務時間：予定（D8）・実績（F8）
+    # 累積勤務時間：予定（D7）・実績（F7）
     plan_total: float = sum(
         (e.get("hours") or 0.0) for e in schedule_am + schedule_pm
     )
@@ -1778,10 +1777,10 @@ def _fill_report_sheet(
         for slot in ("am", "pm")
         for e in result.get(slot, [])
     )
-    _set_cell("D8", plan_total if plan_total else None)
-    _set_cell("F8", result_total if result_total else None)
+    _set_cell("D7", plan_total if plan_total else None)
+    _set_cell("F7", result_total if result_total else None)
 
-    # ---- タスク行（B12〜F21）: AM・PM を区別せず上から詰めて書き込む ----
+    # ---- タスク行（B11〜F20）: AM・PM を区別せず上から詰めて書き込む ----
     # リスケ・繰越の背景色定義
     _fill_riske: PatternFill = PatternFill("solid", fgColor="FFC000")   # 黄色（リスケ）
     _fill_carry: PatternFill = PatternFill("solid", fgColor="BDD7EE")   # 水色（繰越）
@@ -1811,9 +1810,9 @@ def _fill_report_sheet(
                     "is_carryover": is_carryover,
                 })
 
-    # 行12〜21 に上から詰めて書き込み（最大10行）
+    # 行11〜20 に上から詰めて書き込み（最大10行）
     for row_offset in range(10):
-        row: int = 12 + row_offset
+        row: int = 11 + row_offset
         if row_offset < len(flat_entries):
             entry: dict = flat_entries[row_offset]
             # 状態判定
@@ -1848,14 +1847,18 @@ def _fill_report_sheet(
                 _set_cell(f"{col}{row}", None)
 
     # ---- コメント ----
-    _set_cell("A25", comment.get("reflection", "") or None)
-    _set_cell("A28", comment.get("action", "") or None)
+    _set_cell("A24", comment.get("reflection", "") or None)
+    _set_cell("A27", comment.get("action", "") or None)
 
-    # ---- 翌日予定 ----
-    next_am_task: str = next_am[0].get("task_name", "") if next_am else ""
-    next_pm_task: str = next_pm[0].get("task_name", "") if next_pm else ""
-    _set_cell("C31", next_am_task if next_am_task else None)
-    _set_cell("C32", next_pm_task if next_pm_task else None)
+    # ---- 翌日予定（AM/PM各5枠をカンマ区切り）----
+    next_am_tasks: list[str] = [
+        e.get("task_name", "") for e in next_am[:5] if e.get("task_name")
+    ]
+    next_pm_tasks: list[str] = [
+        e.get("task_name", "") for e in next_pm[:5] if e.get("task_name")
+    ]
+    _set_cell("C30", "、".join(next_am_tasks) if next_am_tasks else None)
+    _set_cell("C31", "、".join(next_pm_tasks) if next_pm_tasks else None)
 
 
 def _build_report_excel(
@@ -1886,6 +1889,10 @@ def _build_report_excel(
     wb = openpyxl.load_workbook(REPORT_TPL)
     ws = wb["日次業務報告"]
     _fill_report_sheet(ws, user, date_str, schedule_am, schedule_pm, result, comment, next_am, next_pm)
+    # 1ページ印刷に固定
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -1894,9 +1901,10 @@ def _build_report_excel(
 
 @export_bp.route("/report/download", endpoint="download_report")
 def download_report() -> object:
-    """ログインユーザー本人の日報をテンプレートExcelでダウンロードする。
+    """日報をテンプレートExcelでダウンロードする。
 
-    クエリパラメータ ``date`` で対象日を指定する（未指定時は今日）。
+    クエリパラメータ ``date`` で対象日、``user_id`` で対象ユーザーを指定する。
+    管理職・マスタ権限の場合は他ユーザーの日報も取得可能。
 
     Returns:
         object: Excelファイルのダウンロードレスポンス、または未ログイン時はリダイレクト。
@@ -1916,15 +1924,24 @@ def download_report() -> object:
     if user is None:
         abort(404)
 
+    # 管理職・マスタによる他ユーザー指定
+    target_user = user
+    req_user_id: str = request.args.get("user_id", "").strip()
+    if req_user_id and is_privileged(session.get("user_role", "")):
+        try:
+            target_user = get_user_by_id(int(req_user_id)) or user
+        except ValueError:
+            pass
+
     week_start: str = _get_monday(date_obj).isoformat()
     day_of_week: int = date_obj.weekday()
-    schedule: dict = get_weekly_schedule(user["id"], week_start)
+    schedule: dict = get_weekly_schedule(target_user["id"], week_start)
     day_sch: dict = schedule.get(day_of_week, {"am": [], "pm": []})
     schedule_am: list = day_sch.get("am", [])
     schedule_pm: list = day_sch.get("pm", [])
 
-    result: dict = get_daily_result(user["id"], date_str)
-    comment: dict = get_daily_comment(user["id"], date_str)
+    result: dict = get_daily_result(target_user["id"], date_str)
+    comment: dict = get_daily_comment(target_user["id"], date_str)
 
     # 翌日予定
     next_date = date_obj + timedelta(days=1)
@@ -1932,25 +1949,25 @@ def download_report() -> object:
         next_date += timedelta(days=1)
     next_week_start: str = _get_monday(next_date).isoformat()
     next_dow: int = next_date.weekday()
-    next_schedule: dict = get_weekly_schedule(user["id"], next_week_start)
+    next_schedule: dict = get_weekly_schedule(target_user["id"], next_week_start)
     next_day_sch: dict = next_schedule.get(next_dow, {"am": [], "pm": []})
     next_am: list = next_day_sch.get("am", [])
     next_pm: list = next_day_sch.get("pm", [])
 
     try:
         buf = _build_report_excel(
-            user, date_str, schedule_am, schedule_pm, result, comment, next_am, next_pm
+            target_user, date_str, schedule_am, schedule_pm, result, comment, next_am, next_pm
         )
     except Exception:
         logger.exception(
             "日次業務報告Excel生成中にエラーが発生しました (user=%s, date=%s)",
-            user.get("name"),
+            target_user.get("name"),
             date_str,
         )
         flash("日報Excel生成中にエラーが発生しました", "warning")
         return redirect(url_for("daily_bp.daily_view", date_str=date_str))
 
-    filename: str = f"日次業務報告_{user['name']}_{date_str}.xlsx"
+    filename: str = f"日次業務報告_{target_user['name']}_{date_str}.xlsx"
     return send_file(
         buf,
         as_attachment=True,
@@ -1961,15 +1978,13 @@ def download_report() -> object:
 
 @export_bp.route("/report/print", endpoint="print_report")
 def print_report() -> object:
-    """日報をWord形式と同等のレイアウトで印刷/PDF保存用ページを表示する。
+    """日報をExcelテンプレートからPDFに変換してダウンロードする。
 
     クエリパラメータ ``date`` で対象日を指定する（未指定時は今日）。
 
     Returns:
-        object: 印刷用HTML、またはログインページへのリダイレクト。
+        object: PDFファイルのダウンロードレスポンス、または未ログイン時はリダイレクト。
     """
-    from flask import render_template
-
     if not session.get("user_id"):
         return redirect(url_for("auth.login"))
 
@@ -2005,81 +2020,48 @@ def print_report() -> object:
     result: dict = get_daily_result(target_user["id"], date_str)
     comment: dict = get_daily_comment(target_user["id"], date_str)
 
-    # タスク行（AM/PM全スロットをフラットに詰める）
+    # 翌日予定
+    next_date = date_obj + timedelta(days=1)
+    while next_date.weekday() >= 5:
+        next_date += timedelta(days=1)
+    next_week_start: str = _get_monday(next_date).isoformat()
+    next_dow: int = next_date.weekday()
+    next_schedule: dict = get_weekly_schedule(target_user["id"], next_week_start)
+    next_day_sch: dict = next_schedule.get(next_dow, {"am": [], "pm": []})
+    next_am: list = next_day_sch.get("am", [])
+    next_pm: list = next_day_sch.get("pm", [])
+
+    # タスク行収集
     flat_entries: list[dict] = []
     for slot in ("am", "pm"):
         sched_list = schedule_am if slot == "am" else schedule_pm
         result_list = result.get(slot, [])
         for idx in range(5):
-            sched_entry = sched_list[idx] if idx < len(sched_list) else {}
-            result_entry = result_list[idx] if idx < len(result_list) else {}
-            planned_task = sched_entry.get("task_name", "") or ""
-            result_task = result_entry.get("task_name", "") or ""
-            hours = result_entry.get("hours") or 0.0
-            defer_date = result_entry.get("defer_date", "") or ""
-            is_carryover = result_entry.get("is_carryover", 0) or 0
-            subcategory = result_entry.get("subcategory_name", "") or sched_entry.get("subcategory_name", "") or ""
-            if planned_task or result_task or hours > 0:
-                # 状態判定
-                if result_task:
-                    if defer_date:
-                        status = "リスケ"
-                    elif is_carryover:
-                        status = "着手"
-                    elif hours > 0:
-                        status = "完了"
-                    else:
-                        status = ""
+            se = sched_list[idx] if idx < len(sched_list) else {}
+            re_ = result_list[idx] if idx < len(result_list) else {}
+            pt_ = se.get("task_name", "") or ""
+            rt_ = re_.get("task_name", "") or ""
+            hrs = re_.get("hours") or 0.0
+            dd = re_.get("defer_date", "") or ""
+            ic = re_.get("is_carryover", 0) or 0
+            if pt_ or rt_ or hrs > 0:
+                if rt_:
+                    st = "リスケ" if dd else ("着手" if ic else ("完了" if hrs > 0 else ""))
                 else:
-                    status = ""
-                flat_entries.append({
-                    "subcategory": subcategory,
-                    "planned_task": planned_task,
-                    "result_task": result_task,
-                    "status": status,
-                    "hours": hours,
-                    "defer_date": defer_date,
-                })
+                    st = ""
+                flat_entries.append({"plan": pt_, "result": rt_, "status": st, "hours": hrs})
 
-    # 勤務時間合計
-    plan_total = sum((e.get("hours") or 0.0) for e in schedule_am + schedule_pm)
-    result_total = sum(
+    plan_total: float = sum((e.get("hours") or 0.0) for e in schedule_am + schedule_pm)
+    result_total: float = sum(
         (e.get("hours") or 0.0) for s in ("am", "pm") for e in result.get(s, [])
     )
+    reflection: str = comment.get("reflection", "") or ""
+    action: str = comment.get("action", "") or ""
+    next_am_tasks = [e.get("task_name", "") for e in next_am[:5] if e.get("task_name")]
+    next_pm_tasks = [e.get("task_name", "") for e in next_pm[:5] if e.get("task_name")]
 
-    # 振り返り・対策
-    reflection = comment.get("reflection", "") or ""
-    action = comment.get("action", "") or ""
-
-    # 翌日予定
-    next_date = date_obj + timedelta(days=1)
-    while next_date.weekday() >= 5:
-        next_date += timedelta(days=1)
-    next_week_start = _get_monday(next_date).isoformat()
-    next_dow = next_date.weekday()
-    next_schedule = get_weekly_schedule(target_user["id"], next_week_start)
-    next_day_sch = next_schedule.get(next_dow, {"am": [], "pm": []})
-    next_am_tasks: list[str] = []
-    next_pm_tasks: list[str] = []
-    for item in next_day_sch.get("am", []):
-        t = item.get("task_name", "").strip()
-        if t and t not in next_am_tasks:
-            next_am_tasks.append(t)
-    for item in next_day_sch.get("pm", []):
-        t = item.get("task_name", "").strip()
-        if t and t not in next_pm_tasks:
-            next_pm_tasks.append(t)
-
-    # 対象メンバー一覧（管理職・マスタの場合）
-    member_names: list[str] = []
-    login_role = session.get("user_role", "")
-    if is_privileged(login_role):
-        accessible = get_accessible_users(
-            target_user["id"], target_user.get("role", ""), target_user.get("dept", "")
-        )
-        member_names = [m["name"] for m in accessible if m["id"] != target_user["id"]]
-
-    html_str: str = render_template(
+    from flask import render_template
+    return render_template(
         "daily_report_print.html",
         user=target_user,
         date_str=date_str,
@@ -2090,100 +2072,7 @@ def print_report() -> object:
         action=action,
         next_am_tasks=next_am_tasks,
         next_pm_tasks=next_pm_tasks,
-        member_names=member_names,
     )
-
-    # Edge headless でHTMLからPDFを生成
-    import os
-    import subprocess
-    import tempfile
-    import shutil
-
-    _edge_candidates = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ]
-    _edge_exe = next((p for p in _edge_candidates if os.path.exists(p)), None)
-    if _edge_exe is None:
-        logger.error("Microsoft Edge が見つかりません: %s", _edge_candidates)
-        flash("PDF生成に失敗しました（Edgeが見つかりません）", "warning")
-        return redirect(url_for("daily_bp.daily_view", date_str=date_str))
-    tmp_html = None
-    tmp_pdf = None
-    tmp_user_data = None
-    try:
-        # 書き込み可能な一時ディレクトリを確認
-        tmp_dir = tempfile.gettempdir()
-        with tempfile.NamedTemporaryFile(
-            suffix=".html", delete=False, mode="w", encoding="utf-8",
-            dir=tmp_dir,
-        ) as f:
-            f.write(html_str)
-            tmp_html = f.name
-        tmp_pdf = tmp_html.replace(".html", ".pdf")
-        tmp_user_data = tempfile.mkdtemp(prefix="edge_pdf_", dir=tmp_dir)
-
-        cmd = [
-            _edge_exe, "--headless=new", "--disable-gpu",
-            "--no-sandbox",
-            "--disable-extensions",
-            f"--user-data-dir={tmp_user_data}",
-            f"--print-to-pdf={tmp_pdf}",
-            "--no-pdf-header-footer",
-            f"file:///{tmp_html.replace(os.sep, '/')}",
-        ]
-        logger.info("PDF生成コマンド: %s", cmd)
-
-        # Windows サービス環境では creationflags に注意
-        creation_flags = 0
-        if hasattr(subprocess, "CREATE_NO_WINDOW"):
-            creation_flags = subprocess.CREATE_NO_WINDOW
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=30,
-            creationflags=creation_flags,
-        )
-
-        stdout_msg = result.stdout.decode("utf-8", errors="replace")[:300] if result.stdout else ""
-        stderr_msg = result.stderr.decode("utf-8", errors="replace")[:300] if result.stderr else ""
-        logger.info(
-            "Edge結果: code=%s, pdf_exists=%s, stdout=%s, stderr=%s",
-            result.returncode, os.path.exists(tmp_pdf), stdout_msg, stderr_msg,
-        )
-
-        if not os.path.exists(tmp_pdf):
-            diag = f"rc={result.returncode}"
-            if stderr_msg:
-                diag += f", {stderr_msg[:100]}"
-            flash(f"PDF生成に失敗しました（{diag}）", "warning")
-            return redirect(url_for("daily_bp.daily_view", date_str=date_str))
-
-        pdf_buf = io.BytesIO(open(tmp_pdf, "rb").read())
-        pdf_buf.seek(0)
-        filename = f"日次業務報告_{target_user['name']}_{date_str}.pdf"
-        return send_file(
-            pdf_buf,
-            as_attachment=True,
-            download_name=filename,
-            mimetype="application/pdf",
-        )
-    except subprocess.TimeoutExpired:
-        logger.error("PDF生成タイムアウト")
-        flash("PDF生成がタイムアウトしました", "warning")
-        return redirect(url_for("daily_bp.daily_view", date_str=date_str))
-    except OSError as e:
-        logger.exception("PDF生成中にOSエラー: %s", e)
-        flash(f"PDF生成に失敗しました（{e}）", "warning")
-        return redirect(url_for("daily_bp.daily_view", date_str=date_str))
-    finally:
-        if tmp_html and os.path.exists(tmp_html):
-            os.unlink(tmp_html)
-        if tmp_pdf and os.path.exists(tmp_pdf):
-            os.unlink(tmp_pdf)
-        if tmp_user_data and os.path.exists(tmp_user_data):
-            shutil.rmtree(tmp_user_data, ignore_errors=True)
 
 
 @export_bp.route("/report/team", endpoint="download_team_report")

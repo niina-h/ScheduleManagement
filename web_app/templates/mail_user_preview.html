@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}日報メール - 予定管理システム{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-9">
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h5 class="fw-bold mb-0">📧 日報メール — {{ date_display }}（{{ day_of_week }}）</h5>
+      <a href="{{ url_for('daily_bp.daily_view', date_str=date_str) }}" class="btn btn-outline-secondary btn-sm">← 日報画面へ戻る</a>
+    </div>
+
+    {# ── 宛先設定 ── #}
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-light fw-semibold">宛先設定</div>
+      <div class="card-body py-2">
+        <form method="post" action="{{ url_for('mail_report_bp.save_user_address') }}" class="row g-2 align-items-end">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="date_str" value="{{ date_str }}">
+          <div class="col-sm-4">
+            <label class="form-label small fw-semibold mb-1">TO</label>
+            <input type="text" class="form-control form-control-sm" name="to_address"
+                   value="{{ setting.to_address }}" placeholder="a@b.com;c@d.com">
+          </div>
+          <div class="col-sm-3">
+            <label class="form-label small fw-semibold mb-1">CC</label>
+            <input type="text" class="form-control form-control-sm" name="cc_address"
+                   value="{{ setting.cc_address }}" placeholder="a@b.com;c@d.com">
+          </div>
+          <div class="col-sm-3">
+            <label class="form-label small fw-semibold mb-1">BCC</label>
+            <input type="text" class="form-control form-control-sm" name="bcc_address"
+                   value="{{ setting.bcc_address }}" placeholder="a@b.com;c@d.com">
+          </div>
+          <div class="col-sm-2">
+            <button type="submit" class="btn btn-outline-primary btn-sm w-100">保存</button>
+          </div>
+          <div class="col-12">
+            <div class="form-text">複数の場合は ; （セミコロン）区切りで入力</div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {# ── メール内容プレビュー ── #}
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-light fw-semibold">メール内容プレビュー</div>
+      <div class="card-body">
+        <div class="mb-2">
+          <span class="fw-semibold me-2">件名：</span>
+          <span class="badge bg-secondary fs-6">{{ subject }}</span>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold mb-1">本文（編集可）</label>
+          <textarea class="form-control" id="mail-body" rows="12" style="font-size:0.9rem; white-space:pre-wrap;">{{ body }}</textarea>
+        </div>
+        <form method="post" action="{{ url_for('mail_report_bp.save_user_body') }}" class="d-inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="date_str" value="{{ date_str }}">
+          <input type="hidden" name="body_template" id="body-template-input" value="">
+          <button type="submit" class="btn btn-outline-success btn-sm" onclick="document.getElementById('body-template-input').value=document.getElementById('mail-body').value;">💾 本文テンプレートを保存</button>
+        </form>
+      </div>
+    </div>
+
+    {# ── 操作ボタン ── #}
+    <div class="d-flex gap-2 mb-4">
+      <a href="{{ mailto_url }}" class="btn btn-primary mailto-btn" id="mailto-link" data-body="">📨 Outlookで開く</a>
+      <button type="button" class="btn btn-outline-secondary" id="copy-btn">📋 本文をコピー（テキスト）</button>
+    </div>
+    <div class="alert alert-info border small mb-4">
+      💡 <strong>使い方：</strong>「Outlookで開く」をクリック → 件名・宛先・署名が設定された新規メールが開きます。<br>
+      本文（游ゴシック 11pt 書式付き）は自動でコピーされるので、本文欄で <kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けてください。
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var bodyEl = document.getElementById('mail-body');
+  var mailtoLink = document.getElementById('mailto-link');
+  var copyBtn = document.getElementById('copy-btn');
+
+  // ---------- クリップボード書き込み ----------
+  function copyHtmlToClipboard(body, callback) {
+    var escaped = body.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    var htmlBody = '<pre style="font-family: \'游ゴシック\', \'Yu Gothic\', sans-serif; font-size: 11pt; line-height: 1.6; white-space: pre-wrap; margin: 0;">' + escaped + '</pre>';
+    if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+      try {
+        var htmlBlob = new Blob([htmlBody], {type: 'text/html'});
+        var textBlob = new Blob([body], {type: 'text/plain'});
+        var item = new ClipboardItem({'text/html': htmlBlob, 'text/plain': textBlob});
+        navigator.clipboard.write([item]).then(callback).catch(function () {
+          fallbackCopy(htmlBody, body, callback);
+        });
+        return;
+      } catch (e) {}
+    }
+    fallbackCopy(htmlBody, body, callback);
+  }
+
+  function fallbackCopy(htmlBody, plainBody, callback) {
+    var ta = document.createElement('textarea');
+    ta.value = plainBody;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (callback) callback();
+  }
+
+  // Outlook で開く: クリック時に最新本文をコピー
+  mailtoLink.addEventListener('click', function () {
+    copyHtmlToClipboard(bodyEl.value, function () {});
+  });
+
+  // 本文コピーボタン
+  copyBtn.addEventListener('click', function () {
+    copyHtmlToClipboard(bodyEl.value, function () {
+      copyBtn.textContent = '✅ コピーしました';
+      setTimeout(function () { copyBtn.textContent = '📋 本文をコピー（テキスト）'; }, 2000);
+    });
+  });
+});
+</script>
+{% endblock %}
