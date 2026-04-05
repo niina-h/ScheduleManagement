@@ -122,6 +122,27 @@
     </div>
     {% endfor %}
 
+    {# ── 備考欄（マスタタブ・印刷のみ表示） ── #}
+    {% if login_role == 'マスタ' %}
+    <div class="card shadow-sm mb-3" id="remarks-block"
+         style="{% if login_role != 'マスタ' %}display:none;{% endif %}">
+      <div class="card-header bg-light fw-semibold">📋 備考欄（印刷のみに表示 — メールには含まれません）</div>
+      <div class="card-body py-2">
+        <form method="post" action="{{ url_for('mail_report_bp.save_mgr_remarks') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="date_str" value="{{ date_str }}">
+          <textarea class="form-control form-control-sm mb-2" name="mgr_remarks" rows="5"
+                    style="font-size:0.85rem;"
+                    placeholder="印刷時に表示したいコメントを入力（メール本文には含まれません）">{{ mgr_remarks if mgr_remarks is defined else '' }}</textarea>
+          <div class="d-flex justify-content-between align-items-center">
+            <small class="text-muted">「🖨 印刷 / PDF」で出力した際にメール本文の下に表示されます</small>
+            <button type="submit" class="btn btn-outline-primary btn-sm">💾 保存</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
   </div>
 </div>
 {% endblock %}
@@ -141,10 +162,14 @@
         document.getElementById('panel-' + t).style.display   = (t === tab) ? '' : 'none';
         document.getElementById('addr-' + t).style.display    = (t === tab) ? '' : 'none';
       });
-      // 金曜報告ブロック（マスタタブのみ表示）
+      // 金曜報告ブロック・備考欄（マスタタブのみ表示）
       var fridayBlock = document.getElementById('friday-report-block');
       if (fridayBlock) {
         fridayBlock.style.display = (tab === 'master') ? '' : 'none';
+      }
+      var remarksBlock = document.getElementById('remarks-block');
+      if (remarksBlock) {
+        remarksBlock.style.display = (tab === 'master') ? '' : 'none';
       }
     }
 

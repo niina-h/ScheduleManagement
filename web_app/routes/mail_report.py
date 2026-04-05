@@ -242,6 +242,33 @@ def _save_friday_report(text: str) -> None:
     )
 
 
+def _get_mgr_remarks() -> str:
+    """管理職日報メールの備考欄テキストを取得する（印刷専用）。
+
+    Returns:
+        str: 備考テキスト（未設定なら空文字列）。
+    """
+    setting = get_mail_setting("管理職_備考")
+    return setting.get("body_template", "").strip()
+
+
+def _save_mgr_remarks(text: str) -> None:
+    """管理職日報メールの備考欄テキストを保存する。
+
+    Args:
+        text: 備考テキスト。
+    """
+    current = get_mail_setting("管理職_備考")
+    save_mail_setting(
+        role="管理職_備考",
+        to_address=current.get("to_address", ""),
+        cc_address=current.get("cc_address", ""),
+        subject_template=current.get("subject_template", ""),
+        body_template=text,
+        bcc_address=current.get("bcc_address", ""),
+    )
+
+
 def _build_master_subject(dept: str, target_date: date) -> str:
     """マスタ用メール件名を生成する（金曜は「管理・」付き）。
 
@@ -720,6 +747,9 @@ def preview():
     is_friday: bool = target_date.weekday() == 4
     friday_report: str = _get_friday_report(login_user, target_date) if is_friday else ""
 
+    # 備考欄（印刷専用）
+    mgr_remarks: str = _get_mgr_remarks()
+
     return render_template(
         "mail_report_preview.html",
         date_str=date_str,
@@ -737,6 +767,7 @@ def preview():
         csrf_token=session.get("csrf_token", ""),
         is_friday=is_friday,
         friday_report=friday_report,
+        mgr_remarks=mgr_remarks,
     )
 
 
@@ -770,11 +801,13 @@ def print_master() -> object:
     master_body = _build_master_body(login_user, target_date, members, master_greeting, _get_friday_report(login_user, target_date))
 
     escaped_body = html_mod.escape(master_body)
+    mgr_remarks = _get_mgr_remarks()
 
     return render_template(
         "mail_report_print.html",
         subject=master_subject,
         body=escaped_body,
+        mgr_remarks=mgr_remarks,
     )
 
 
@@ -824,6 +857,24 @@ def save_friday_report() -> object:
         abort(400)
 
     _save_friday_report(request.form.get("friday_report", ""))
+    date_str = request.form.get("date_str", "")
+    return redirect(url_for("mail_report_bp.preview", date=date_str))
+
+
+@mail_report_bp.route("/save-mgr-remarks", methods=["POST"])
+def save_mgr_remarks() -> object:
+    """管理職日報メールの備考欄テキストを保存する（印刷専用）。
+
+    Returns:
+        object: プレビュー画面へのリダイレクト。
+    """
+    redir = _require_privileged()
+    if redir:
+        return redir
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    _save_mgr_remarks(request.form.get("mgr_remarks", ""))
     date_str = request.form.get("date_str", "")
     return redirect(url_for("mail_report_bp.preview", date=date_str))
 

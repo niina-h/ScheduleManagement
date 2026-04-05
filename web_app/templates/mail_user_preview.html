@@ -68,8 +68,8 @@
       <button type="button" class="btn btn-outline-secondary" id="copy-btn">📋 本文をコピー（テキスト）</button>
     </div>
     <div class="alert alert-info border small mb-4">
-      💡 <strong>使い方：</strong>「Outlookで開く」をクリック → 件名・宛先・署名が設定された新規メールが開きます。<br>
-      本文（游ゴシック 11pt 書式付き）は自動でコピーされるので、本文欄で <kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けてください。
+      💡 <strong>使い方：</strong>「Outlookで開く」をクリック → 件名・宛先・本文が設定された新規メールが開きます。<br>
+      書式付き本文（游ゴシック 11pt）もクリップボードにコピーされるので、必要に応じて <kbd>Ctrl</kbd>+<kbd>V</kbd> で上書き貼り付けできます。
     </div>
 
   </div>
@@ -113,9 +113,18 @@ document.addEventListener('DOMContentLoaded', function () {
     if (callback) callback();
   }
 
-  // Outlook で開く: クリック時に最新本文をコピー
-  mailtoLink.addEventListener('click', function () {
-    copyHtmlToClipboard(bodyEl.value, function () {});
+  // Outlook で開く: クリック時にmailto URLに本文を含め、さらにクリップボードにもコピー
+  var baseMailto = mailtoLink.href;
+  mailtoLink.addEventListener('click', function (e) {
+    e.preventDefault();
+    var body = bodyEl.value;
+    // mailto URLに本文を追加
+    var sep = baseMailto.indexOf('?') >= 0 ? '&' : '?';
+    var newHref = baseMailto + sep + 'body=' + encodeURIComponent(body);
+    // クリップボードにもHTMLコピー（Ctrl+V用）
+    copyHtmlToClipboard(body, function () {
+      window.location.href = newHref;
+    });
   });
 
   // 本文コピーボタン
