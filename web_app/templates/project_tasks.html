@@ -50,55 +50,55 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="is_event" value="0">
             <div class="row g-2">
-              <div class="col-md-2">
+              <div class="col-auto" style="width:90px;">
                 <label class="form-label small fw-semibold">大区分</label>
-                <select name="category_id" class="form-select form-select-sm" id="add-cat">
-                  <option value="">（なし）</option>
+                <select name="category_id" class="form-select form-select-sm" id="add-cat" style="font-size:0.75rem;">
+                  <option value="">--</option>
                   {% for c in categories %}
                   <option value="{{ c.id }}">{{ c.name }}</option>
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-2">
+              <div class="col-auto" style="width:90px;">
                 <label class="form-label small fw-semibold">中区分</label>
-                <select name="subcategory_id" class="form-select form-select-sm" id="add-subcat">
-                  <option value="">（なし）</option>
+                <select name="subcategory_id" class="form-select form-select-sm" id="add-subcat" style="font-size:0.75rem;">
+                  <option value="">--</option>
                   {% for s in subcategories %}
                   <option value="{{ s.id }}" data-cat="{{ s.category_id }}">{{ s.name }}</option>
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-2">
+              <div class="col">
                 <label class="form-label small fw-semibold">タスク名 <span class="text-danger">*</span></label>
                 <input type="text" name="task_name" class="form-control form-control-sm" required>
               </div>
-              <div class="col-md-2">
+              <div class="col">
                 <label class="form-label small fw-semibold">対応内容</label>
                 <input type="text" name="description" class="form-control form-control-sm">
               </div>
-              <div class="col-md-1">
+              <div class="col-auto" style="width:80px;">
                 <label class="form-label small fw-semibold">担当者1</label>
-                <select name="assigned_to" class="form-select form-select-sm">
+                <select name="assigned_to" class="form-select form-select-sm" style="font-size:0.75rem;">
                   <option value="">--</option>
                   {% for u in users %}
                   <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-1">
+              <div class="col-auto" style="width:80px;">
                 <label class="form-label small fw-semibold">担当者2</label>
-                <select name="assigned_to_2" class="form-select form-select-sm">
+                <select name="assigned_to_2" class="form-select form-select-sm" style="font-size:0.75rem;">
                   <option value="">--</option>
                   {% for u in users %}
                   <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-1">
+              <div class="col-auto" style="width:130px;">
                 <label class="form-label small fw-semibold">開始日 <span class="text-danger">*</span></label>
                 <input type="date" name="start_date" class="form-control form-control-sm" required>
               </div>
-              <div class="col-md-1">
+              <div class="col-auto" style="width:130px;">
                 <label class="form-label small fw-semibold">終了日 <span class="text-danger">*</span></label>
                 <input type="date" name="end_date" class="form-control form-control-sm" required>
               </div>
@@ -110,10 +110,7 @@
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-1">
-                <label class="form-label small fw-semibold">遅延日</label>
-                <input type="number" name="delay_days" class="form-control form-control-sm" value="0" min="0">
-              </div>
+              <input type="hidden" name="delay_days" value="0">
               <div class="col-md-1">
                 <label class="form-label small fw-semibold">進捗%</label>
                 <input type="number" name="progress" id="add-progress" class="form-control form-control-sm" value="0" min="0" max="200">
@@ -162,10 +159,11 @@
               <input type="hidden" form="bulkForm" name="task_id" value="{{ t.id }}">
               <input type="hidden" form="bulkForm" name="category_id_{{ t.id }}" value="{{ t.category_id or '' }}">
               <td>
-                <select form="bulkForm" name="subcategory_id_{{ t.id }}" class="form-select form-select-sm">
+                <select form="bulkForm" name="subcategory_id_{{ t.id }}" class="form-select form-select-sm subcat-sync"
+                        data-task-id="{{ t.id }}">
                   <option value="">（なし）</option>
                   {% for s in subcategories %}
-                  <option value="{{ s.id }}" {% if t.subcategory_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                  <option value="{{ s.id }}" data-cat="{{ s.category_id }}" {% if t.subcategory_id == s.id %}selected{% endif %}>{{ s.name }}</option>
                   {% endfor %}
                 </select>
               </td>
@@ -199,7 +197,10 @@
                   {% endfor %}
                 </select>
               </td>
-              <td><input type="number" form="bulkForm" name="delay_days_{{ t.id }}" value="{{ t.delay_days or 0 }}" min="0" class="form-control form-control-sm" style="width:55px"></td>
+              <td class="text-center small delay-cell" data-end="{{ t.end_date }}">
+                <input type="hidden" form="bulkForm" name="delay_days_{{ t.id }}" value="{{ t.delay_days or 0 }}" class="delay-hidden" data-task-id="{{ t.id }}">
+                <span class="delay-display">{{ t.delay_days or 0 }}</span>日
+              </td>
               <td>
                 <div class="d-flex align-items-center gap-1">
                   <input type="number" form="bulkForm" name="progress_{{ t.id }}" data-tid="{{ t.id }}" value="{{ t.progress }}" min="0" max="200" class="form-control form-control-sm js-progress" style="width:55px">
@@ -356,11 +357,8 @@
     <div class="card shadow-sm mb-3">
       <div class="card-header bg-success text-white fw-semibold small py-1 d-flex justify-content-between align-items-center">
         <span>📅 イベント一覧（会議・行事など）</span>
-        {% if privileged %}
         <button type="button" class="btn btn-outline-light btn-sm py-0" data-bs-toggle="collapse" data-bs-target="#addEventForm">＋ イベント追加</button>
-        {% endif %}
       </div>
-      {% if privileged %}
       <div class="collapse" id="addEventForm">
         <div class="card-body border-bottom p-2">
           <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}" id="eventAddFormEl">
@@ -385,14 +383,15 @@
                   {% endfor %}
                 </select>
               </div>
-              <div class="col-md-1">
-                <label class="form-label small fw-semibold">担当者</label>
-                <select name="assigned_to" class="form-select form-select-sm">
-                  <option value="">--</option>
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold">関係者</label>
+                <select name="event_members" class="form-select form-select-sm" id="ev-members" multiple size="4" style="font-size:0.75rem;">
                   {% for u in users %}
-                  <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
+                  <option value="{{ u.id }}" {% if u.id == session.user_id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
                   {% endfor %}
                 </select>
+                <input type="hidden" name="assigned_to" id="ev-assigned-to" value="">
+                <input type="hidden" name="assigned_to_2" id="ev-assigned-to-2" value="">
               </div>
               <div class="col-auto">
                 <label class="form-label small fw-semibold">開催日 <span class="text-danger">*</span></label>
@@ -423,7 +422,6 @@
           </form>
         </div>
       </div>
-      {% endif %}
       {% if privileged %}
       <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkEventForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -433,7 +431,7 @@
           <thead class="table-light">
             <tr>
               <th style="width:28%">イベント名</th>
-              <th style="width:15%">担当者</th>
+              <th style="width:15%">関係者</th>
               <th style="width:8%">開催日</th>
               <th style="width:4%" class="text-center">MS</th>
               <th style="width:8%">開始時刻</th>
@@ -617,6 +615,25 @@ document.addEventListener('DOMContentLoaded', function () {
       if (status === '完了') sel.classList.add('text-success');
       else if (status === '遅れ') sel.classList.add('text-danger');
       else if (status === '停止') sel.classList.add('text-secondary');
+      /* 遅延日数の自動計算: 状態が「遅れ」の場合、終了日から今日までの日数 */
+      var delayHidden = document.querySelector('.delay-hidden[data-task-id="' + tid + '"]');
+      if (delayHidden) {
+        var delayCell = delayHidden.closest('.delay-cell');
+        var delayDisplay = delayCell ? delayCell.querySelector('.delay-display') : null;
+        if (status === '遅れ') {
+          var endStr = delayCell ? delayCell.dataset.end : '';
+          if (endStr) {
+            var endD = new Date(endStr);
+            var now = new Date(); now.setHours(0,0,0,0);
+            var diff = Math.max(0, Math.floor((now - endD) / 86400000));
+            delayHidden.value = diff;
+            if (delayDisplay) delayDisplay.textContent = diff;
+          }
+        } else {
+          delayHidden.value = 0;
+          if (delayDisplay) delayDisplay.textContent = '0';
+        }
+      }
       updateBar(tid);
     });
   });
@@ -641,6 +658,18 @@ document.addEventListener('DOMContentLoaded', function () {
   document.querySelectorAll('.js-progress').forEach(function (inp) {
     inp.addEventListener('input', function () { updateBar(inp.dataset.tid); });
   });
+
+  /* ── 中区分変更→大区分hidden連動 ── */
+  document.querySelectorAll('.subcat-sync').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var taskId = sel.dataset.taskId;
+      var catHidden = document.querySelector('input[name="category_id_' + taskId + '"]');
+      if (!catHidden) return;
+      var opt = sel.options[sel.selectedIndex];
+      var newCatId = opt ? (opt.dataset.cat || '') : '';
+      catHidden.value = newCatId;
+    });
+  });
 });
 
 /* ── イベント追加フォーム: 開催日→終了日同期 ── */
@@ -648,6 +677,20 @@ function syncEvEndDate(dateInput) {
   var evEnd = document.getElementById('ev-end-date');
   if (evEnd) evEnd.value = dateInput.value;
 }
+
+/* ── イベント追加フォーム: 関係者→assigned_to同期 ── */
+(function() {
+  var form = document.getElementById('eventAddFormEl');
+  if (!form) return;
+  form.addEventListener('submit', function() {
+    var sel = document.getElementById('ev-members');
+    var a1 = document.getElementById('ev-assigned-to');
+    var a2 = document.getElementById('ev-assigned-to-2');
+    var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
+    a1.value = selected[0] || '';
+    a2.value = selected[1] || '';
+  });
+})();
 
 /* ── イベント追加フォーム: 開始/終了時刻→所要時間計算 ── */
 function calcEvHours() {

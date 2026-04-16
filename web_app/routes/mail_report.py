@@ -405,9 +405,12 @@ def _build_master_body(
                 if task and hours > 0:
                     today_worked_tasks.add(task)
 
-    # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ）
+    # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ、イベント除外）
     member_ids = [m["id"] for m in members]
-    project_tasks = get_all_project_tasks(user_ids=member_ids)
+    project_tasks = [
+        t for t in get_all_project_tasks(user_ids=member_ids)
+        if not t.get("is_event", 0)
+    ]
     all_cats = get_all_categories()
     all_subcats = get_all_subcategories()
     cat_id_name: dict[int, str] = {c["id"]: c["name"] for c in all_cats}
@@ -418,38 +421,66 @@ def _build_master_body(
         if cname and cname in cat_subcats_ordered:
             cat_subcats_ordered[cname].append(s["name"])
 
-    # project_task を (cat_name, subcat_name) でグループ化
-    pt_by_subcat: dict[tuple[str, str], list[str]] = {}
+    # project_task を (cat_name, subcat_name) でグループ化（ステータス付き）
+    pt_by_subcat: dict[tuple[str, str], list[dict]] = {}
     for pt in project_tasks:
         cname = pt.get("category_name") or "その他"
         sname = pt.get("subcategory_name") or ""
         key = (cname, sname)
         tname = pt["task_name"]
+        status = pt.get("status", "")
         if key not in pt_by_subcat:
             pt_by_subcat[key] = []
-        if tname not in pt_by_subcat[key]:
-            pt_by_subcat[key].append(tname)
+        # 重複チェック
+        if not any(p["name"] == tname for p in pt_by_subcat[key]):
+            pt_by_subcat[key].append({"name": tname, "status": status})
+
+    def _format_task_list(task_items: list[dict]) -> str:
+        """タスク一覧を状態先頭文字付きで整形し、70文字超で改行する。"""
+        parts: list[str] = []
+        for t in task_items:
+            prefix = f"【{t['status'][:1]}】" if t["status"] else ""
+            parts.append(f"{prefix}{t['name']}")
+        # 結合して70文字超で改行+インデント
+        joined = "、".join(parts)
+        if len(joined) <= 70:
+            return joined
+        lines: list[str] = []
+        current = ""
+        for i, p in enumerate(parts):
+            candidate = (current + "、" + p) if current else p
+            if len(candidate) > 70 and current:
+                lines.append(current + "、")
+                current = p
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        return ("\n" + "　　　　　").join(lines)
 
     content_lines: list[str] = ["業務内容\t対応内容\t達成"]
     for cat_name in cat_order:
         subcats = cat_subcats_ordered.get(cat_name, [])
-        # この大区分にタスクがあるかチェック
         has_tasks = any(pt_by_subcat.get((cat_name, sn)) for sn in subcats)
-        if not has_tasks and not pt_by_subcat.get((cat_name, "")):
+        if not has_tasks:
             continue
         content_lines.append(f"・{cat_name}")
         for sub_name in subcats:
-            tasks = pt_by_subcat.get((cat_name, sub_name), [])
-            if not tasks:
+            task_items = pt_by_subcat.get((cat_name, sub_name), [])
+            if not task_items:
                 continue
-            achieved = "○" if any(t in today_worked_tasks for t in tasks) else ""
-            content_lines.append(f"　　{sub_name}\t{'、'.join(tasks)}\t{achieved}")
-        tasks_no_sub = pt_by_subcat.get((cat_name, ""), [])
-        if tasks_no_sub:
-            achieved = "○" if any(t in today_worked_tasks for t in tasks_no_sub) else ""
-            content_lines.append(f"　　（未分類）\t{'、'.join(tasks_no_sub)}\t{achieved}")
+            task_names = [t["name"] for t in task_items]
+            achieved = "○" if any(t in today_worked_tasks for t in task_names) else ""
+            content_lines.append(f"　　{sub_name}\t{_format_task_list(task_items)}\t{achieved}")
 
-    # メンバー AM/PM サマリ（定例作業は除外、両方なしなら重複表示しない）
+    # メンバー AM/PM サマリ
+    # 除外条件: 定例作業（大区分「定例」or 中区分「定例作業」）、AM1行目(idx=0)、PM最終行(idx=4)
+    def _is_routine(task_name: str, cat_map: dict) -> bool:
+        """定例作業かどうか判定する。"""
+        info = cat_map.get(task_name.strip(), {})
+        return (info.get("category_name") in ("定例", "定例作業")
+                or info.get("subcategory_name") in ("定例", "定例作業"))
+
     member_lines: list[str] = []
     for md in member_data:
         name = md["member"]["name"]
@@ -457,15 +488,17 @@ def _build_master_body(
         tcm = md["task_cat_map"]
         am_tasks = list(dict.fromkeys(
             item["task_name"]
-            for item in result.get("am", [])
+            for idx, item in enumerate(result.get("am", []))
             if item.get("task_name", "").strip() and float(item.get("hours", 0)) > 0
-            and tcm.get(item["task_name"].strip(), {}).get("subcategory_name") != "定例作業"
+            and idx != 0  # AM1行目を除外
+            and not _is_routine(item["task_name"], tcm)
         ))
         pm_tasks = list(dict.fromkeys(
             item["task_name"]
-            for item in result.get("pm", [])
+            for idx, item in enumerate(result.get("pm", []))
             if item.get("task_name", "").strip() and float(item.get("hours", 0)) > 0
-            and tcm.get(item["task_name"].strip(), {}).get("subcategory_name") != "定例作業"
+            and idx != 4  # PM最終行(5枠目)を除外
+            and not _is_routine(item["task_name"], tcm)
         ))
         am_str = "/ ".join(am_tasks) if am_tasks else "（なし）"
         pm_str = "/ ".join(pm_tasks) if pm_tasks else "（なし）"

@@ -1960,9 +1960,13 @@ def get_all_project_tasks(
         params = (assigned_to, assigned_to)
     elif user_ids is not None and len(user_ids) > 0:
         placeholders = ",".join("?" * len(user_ids))
-        query += f"WHERE (pt.assigned_to IN ({placeholders}) OR pt.assigned_to_2 IN ({placeholders})) "
+        query += (
+            f"WHERE (pt.assigned_to IN ({placeholders})"
+            f" OR pt.assigned_to_2 IN ({placeholders})"
+            f" OR pt.assigned_to IS NULL) "
+        )
         params = tuple(user_ids) * 2
-    query += "ORDER BY tc.display_order, ts.display_order, pt.display_order"
+    query += "ORDER BY tc.display_order, tc.name, ts.display_order, ts.name, pt.display_order, pt.task_name"
     rows = db.execute(query, params).fetchall()
     return [dict(r) for r in rows]
 
@@ -2773,7 +2777,11 @@ def get_task_progress_summary(user_id: int | None = None) -> dict:
             - status_breakdown (dict[str, int]): ステータス別件数
             - tasks (list[dict]): 個別タスク情報
     """
-    tasks: list[dict] = get_all_project_tasks(assigned_to=user_id)
+    all_tasks: list[dict] = get_all_project_tasks(assigned_to=user_id)
+    # イベント・マイルストーンを除外
+    tasks: list[dict] = [
+        t for t in all_tasks if not t.get("is_event", 0) and not t.get("is_milestone", 0)
+    ]
 
     # ステータス別件数を全ステータスキーで初期化
     status_breakdown: dict[str, int] = {s: 0 for s in PROJECT_TASK_STATUSES}
@@ -2827,7 +2835,11 @@ def get_task_overview_summary() -> dict:
             - user_summary (list[dict]): 担当者別の件数・平均進捗
             - tasks (list[dict]): 全タスク情報
     """
-    tasks: list[dict] = get_all_project_tasks()
+    all_tasks: list[dict] = get_all_project_tasks()
+    # イベント・マイルストーンを除外（通常タスクのみ集計）
+    tasks: list[dict] = [
+        t for t in all_tasks if not t.get("is_event", 0) and not t.get("is_milestone", 0)
+    ]
 
     status_breakdown: dict[str, int] = {s: 0 for s in PROJECT_TASK_STATUSES}
     completed_count: int = 0

@@ -16,6 +16,7 @@ from ..models import (
     add_carryover,
     defer_task_to_weekly_schedule,
     get_accessible_users,
+    get_active_tasks_for_user,
     get_all_project_tasks,
     get_all_users,
     get_daily_comment,
@@ -324,6 +325,7 @@ def daily_view(date_str: str) -> Any:
         leave_dates_json=leave_dates_json,
         day_events=day_events,
         project_tasks_json=_build_project_tasks_json(target_user_id),
+        active_project_tasks=get_active_tasks_for_user(target_user_id),
     )
 
 

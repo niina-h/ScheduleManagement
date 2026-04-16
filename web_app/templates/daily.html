@@ -54,6 +54,11 @@
   <script id="task-map-data" type="application/json">{{ task_map_json | safe }}</script>
   <script id="leave-dates-data" type="application/json">{{ leave_dates_json | safe }}</script>
   <datalist id="task-list">
+    {% if active_project_tasks is defined %}
+    {% for t in active_project_tasks %}
+    <option value="{{ t.task_name }}" label="★ {{ t.task_name }}">
+    {% endfor %}
+    {% endif %}
     {% for t in task_master %}
     <option value="{{ t.task_name }}">
     {% endfor %}
@@ -484,6 +489,7 @@
   {% endif %}
   {# 管理者自身のページ（is_admin_view=False）の場合は管理者コメント欄を表示しない #}
 
+  <div class="mt-1 small text-muted">★＝タスク管理に登録された作業</div>
   {# ---- 操作ボタン ---- #}
   <div class="d-flex align-items-center gap-2 mt-3 flex-wrap">
     {% if not (is_admin_view is defined and is_admin_view) %}

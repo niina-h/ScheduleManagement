@@ -47,6 +47,27 @@ project_tasks_bp = Blueprint(
 )
 
 
+def _get_routine_task_options() -> list[dict]:
+    """全ユーザーの作業登録から定例カテゴリの作業を重複なしで取得する。
+
+    Returns:
+        list[dict]: 定例作業のリスト（task_name, subcategory_name, default_hours）
+    """
+    from ..database import get_db
+    db = get_db()
+    rows = db.execute(
+        "SELECT tm.task_name, ts.name AS subcategory_name, MAX(tm.default_hours) AS default_hours"
+        " FROM task_master tm"
+        " LEFT JOIN task_category tc ON tm.category_id = tc.id"
+        " LEFT JOIN task_subcategory ts ON tm.subcategory_id = ts.id"
+        " WHERE tc.name IN ('定例', '定例作業')"
+        "    OR ts.name IN ('定例', '定例作業')"
+        " GROUP BY tm.task_name, ts.name"
+        " ORDER BY tm.task_name"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 @project_tasks_bp.before_request
 def _check_login() -> object | None:
     """未ログインならログイン画面へリダイレクトする。"""
@@ -89,23 +110,19 @@ def task_list() -> str:
     categories = get_all_categories()
     subcategories = get_all_subcategories()
 
-    # 担当者選択用のユーザーリスト（権限別に絞り込み）
+    # 関係者選択用のユーザーリスト
     if login_role in ("マスタ", "管理職"):
         users = get_accessible_users(login_id, login_role, login_dept)
     elif privileged:
         users = get_all_users()
     else:
-        users = []
+        # 一般ユーザー: イベント登録の関係者選択用に全ユーザーを取得
+        users = get_all_users()
 
     # 定例スケジュール
     routine_schedules = get_routine_schedules(login_id)
-    # 作業登録から「定例作業」カテゴリの作業を取得
-    all_task_master = get_task_master(login_id)
-    routine_task_options = [
-        t for t in all_task_master
-        if t.get("category_name") in ("定例", "定例作業")
-        or t.get("subcategory_name") in ("定例", "定例作業")
-    ]
+    # 作業登録から「定例作業」カテゴリの作業を取得（全ユーザーから検索）
+    routine_task_options = _get_routine_task_options()
     used_rows = {r["row_number"] for r in routine_schedules}
 
     return render_template(
@@ -124,12 +141,15 @@ def task_list() -> str:
 
 @project_tasks_bp.route("/add", methods=["POST"])
 def add_task() -> object:
-    """プロジェクトタスクを追加する（管理職・マスタのみ）。
+    """プロジェクトタスクを追加する。
+
+    イベントは全ユーザー、通常タスクは管理職・マスタのみ。
 
     Returns:
         object: 一覧画面へのリダイレクト
     """
-    if not is_privileged(session.get("user_role", "")):
+    is_event_add = request.form.get("is_event") == "1"
+    if not is_event_add and not is_privileged(session.get("user_role", "")):
         abort(403)
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
@@ -141,7 +161,6 @@ def add_task() -> object:
     assigned_to_str = request.form.get("assigned_to", "").strip()
     start_date = request.form.get("start_date", "").strip()
     end_date = request.form.get("end_date", "").strip()
-    is_event_add = 1 if request.form.get("is_event") else 0
     # イベントは開催日のみのため end_date が空の場合は start_date を使用
     if is_event_add and not end_date:
         end_date = start_date
@@ -174,10 +193,10 @@ def add_task() -> object:
     except ValueError:
         assigned_to_2 = None
 
-    is_milestone = 1 if request.form.get("is_milestone") else 0
-    is_event = 1 if request.form.get("is_event") else 0
-    event_start_time = request.form.get("event_start_time", "").strip()
-    event_end_time = request.form.get("event_end_time", "").strip()
+    is_milestone = 1 if request.form.get("is_milestone") == "1" else 0
+    is_event = 1 if is_event_add else 0
+    event_start_time = request.form.get("event_start_time", "").strip() if is_event_add else ""
+    event_end_time = request.form.get("event_end_time", "").strip() if is_event_add else ""
     planned_hours_str = request.form.get("planned_hours", "0").strip()
     try:
         planned_hours = max(0.0, float(planned_hours_str))
@@ -263,8 +282,8 @@ def update_task(task_id: int) -> object:
     except ValueError:
         assigned_to_2 = None
 
-    is_milestone = 1 if request.form.get("is_milestone") else 0
-    is_event = 1 if request.form.get("is_event") else 0
+    is_milestone = 1 if request.form.get("is_milestone") == "1" else 0
+    is_event = 1 if request.form.get("is_event") == "1" else 0
     event_start_time = request.form.get("event_start_time", "").strip()
     event_end_time = request.form.get("event_end_time", "").strip()
     planned_hours_str = request.form.get("planned_hours", "0").strip()
@@ -364,8 +383,8 @@ def bulk_update_tasks() -> object:
         except ValueError:
             assigned_to_2 = None
 
-        is_milestone = 1 if request.form.get(f"is_milestone{sfx}") else 0
-        is_event = 1 if request.form.get(f"is_event{sfx}") else 0
+        is_milestone = 1 if request.form.get(f"is_milestone{sfx}") == "1" else 0
+        is_event = 1 if request.form.get(f"is_event{sfx}") == "1" else 0
         event_start_time = request.form.get(f"event_start_time{sfx}", "").strip()
         event_end_time = request.form.get(f"event_end_time{sfx}", "").strip()
         planned_hours_str = request.form.get(f"planned_hours{sfx}", "0").strip()
@@ -988,21 +1007,34 @@ def gantt() -> str:
             names.append(ln1)
         if ln2:
             names.append(ln2)
-        # イベントはマイルストーンとして表示
         is_event = t.get("is_event", 0)
-        is_ms = t.get("is_milestone", 0) or is_event
+        is_ms = 1 if t.get("is_milestone", 0) else 0
+        # イベント（MSなし）は完全除外
+        if is_event and not is_ms:
+            continue
+        # マイルストーン（イベント+MS または 通常タスク+MS）はイベント行のみ
+        if is_ms:
+            gantt_data.append({
+                "id": t["id"], "name": t["task_name"], "assigned": "",
+                "category": "", "subcategory": "",
+                "start": t["start_date"], "end": t["end_date"],
+                "progress": 0, "status": t["status"],
+                "delay_days": 0, "is_milestone": 1,
+                "milestone_only": True,
+            })
+            continue
         gantt_data.append({
             "id": t["id"],
             "name": t["task_name"],
             "assigned": "・".join(names),
-            "category": (t.get("category_name") or "（イベント）") if is_event else (t.get("category_name") or ""),
+            "category": t.get("category_name") or "",
             "subcategory": t.get("subcategory_name") or "",
             "start": t["start_date"],
             "end": t["end_date"],
             "progress": t.get("progress", 0),
             "status": t["status"],
             "delay_days": t.get("delay_days", 0) or 0,
-            "is_milestone": is_ms,
+            "is_milestone": 0,
         })
 
     return render_template(
@@ -1023,7 +1055,7 @@ _STATUS_FILL: dict[str, str] = {
     "着手":   "93C5FD",
     "順調":   "6EE7B7",
     "遅れ":   "FCA5A5",
-    "完了":   "10B981",
+    "完了":   "1E40AF",
     "停止":   "E5E7EB",
 }
 
@@ -1102,45 +1134,112 @@ def _build_gantt_excel(
         cell2.border = thin_border
 
     today_d = date.today()
+    today_side = Side(style="medium", color="EF4444")
+    today_border_top = Border(left=today_side, right=today_side, top=today_side,
+                              bottom=Side(style="thin", color="CCCCCC"))
+    today_border_mid = Border(left=today_side, right=today_side,
+                              top=Side(style="thin", color="CCCCCC"),
+                              bottom=Side(style="thin", color="CCCCCC"))
+    today_border_bot = Border(left=today_side, right=today_side,
+                              top=Side(style="thin", color="CCCCCC"), bottom=today_side)
+    today_fill_header = PatternFill("solid", fgColor="FEE2E2")
+    today_fill_body = PatternFill("solid", fgColor="FEF2F2")
+    today_col_idx: int = -1  # 今日の列インデックス（後で罫線適用用）
+
     for di in range(display_days):
         dt = start_date + timedelta(days=di)
         col = fixed_cols + di + 1
         col_letter = get_column_letter(col)
         ws.column_dimensions[col_letter].width = 3.5
+        is_today = (dt == today_d)
 
         # 行1: 月/日
         cell1 = ws.cell(1, col, f"{dt.month}/{dt.day}")
         cell1.font = Font(size=7, name="游ゴシック", bold=True,
                           color="EF4444" if dt.weekday() == 6 else
                           "3B82F6" if dt.weekday() == 5 else "FFFFFF")
-        cell1.fill = header_fill
+        cell1.fill = today_fill_header if is_today else header_fill
         cell1.alignment = center_align
-        cell1.border = thin_border
+        cell1.border = today_border_top if is_today else thin_border
+        if is_today:
+            today_col_idx = col
 
         # 行2: 曜日
         cell2 = ws.cell(2, col, weekday_ja[dt.weekday()])
         cell2.font = Font(size=7, name="游ゴシック",
                           color="EF4444" if dt.weekday() == 6 else
                           "3B82F6" if dt.weekday() == 5 else "333333")
-        cell2.fill = PatternFill("solid", fgColor="F1F5F9")
+        cell2.fill = today_fill_header if is_today else PatternFill("solid", fgColor="F1F5F9")
         cell2.alignment = center_align
-        cell2.border = thin_border
+        cell2.border = today_border_mid if is_today else thin_border
 
     # 列幅
     for letter, w in col_widths.items():
         ws.column_dimensions[letter].width = w
 
+    # -- イベント(MS)とタスクを分離 --
+    ms_tasks: list[dict] = []
+    normal_tasks: list[dict] = []
+    for t in tasks:
+        is_event = t.get("is_event", 0)
+        is_ms = t.get("is_milestone", 0)
+        if is_event and not is_ms:
+            continue  # MSなしイベントは除外
+        if is_event and is_ms:
+            ms_tasks.append(t)
+        elif is_ms:
+            ms_tasks.append(t)
+        else:
+            normal_tasks.append(t)
+
+    # -- イベント行（行3）: マイルストーンを日付セルに表示 --
+    row = 3
+    top_align = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    if ms_tasks:
+        ms_font = Font(size=7, name="游ゴシック", color="6D28D9", bold=True)
+        ms_fill_bg = PatternFill("solid", fgColor="F5F3FF")
+        ws.row_dimensions[row].height = 90
+        # イベント行ヘッダー
+        ws.cell(row, 1, "📅 イベント").font = Font(size=8, name="游ゴシック", bold=True, color="6D28D9")
+        ws.cell(row, 1).fill = ms_fill_bg
+        ws.cell(row, 1).alignment = top_align
+        ws.cell(row, 1).border = thin_border
+        for ci in range(2, fixed_cols + 1):
+            ws.cell(row, ci).fill = ms_fill_bg
+            ws.cell(row, ci).border = thin_border
+        # 日付セルにMS名を記入
+        for di in range(display_days):
+            dt = start_date + timedelta(days=di)
+            col = fixed_cols + di + 1
+            cell = ws.cell(row, col)
+            is_today = (dt == today_d)
+            cell.fill = today_fill_body if is_today else ms_fill_bg
+            cell.border = today_border_mid if is_today else thin_border
+            # この日に該当するMS
+            ms_names: list[str] = []
+            for mt in ms_tasks:
+                try:
+                    ms_d = date.fromisoformat(mt["start_date"])
+                except (ValueError, TypeError):
+                    continue
+                if ms_d == dt:
+                    ms_names.append(mt["task_name"])
+            if ms_names:
+                cell.value = "◆" + "／".join(ms_names)
+                cell.font = ms_font
+                cell.alignment = top_align
+                cell.fill = milestone_fill
+        row += 1
+
     # -- カテゴリ別にグループ化 --
     cat_order: list[str] = []
     cat_map: dict[str, list[dict]] = {}
-    for t in tasks:
+    for t in normal_tasks:
         cat = t.get("category_name") or "（未分類）"
         if cat not in cat_map:
             cat_map[cat] = []
             cat_order.append(cat)
         cat_map[cat].append(t)
-
-    row = 3  # データ開始行
     for cat in cat_order:
         task_list = cat_map[cat]
 
@@ -1174,8 +1273,7 @@ def _build_gantt_excel(
             ws.cell(row, 1).alignment = left_align
             ws.cell(row, 1).border = thin_border
 
-            name_prefix = "◆ " if t.get("is_milestone") else ""
-            ws.cell(row, 2, name_prefix + t["task_name"]).font = body_font
+            ws.cell(row, 2, t["task_name"]).font = body_font
             ws.cell(row, 2).alignment = left_align
             ws.cell(row, 2).border = thin_border
 
@@ -1205,7 +1303,8 @@ def _build_gantt_excel(
                 dt = start_date + timedelta(days=di)
                 col = fixed_cols + di + 1
                 cell = ws.cell(row, col)
-                cell.border = thin_border
+                is_today = (dt == today_d)
+                cell.border = today_border_mid if is_today else thin_border
 
                 # 土日背景
                 if dt.weekday() == 5:
@@ -1214,19 +1313,13 @@ def _build_gantt_excel(
                     cell.fill = sun_fill
 
                 # 今日ハイライト
-                if dt == today_d:
-                    cell.fill = today_fill
+                if is_today:
+                    cell.fill = today_fill_body
 
                 # タスク期間内
                 if t_start <= dt <= t_end:
-                    if t.get("is_milestone"):
-                        cell.fill = PatternFill("solid", fgColor="C4B5FD")
-                        if dt == t_start:
-                            cell.value = "◆"
-                            cell.font = Font(size=8, color="6D28D9", bold=True)
-                            cell.alignment = center_align
-                    elif status == "完了":
-                        cell.fill = PatternFill("solid", fgColor="10B981")
+                    if status == "完了":
+                        cell.fill = PatternFill("solid", fgColor="1E40AF")
                     elif status == "停止":
                         cell.fill = PatternFill("solid", fgColor="E5E7EB")
                     else:
@@ -1247,8 +1340,54 @@ def _build_gantt_excel(
 
             row += 1
 
-    # 行1-2を固定
-    ws.freeze_panes = "F3"
+    # 今日の列の最終行に下罫線を付ける
+    if today_col_idx > 0:
+        last_data_row = row - 1
+        c = ws.cell(last_data_row, today_col_idx)
+        c.border = today_border_bot
+
+    # ヘッダー+イベント行を固定（イベント行がない場合は行3から）
+    freeze_row = 4 if ms_tasks else 3
+    ws.freeze_panes = f"F{freeze_row}"
+
+    # -- 凡例行（色セル＋ラベル＋空白列の3列間隔） --
+    row += 1
+    legend_font = Font(size=8, name="游ゴシック")
+    legend_items = [
+        ("93C5FD", "予定期間"),
+        ("34D399", "進捗（実績）"),
+        ("FCA5A5", "遅延"),
+        ("1E40AF", "完了"),
+        ("E5E7EB", "停止"),
+        ("C4B5FD", "◆ マイルストーン"),
+    ]
+    ws.cell(row, 1, "【凡例】").font = Font(size=8, name="游ゴシック", bold=True)
+    ws.cell(row, 1).border = thin_border
+    # 3列×2行のレイアウト（1行に3項目）
+    items_per_row = 3
+    for li, (color, label) in enumerate(legend_items):
+        r_offset = li // items_per_row
+        c_offset = li % items_per_row
+        c = fixed_cols + c_offset * 3 + 1
+        r = row + r_offset
+        cell_color = ws.cell(r, c)
+        cell_color.fill = PatternFill("solid", fgColor=color)
+        cell_color.border = thin_border
+        cell_label = ws.cell(r, c + 1, label)
+        cell_label.font = legend_font
+        cell_label.border = thin_border
+
+    # -- 印刷設定: 横1枚に収まるように --
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0  # 縦は自動
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    # ヘッダー: 左に部署名、右に出力日付
+    ws.oddHeader.left.text = "商品開発室業務進捗"
+    ws.oddHeader.left.size = 10
+    ws.oddHeader.right.text = f"出力日：{today_d.strftime('%Y/%m/%d')}"
+    ws.oddHeader.right.size = 9
 
     return wb
 

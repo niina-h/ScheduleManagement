@@ -90,6 +90,11 @@
   <script id="week-results-data" type="application/json">{{ week_daily_results | tojson if week_daily_results is defined else '{}' }}</script>
 
   <datalist id="task-list">
+    {% if active_project_tasks is defined %}
+    {% for t in active_project_tasks %}
+    <option value="{{ t.task_name }}" label="★ {{ t.task_name }}">
+    {% endfor %}
+    {% endif %}
     {% for t in task_master %}
     <option value="{{ t.task_name }}">
     {% endfor %}
@@ -240,6 +245,7 @@
     </table>
   </div>
 
+  <div class="mt-1 small text-muted">★＝タスク管理に登録された作業</div>
   <div class="mt-2 d-flex align-items-center gap-3 flex-wrap">
     <button type="submit" class="btn btn-primary">保存</button>
     {% if schedule_meta is defined and schedule_meta %}
@@ -564,13 +570,16 @@ function setViewMode(mode) {
         let taskVal  = planTask;
         let hoursVal = planHours;
 
-        if (mode === 'result' && hasResult) {
+        // 実績モード: 過去日で実績がある場合のみ実績値を表示
+        var today = new Date().toISOString().slice(0, 10);
+        var isPastDay = dayDate && dayDate <= today;
+        if (mode === 'result' && hasResult && isPastDay) {
           const rc = dayResult[slot] && dayResult[slot][i];
           if (rc && (rc.task_name || rc.defer_date || rc.hours > 0)) {
             taskVal  = rc.task_name || planTask;
             hoursVal = rc.hours > 0 ? rc.hours : '';
           } else {
-            // 実績モードで日に実績がある場合、実績未入力のスロットは空にする
+            // 過去日で実績がある日の未入力スロットは空にする
             taskVal  = '';
             hoursVal = '';
           }

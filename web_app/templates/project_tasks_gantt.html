@@ -17,16 +17,23 @@
     </div>
 
     <div class="card shadow-sm">
-      <div class="card-body p-2" id="ganttContainer" style="overflow-x: auto; overflow-y: auto; max-height: 80vh; position: relative;">
-        <canvas id="ganttCanvas"></canvas>
-        {# ── インライン編集用オーバーレイ（コンテナ内に配置） ── #}
-        <div id="editOverlay" style="display:none; position:absolute; z-index:100;">
-          <select id="editStatus" class="form-select form-select-sm" style="display:none; font-size:11px; padding:1px 4px; height:26px; width:70px;">
-            {% for s in ['未着手','着手','順調','遅れ','完了','停止'] %}
-            <option value="{{ s }}">{{ s }}</option>
-            {% endfor %}
-          </select>
-          <input id="editNumber" type="number" class="form-control form-control-sm" style="display:none; font-size:11px; padding:1px 4px; height:26px; width:56px; text-align:center;" min="0">
+      <div id="ganttWrapper" style="position: relative;">
+        {# 単一スクロールコンテナ（横・縦スクロール） #}
+        <div class="card-body p-2" id="ganttContainer" style="overflow: auto; max-height: 80vh; position: relative;">
+          {# ヘッダー固定（コンテナ内sticky） #}
+          <div id="ganttHeaderWrap" style="position: sticky; top: 0; z-index: 10; background: #fff;">
+            <canvas id="ganttHeaderCanvas"></canvas>
+          </div>
+          <canvas id="ganttCanvas"></canvas>
+          {# ── インライン編集用オーバーレイ（コンテナ内に配置） ── #}
+          <div id="editOverlay" style="display:none; position:absolute; z-index:100;">
+            <select id="editStatus" class="form-select form-select-sm" style="display:none; font-size:11px; padding:1px 4px; height:26px; width:70px;">
+              {% for s in ['未着手','着手','順調','遅れ','完了','停止'] %}
+              <option value="{{ s }}">{{ s }}</option>
+              {% endfor %}
+            </select>
+            <input id="editNumber" type="number" class="form-control form-control-sm" style="display:none; font-size:11px; padding:1px 4px; height:26px; width:56px; text-align:center;" min="0">
+          </div>
         </div>
       </div>
     </div>
@@ -65,7 +72,9 @@
   /* ── 大区分 → 中区分 → タスク の3階層グループ化 ── */
   var categoryOrder = [];
   var categoryMap = {};   /* cat -> { subcatOrder: [], subcatMap: { subcat -> [tasks] } } */
+  var milestoneOnlyTasks = [];
   tasks.forEach(function (t) {
+    if (t.milestone_only) { milestoneOnlyTasks.push(t); return; }
     var cat = t.category || '（未分類）';
     var sub = t.subcategory || '（その他）';
     if (!categoryMap[cat]) {
@@ -110,7 +119,9 @@
 
   var dpr = window.devicePixelRatio || 1;
   var canvas = document.getElementById('ganttCanvas');
+  var headerCanvas = document.getElementById('ganttHeaderCanvas');
   var container = document.getElementById('ganttContainer');
+  var headerWrap = document.getElementById('ganttHeaderWrap');
   var catClickAreas = [];
   var barAreas = [];
   var cellClickAreas = [];  /* 編集可能セル */
@@ -453,7 +464,12 @@
       startDate.getFullYear() + '年 ' + fmtDate(startDate) + ' 〜 ' + fmtDate(endDate);
 
     var leftMargin = nameColW + assignColW + extraColsW;
-    var rowHeight = 32, catRowHeight = 32, subcatRowHeight = 26, headerHeight = 50;
+    var rowHeight = 32, catRowHeight = 32, subcatRowHeight = 26;
+    var baseHeaderHeight = 50;
+    /* イベント行の高さ（マイルストーン数に応じて動的） */
+    var eventRowHeight = 0;
+    if (milestoneOnlyTasks.length > 0) eventRowHeight = Math.max(24, milestoneOnlyTasks.length * 18 + 8);
+    var headerHeight = baseHeaderHeight + eventRowHeight;
     var containerWidth = canvas.parentElement.clientWidth - 20;
     var dayWidth = Math.max(22, Math.floor((containerWidth - leftMargin) / DISPLAY_DAYS));
     var totalWidth = leftMargin + DISPLAY_DAYS * dayWidth + 2;
@@ -484,10 +500,15 @@
     var WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
 
     /* ヘッダー背景 */
-    var hdrGrad = ctx.createLinearGradient(0, 0, 0, headerHeight);
+    var hdrGrad = ctx.createLinearGradient(0, 0, 0, baseHeaderHeight);
     hdrGrad.addColorStop(0, '#f8fafc'); hdrGrad.addColorStop(1, '#e2e8f0');
     ctx.fillStyle = hdrGrad;
-    ctx.fillRect(0, 0, totalWidth, headerHeight);
+    ctx.fillRect(0, 0, totalWidth, baseHeaderHeight);
+    /* イベント行背景 */
+    if (eventRowHeight > 0) {
+      ctx.fillStyle = '#f5f3ff';
+      ctx.fillRect(0, baseHeaderHeight, totalWidth, eventRowHeight);
+    }
 
     /* 日付ヘッダー + グリッド */
     var prevMonth = -1;
@@ -528,22 +549,24 @@
       ctx.beginPath(); ctx.moveTo(x, headerHeight); ctx.lineTo(x, totalHeight); ctx.stroke();
     }
 
-    /* ヘッダー下線 */
+    /* ヘッダー下線（日付行の下） */
+    ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, baseHeaderHeight); ctx.lineTo(totalWidth, baseHeaderHeight); ctx.stroke();
+    /* イベント行下線（全ヘッダーの下） */
     ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(0, headerHeight); ctx.lineTo(totalWidth, headerHeight); ctx.stroke();
 
-    /* 今日の縦線 */
+    /* 今日の列ハイライト（日曜と同じ背景色方式 + 赤枠） */
     var todayOffset = Math.floor((today - startDate) / 86400000);
+    var todayColX = -1;
     if (todayOffset >= 0 && todayOffset < DISPLAY_DAYS) {
-      var todayX = leftMargin + (todayOffset + 0.5) * dayWidth;
+      todayColX = leftMargin + todayOffset * dayWidth;
+      /* ヘッダー部分: 薄い赤背景 */
+      ctx.fillStyle = 'rgba(239,68,68,0.12)';
+      ctx.fillRect(todayColX, 0, dayWidth, headerHeight);
+      /* ボディ部分: 薄い赤背景 */
       ctx.fillStyle = 'rgba(239,68,68,0.06)';
-      ctx.fillRect(leftMargin + todayOffset * dayWidth, headerHeight, dayWidth, totalHeight - headerHeight);
-      ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2;
-      ctx.setLineDash([6, 3]);
-      ctx.beginPath(); ctx.moveTo(todayX, headerHeight); ctx.lineTo(todayX, totalHeight); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = '#ef4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('TODAY', todayX, headerHeight + 10);
+      ctx.fillRect(todayColX, headerHeight, dayWidth, totalHeight - headerHeight);
     }
 
     var rangeStart = new Date(startDate); rangeStart.setHours(0, 0, 0, 0);
@@ -551,7 +574,11 @@
 
     /* 列見出しヘッダー背景 */
     ctx.fillStyle = hdrGrad;
-    ctx.fillRect(0, 0, leftMargin, headerHeight);
+    ctx.fillRect(0, 0, leftMargin, baseHeaderHeight);
+    if (eventRowHeight > 0) {
+      ctx.fillStyle = '#f5f3ff';
+      ctx.fillRect(0, baseHeaderHeight, leftMargin, eventRowHeight);
+    }
 
     /* 列見出し文字 */
     ctx.fillStyle = '#334155'; ctx.textAlign = 'center';
@@ -789,19 +816,12 @@
         var taskStart = parseDate(task.start);
         var taskEnd = parseDate(task.end);
 
-        /* ── マイルストーン ── */
+        /* ── マイルストーン（位置だけ記録、描画は後で） ── */
         if (task.is_milestone) {
           var msOffset = Math.floor((taskStart - rangeStart) / 86400000);
           if (msOffset >= 0 && msOffset < DISPLAY_DAYS) {
             var mlx = leftMargin + (msOffset + 0.5) * dayWidth;
             var lineColor = task.status === '完了' ? '#059669' : '#7c3aed';
-            ctx.strokeStyle = lineColor; ctx.lineWidth = 2;
-            ctx.setLineDash([5, 3]);
-            ctx.beginPath(); ctx.moveTo(mlx, headerHeight); ctx.lineTo(mlx, totalHeight); ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.fillStyle = lineColor; ctx.beginPath();
-            ctx.moveTo(mlx - 5, headerHeight + 2); ctx.lineTo(mlx + 5, headerHeight + 2);
-            ctx.lineTo(mlx, headerHeight + 10); ctx.closePath(); ctx.fill();
             msLabels.push({ x: mlx, name: task.name, color: lineColor, date: fmtDate(taskStart) });
           }
           currentY += rowHeight; return;
@@ -893,17 +913,62 @@
       }); /* end subcatOrder.forEach */
     });
 
-    /* マイルストーンラベル */
-    msLabels.forEach(function (ml) {
-      ctx.save();
-      ctx.translate(ml.x, headerHeight - 6);
-      ctx.rotate(-Math.PI / 2);
-      ctx.font = 'bold 8px "游ゴシック", "Yu Gothic", sans-serif';
-      ctx.fillStyle = ml.color; ctx.textAlign = 'left';
-      var label = ml.name.length > 10 ? ml.name.substring(0, 10) + '…' : ml.name;
-      ctx.fillText(label + ' ' + ml.date, 2, 0);
-      ctx.restore();
+    /* milestone_only タスクをmsLabelsに追加 */
+    milestoneOnlyTasks.forEach(function (t) {
+      var ts = parseDate(t.start);
+      var msOffset = Math.floor((ts - rangeStart) / 86400000);
+      if (msOffset >= 0 && msOffset < DISPLAY_DAYS) {
+        var mlx = leftMargin + (msOffset + 0.5) * dayWidth;
+        var lc = t.status === '完了' ? '#059669' : '#7c3aed';
+        msLabels.push({ x: mlx, name: t.name, color: lc, date: fmtDate(ts) });
+      }
     });
+
+    /* マイルストーン縦線（全タスク描画後に最前面で描画） */
+    msLabels.forEach(function (ml) {
+      ctx.strokeStyle = ml.color; ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath(); ctx.moveTo(ml.x, headerHeight); ctx.lineTo(ml.x, totalHeight); ctx.stroke();
+      ctx.setLineDash([]);
+      /* ▼マーカー */
+      ctx.fillStyle = ml.color; ctx.beginPath();
+      ctx.moveTo(ml.x - 5, headerHeight); ctx.lineTo(ml.x + 5, headerHeight);
+      ctx.lineTo(ml.x, headerHeight + 8); ctx.closePath(); ctx.fill();
+    });
+
+    /* マイルストーンラベル（イベント行に横書き） */
+    if (eventRowHeight > 0 && msLabels.length > 0) {
+      ctx.font = 'bold 10px "游ゴシック", "Yu Gothic", sans-serif';
+      /* イベント行の左端にラベル */
+      ctx.fillStyle = '#7c3aed'; ctx.textAlign = 'left';
+      ctx.fillText('📅 イベント', 6, baseHeaderHeight + 16);
+      /* 各ラベルをイベント行内に配置 */
+      msLabels.forEach(function (ml, idx) {
+        var label = ml.date + ' ' + ml.name;
+        var tw = ctx.measureText(label).width;
+        var lx = ml.x + 4;
+        var ly = baseHeaderHeight + 4 + idx * 18;
+        /* 背景 */
+        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.fillRect(lx - 2, ly, tw + 6, 16);
+        ctx.strokeStyle = ml.color; ctx.lineWidth = 0.5;
+        ctx.strokeRect(lx - 2, ly, tw + 6, 16);
+        /* テキスト */
+        ctx.fillStyle = ml.color; ctx.textAlign = 'left';
+        ctx.font = 'bold 10px "游ゴシック", "Yu Gothic", sans-serif';
+        ctx.fillText(label, lx, ly + 12);
+      });
+    }
+
+    /* 今日の赤枠線（最前面） */
+    if (todayColX >= 0) {
+      ctx.strokeStyle = 'rgba(239,68,68,0.5)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      ctx.strokeRect(todayColX, 0, dayWidth, totalHeight);
+      ctx.fillStyle = '#ef4444'; ctx.font = 'bold 8px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('TODAY', todayColX + dayWidth / 2, headerHeight + 10);
+    }
 
     /* 縦の区切り罫線を最前面に再描画 */
     colDividers.forEach(function (cx) {
@@ -911,6 +976,19 @@
       ctx.lineWidth = (cx === leftMargin) ? 1.5 : 1;
       ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, totalHeight); ctx.stroke();
     });
+
+    /* ── ヘッダー固定Canvas: メインCanvasのヘッダー部分をコピー ── */
+    var hCtx = headerCanvas.getContext('2d');
+    headerCanvas.width = canvas.width;
+    headerCanvas.height = headerHeight * dpr;
+    headerCanvas.style.width = totalWidth + 'px';
+    headerCanvas.style.height = headerHeight + 'px';
+    hCtx.drawImage(canvas, 0, 0, canvas.width, headerHeight * dpr, 0, 0, canvas.width, headerHeight * dpr);
+
+    /* メインCanvasをヘッダー分だけ上にずらして重複を隠す */
+    canvas.style.marginTop = '-' + headerHeight + 'px';
+
+    /* ヘッダーとボディは同一コンテナ内なので横スクロールは自動同期 */
   }
 
   function roundRect(ctx, x, y, w, h, r) {
