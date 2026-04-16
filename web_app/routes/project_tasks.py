@@ -47,8 +47,11 @@ project_tasks_bp = Blueprint(
 )
 
 
-def _get_routine_task_options() -> list[dict]:
-    """全ユーザーの作業登録から定例カテゴリの作業を重複なしで取得する。
+def _get_routine_task_options(user_id: int) -> list[dict]:
+    """ログインユーザーの作業登録から定例カテゴリの作業を取得する。
+
+    Args:
+        user_id: ログインユーザーID。
 
     Returns:
         list[dict]: 定例作業のリスト（task_name, subcategory_name, default_hours）
@@ -56,14 +59,14 @@ def _get_routine_task_options() -> list[dict]:
     from ..database import get_db
     db = get_db()
     rows = db.execute(
-        "SELECT tm.task_name, ts.name AS subcategory_name, MAX(tm.default_hours) AS default_hours"
+        "SELECT tm.task_name, ts.name AS subcategory_name, tm.default_hours"
         " FROM task_master tm"
         " LEFT JOIN task_category tc ON tm.category_id = tc.id"
         " LEFT JOIN task_subcategory ts ON tm.subcategory_id = ts.id"
-        " WHERE tc.name IN ('定例', '定例作業')"
-        "    OR ts.name IN ('定例', '定例作業')"
-        " GROUP BY tm.task_name, ts.name"
-        " ORDER BY tm.task_name"
+        " WHERE tm.user_id = ?"
+        "   AND (tc.name IN ('定例', '定例作業') OR ts.name IN ('定例', '定例作業'))"
+        " ORDER BY tm.task_name",
+        (user_id,),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -122,7 +125,7 @@ def task_list() -> str:
     # 定例スケジュール
     routine_schedules = get_routine_schedules(login_id)
     # 作業登録から「定例作業」カテゴリの作業を取得（全ユーザーから検索）
-    routine_task_options = _get_routine_task_options()
+    routine_task_options = _get_routine_task_options(login_id)
     used_rows = {r["row_number"] for r in routine_schedules}
 
     return render_template(
@@ -539,7 +542,13 @@ def save_routine() -> object:
     except ValueError:
         default_hours = 0.0
 
-    ok = save_routine_task(user_id, task_name, subcategory_name, default_hours, row_number)
+    # 曜日フラグ（チェックボックスから取得）
+    days_list = []
+    for di in range(5):
+        days_list.append("1" if request.form.get(f"day_{di}") else "0")
+    days = ",".join(days_list)
+
+    ok = save_routine_task(user_id, task_name, subcategory_name, default_hours, row_number, days)
     flash("定例スケジュールを登録しました。" if ok else "登録に失敗しました（行番号重複の可能性）。",
           "success" if ok else "warning")
     return redirect(url_for("project_tasks_bp.task_list"))

@@ -3146,7 +3146,7 @@ def get_routine_schedules(user_id: int) -> list[dict]:
     """
     db = get_db()
     rows = db.execute(
-        "SELECT id, user_id, task_name, subcategory_name, default_hours, row_number"
+        "SELECT id, user_id, task_name, subcategory_name, default_hours, row_number, days"
         " FROM routine_schedule WHERE user_id = ? ORDER BY row_number ASC",
         (user_id,),
     ).fetchall()
@@ -3159,6 +3159,7 @@ def save_routine_task(
     subcategory_name: str,
     default_hours: float,
     row_number: int,
+    days: str = "1,1,1,1,1",
 ) -> bool:
     """定例スケジュールを登録（または上書き）する。
 
@@ -3170,6 +3171,7 @@ def save_routine_task(
         subcategory_name: 中区分名
         default_hours: デフォルト工数
         row_number: 行番号（1〜10）
+        days: 曜日フラグ（"1,1,1,1,1" = 月〜金すべて）
 
     Returns:
         bool: 成功時 True
@@ -3180,13 +3182,14 @@ def save_routine_task(
     try:
         db.execute(
             "INSERT INTO routine_schedule"
-            " (user_id, task_name, subcategory_name, default_hours, row_number)"
-            " VALUES (?, ?, ?, ?, ?)"
+            " (user_id, task_name, subcategory_name, default_hours, row_number, days)"
+            " VALUES (?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(user_id, row_number) DO UPDATE SET"
             "   task_name=excluded.task_name,"
             "   subcategory_name=excluded.subcategory_name,"
-            "   default_hours=excluded.default_hours",
-            (user_id, task_name, subcategory_name, default_hours, row_number),
+            "   default_hours=excluded.default_hours,"
+            "   days=excluded.days",
+            (user_id, task_name, subcategory_name, default_hours, row_number, days),
         )
         db.commit()
         return True
@@ -3255,7 +3258,13 @@ def apply_routine_to_week(user_id: int, week_start: str, updated_by: str = "") -
             time_slot = "pm"
             slot_index = row_num - 6
 
+        # 曜日フィルタ（"1,1,1,1,1" = 月〜金すべて）
+        days_str = r.get("days") or "1,1,1,1,1"
+        day_flags = [x.strip() == "1" for x in days_str.split(",")]
+
         for day_idx in range(5):
+            if day_idx < len(day_flags) and not day_flags[day_idx]:
+                continue  # この曜日は対象外
             existing = db.execute(
                 "SELECT task_name FROM weekly_schedule"
                 " WHERE user_id=? AND week_start=? AND day_of_week=?"

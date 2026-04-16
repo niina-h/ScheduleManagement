@@ -43,6 +43,7 @@ from ..models import (
     import_tasks_to_weekly_schedule,
     save_weekly_leave,
     save_weekly_schedule,
+    get_company_holidays,
 )
 from ..log_service import record_operation, ACTION_SCHEDULE_SAVE
 from ..auth_helpers import is_privileged, is_master, can_access_user
@@ -245,6 +246,18 @@ def weekly() -> Any:
     for i, d in enumerate(dates):
         week_events[i] = get_events_for_user_date(target_user_id, d)
 
+    # 当週の会社休日（日付文字列のセット）
+    company_holidays: list[dict] = get_company_holidays()
+    company_holiday_dates: set[str] = {h["holiday_date"] for h in company_holidays}
+    week_company_holidays: dict[int, str] = {}
+    for i, d in enumerate(dates):
+        if d in company_holiday_dates:
+            # 会社休日名を取得
+            for h in company_holidays:
+                if h["holiday_date"] == d:
+                    week_company_holidays[i] = h.get("holiday_name", "会社休日")
+                    break
+
     return render_template(
         "schedule.html",
         user=user,
@@ -270,6 +283,7 @@ def weekly() -> Any:
         active_project_tasks=active_project_tasks,
         week_events=week_events,
         privileged=is_privileged(session.get("user_role", "")),
+        week_company_holidays=week_company_holidays,
     )
 
 

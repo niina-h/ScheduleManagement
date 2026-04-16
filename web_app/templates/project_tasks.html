@@ -296,6 +296,16 @@
                     </select>
                   </div>
                   <div class="col-auto">
+                    <label class="form-label small mb-0">曜日</label>
+                    <div class="d-flex gap-1">
+                      {% for di, dname in [(0,'月'),(1,'火'),(2,'水'),(3,'木'),(4,'金')] %}
+                      <label class="form-check-label small" style="cursor:pointer;">
+                        <input type="checkbox" name="day_{{ di }}" value="1" checked class="form-check-input" style="width:14px;height:14px;">{{ dname }}
+                      </label>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  <div class="col-auto">
                     <button type="submit" class="btn btn-sm btn-warning">登録</button>
                   </div>
                 </div>
@@ -314,19 +324,26 @@
             <table class="table table-sm table-hover mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width:12%">行</th>
+                  <th style="width:10%">行</th>
                   <th>作業名</th>
-                  <th style="width:12%">工数h</th>
-                  <th style="width:10%"></th>
+                  <th style="width:20%">曜日</th>
+                  <th style="width:10%">工数h</th>
+                  <th style="width:8%"></th>
                 </tr>
               </thead>
               <tbody>
                 {% for r in routine_schedules %}
+                {% set day_flags = (r.days or '1,1,1,1,1').split(',') %}
                 <tr>
                   <td class="small text-center">
                     {% if r.row_number <= 5 %}AM{{ r.row_number }}{% else %}PM{{ r.row_number - 5 }}{% endif %}
                   </td>
                   <td class="small">{{ r.task_name }}</td>
+                  <td class="small text-center">
+                    {% for di, dn in [(0,'月'),(1,'火'),(2,'水'),(3,'木'),(4,'金')] %}
+                    <span class="{% if day_flags[di]|trim == '1' %}text-primary fw-bold{% else %}text-muted{% endif %}" style="margin:0 1px;">{{ dn }}</span>
+                    {% endfor %}
+                  </td>
                   <td class="small text-center">{{ r.default_hours }}h</td>
                   <td class="text-center">
                     <form method="post" action="{{ url_for('project_tasks_bp.delete_routine', routine_id=r.id) }}"
@@ -337,7 +354,7 @@
                   </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="4" class="text-center text-muted small py-2">定例が登録されていません</td></tr>
+                <tr><td colspan="5" class="text-center text-muted small py-2">定例が登録されていません</td></tr>
                 {% endfor %}
               </tbody>
             </table>

@@ -130,11 +130,13 @@
         <tr class="leave-row">
           <td colspan="2" class="text-center text-muted small">休暇</td>
           {% for day in range(5) %}
-          {% set ltype = leave_data.get(day, '') if leave_data is defined and leave_data else '' %}
+          {% set is_company_holiday = week_company_holidays is defined and day in week_company_holidays %}
+          {% set ltype = '祝日' if is_company_holiday else (leave_data.get(day, '') if leave_data is defined and leave_data else '') %}
           <td class="text-center">
             <select name="leave_{{ day }}" class="form-select form-select-sm leave-select"
                     data-day="{{ day }}" data-date="{{ week_dates[day] }}"
-                    onchange="applyLeaveType({{ day }}, this.value)">
+                    onchange="applyLeaveType({{ day }}, this.value)"
+                    {% if is_company_holiday %}disabled{% endif %}>
               <option value="" {% if ltype == '' %}selected{% endif %}>なし</option>
               <option value="1日有休" {% if ltype == '1日有休' %}selected{% endif %}>1日有休</option>
               <option value="AM半休" {% if ltype == 'AM半休' %}selected{% endif %}>AM半休</option>
@@ -143,6 +145,10 @@
               <option value="特休" {% if ltype == '特休' %}selected{% endif %}>特休</option>
               <option value="その他休み" {% if ltype == 'その他休み' %}selected{% endif %}>その他休み</option>
             </select>
+            {% if is_company_holiday %}
+            <input type="hidden" name="leave_{{ day }}" value="祝日">
+            <small class="text-danger d-block" style="font-size:0.65rem;">{{ week_company_holidays[day] }}</small>
+            {% endif %}
           </td>
           {% endfor %}
         </tr>

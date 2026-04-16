@@ -252,6 +252,7 @@
 | `/mail-report/preview` | GET | mail_report_preview.html | 管理職・マスタ用メールプレビュー |
 | `/mail-report/save-address` | POST | — | 管理職・マスタ用宛先保存 |
 | `/mail-report/save-friday-report` | POST | — | 金曜日管理業務報告テキスト保存 |
+| `/mail-report/save-mgr-remarks` | POST | — | マスタ備考欄保存（印刷のみ表示） |
 | `/mail-report/download_eml` | GET | — | EMLダウンロード |
 | `/mail-report/user-preview` | GET | mail_user_preview.html | ユーザー用日報メールプレビュー |
 | `/mail-report/save-user-address` | POST | — | ユーザー用宛先保存 |
@@ -264,6 +265,22 @@
 |-----|---------|------|------|
 | `/help` | GET | help.html | ヘルプトップ |
 | `/help/<page>` | GET | help.html | 各ページヘルプ |
+
+### 4-9. タスク管理・ガントチャート
+| URL | メソッド | 画面 | 概要 |
+|-----|---------|------|------|
+| `/project-tasks/` | GET | project_tasks.html | タスク一覧（タスク/定例/イベント タブ） |
+| `/project-tasks/add` | POST | — | タスク追加（イベントは全ユーザー可） |
+| `/project-tasks/update/<id>` | POST | — | タスク更新 |
+| `/project-tasks/bulk-update` | POST | — | タスク一括更新 |
+| `/project-tasks/delete/<id>` | POST | — | タスク削除 |
+| `/project-tasks/gantt` | GET | project_tasks_gantt.html | ガントチャート（ヘッダー固定・イベント行・今日赤枠） |
+| `/project-tasks/gantt/export` | GET | — | ガントチャートExcel出力（凡例・印刷設定付き） |
+| `/project-tasks/gantt/update-dates/<id>` | POST | — | ガントバードラッグ日程変更 |
+| `/project-tasks/gantt/update-fields/<id>` | POST | — | ガントインライン編集（状態・進捗） |
+| `/project-tasks/gantt/reorder` | POST | — | ガント行並べ替え |
+| `/project-tasks/overview` | GET | project_tasks_overview.html | 全体ステータスダッシュボード |
+| `/project-tasks/dashboard` | GET | project_tasks_dashboard.html | 進捗ダッシュボード |
 
 ---
 
