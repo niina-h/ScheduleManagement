@@ -177,15 +177,24 @@
       <div class="alert alert-info py-2 small">
         💡 「📋 本文をコピー（テキスト）」ボタンでプレーンテキストとしてもコピーできます。
       </div>
-      <h6 class="mt-3">日報の内容</h6>
+      <h6 class="mt-3">ユーザー用日報メール</h6>
       <ul>
-        <li><strong>業務内容</strong>：タスク管理画面で登録したプロジェクトタスクの進捗状況が表示されます。</li>
-        <li><strong>翌営業日の予定</strong>：翌営業日の週間予定が表示されます（定例作業は除外）。</li>
-        <li><strong>振り返り・対策</strong>：日次実績で入力した内容が反映されます。</li>
+        <li>日次実績画面の「📧 日報メール」から開きます。</li>
+        <li>件名は「日次作業報告「苗字」：日付（曜日）」形式で自動生成されます。</li>
+        <li>本文テンプレートは編集・保存可能です。</li>
+        <li>宛先（TO/CC/BCC）はユーザーごとに個別保存されます。</li>
+      </ul>
+      <h6 class="mt-3">マスタ用メール本文</h6>
+      <ul>
+        <li><strong>業務内容</strong>：タスク管理のタスクが状態先頭文字（【未】【順】【完】等）付きで表示されます（イベント・未分類は除外）。</li>
+        <li>70文字を超える行は自動改行されます。</li>
+        <li><strong>メンバーAM/PM</strong>：各メンバーの実績サマリが表示されます（定例作業・AM1行目・PM最終行は除外）。</li>
+        <li>金曜日は「管理業務のご報告」セクションが追加され、週間の大区分別実績が自動集計されます。</li>
+        <li><strong>備考欄</strong>（マスタのみ）：印刷時のみメール下部に表示される自由記述欄があります。</li>
       </ul>
       <h6 class="mt-3">メール設定</h6>
       <ul>
-        <li>管理画面からメール送信先（TO/CC/BCC）を設定できます。</li>
+        <li>プレビュー画面からメール送信先（TO/CC/BCC）を設定・保存できます。</li>
         <li>BCC宛先は受信者に表示されないため、報告先の追加などに利用できます。</li>
       </ul>
     </div></div>
@@ -195,17 +204,24 @@
   <div class="tab-pane fade {% if page_name == 'project_tasks' %}show active{% endif %}" id="tab-project-tasks">
     <div class="card"><div class="card-body">
       <h5 class="card-title">📋 タスク管理の使い方</h5>
-      <p class="text-muted small">管理職・マスタ権限のユーザーのみ利用できます。</p>
+      <p class="text-muted small">全ユーザーが利用可能です。自分に割り当てられたタスクのみ表示されます。</p>
       <h6>概要</h6>
-      <p>プロジェクト単位のタスクを登録し、期間と状態に基づいて進捗率を自動管理します。ここで登録したタスクがメール日報の業務内容に反映されます。</p>
+      <p>プロジェクト単位のタスクを登録し、期間と状態に基づいて進捗率を自動管理します。登録したタスクはメール日報の業務内容に反映され、週間予定・実績入力のタスク名予測に★付きで表示されます。</p>
       <h6 class="mt-3">タスクの登録</h6>
       <ol>
         <li>ナビバーの「タスク管理」からアクセスします。</li>
-        <li>「＋ タスク追加」ボタンで登録フォームを開きます。</li>
+        <li>「＋ タスク追加」ボタンで登録フォームを開きます（連続登録可能 — 追加後もフォームは開いたまま）。</li>
         <li>大区分・中区分を選択し、タスク名（必須）・対応内容・開始日（必須）・終了日（必須）を入力します。</li>
-        <li>状態を選択し、必要に応じて遅延日数・進捗率を入力して「追加」ボタンを押します。</li>
+        <li>担当者1はログインユーザーがデフォルト選択されます。担当者2も設定可能です。</li>
+        <li>状態を選択し、進捗率を入力して「追加」ボタンを押します。</li>
       </ol>
-      <h6 class="mt-3">状態と進捗率の自動計算</h6>
+      <h6 class="mt-3">絞り込み・完了表示</h6>
+      <ul>
+        <li><strong>中区分フィルター</strong>：テーブル上部のプルダウンで中区分を絞り込みできます（実際に使用中の中区分のみ選択可）。</li>
+        <li><strong>完了を表示</strong>：チェックを入れると完了タスクも表示されます（デフォルトは非表示）。</li>
+        <li>フィルター状態はページ更新後も保持されます。</li>
+      </ul>
+      <h6 class="mt-3">状態と進捗率</h6>
       <table class="table table-sm table-bordered small">
         <thead class="table-light">
           <tr><th>状態</th><th>進捗率</th></tr>
@@ -214,26 +230,31 @@
           <tr><td>未着手</td><td>0%（固定）</td></tr>
           <tr><td>着手</td><td>10%（固定）</td></tr>
           <tr><td>順調</td><td>経過日数 ÷ 全体日数 × 100（上限95%）</td></tr>
-          <tr><td>遅れ</td><td>（経過日数 − 遅延日数）÷ 全体日数 × 100</td></tr>
+          <tr><td>遅れ</td><td>終了日からの経過日数を自動計算</td></tr>
           <tr><td>完了</td><td>100%（固定）</td></tr>
           <tr><td>停止</td><td>現在の進捗率で凍結</td></tr>
         </tbody>
       </table>
       <h6 class="mt-3">遅延日数</h6>
       <ul>
-        <li>「遅れ」状態のタスクに遅延日数を入力すると、その日数分を差し引いた進捗率が自動計算されます。</li>
-        <li>例：全体30日・経過20日・遅延5日 → (20−5)÷30×100 = 50%</li>
+        <li>遅延日数は手入力不要です。状態を「遅れ」に変更すると、終了日から今日までの日数が自動計算されます。</li>
       </ul>
       <h6 class="mt-3">インライン編集</h6>
       <ul>
-        <li>一覧の各行で直接タスク名・対応内容・日付・状態・遅延日数・進捗率を編集し、「保存」ボタンで更新できます。</li>
+        <li>一覧の各行で直接タスク名・対応内容・日付・状態・進捗率を編集し、「一括保存」ボタンで更新できます。</li>
+        <li>中区分を変更すると大区分も自動で連動します。</li>
         <li>チェックボックスで選択した行を一括削除できます（選択行は赤くハイライトされます）。</li>
       </ul>
-      <h6 class="mt-3">関連画面</h6>
+      <h6 class="mt-3">定例作業</h6>
       <ul>
-        <li><strong>ガントチャート</strong>：タスクの日程をバー形式で視覚的に表示します（「ガントチャート」タブを参照）。</li>
-        <li><strong>全体ステータス</strong>：プロジェクト全体の進捗状況を俯瞰できます（「全体ステータス」タブを参照）。</li>
-        <li><strong>進捗ダッシュボード</strong>：担当者別の進捗状況を確認できます。</li>
+        <li>定例タブで定例作業を登録できます。曜日（月〜金）を選択して適用日を指定できます。</li>
+        <li>作業登録で大区分「定例」に登録された作業が選択候補に表示されます。</li>
+      </ul>
+      <h6 class="mt-3">イベント</h6>
+      <ul>
+        <li>イベントタブで会議・行事などを登録できます（全ユーザーが登録可能）。</li>
+        <li>関係者は複数選択でき、登録者がデフォルトで選択されます。</li>
+        <li>MSチェックを付けるとガントチャートのイベント行にマイルストーンとして表示されます。</li>
       </ul>
     </div></div>
   </div>
@@ -242,54 +263,51 @@
   <div class="tab-pane fade {% if page_name == 'gantt' %}show active{% endif %}" id="tab-gantt">
     <div class="card"><div class="card-body">
       <h5 class="card-title">📊 ガントチャートの使い方</h5>
-      <p class="text-muted small">管理職・マスタ権限のユーザーのみ編集できます（一般ユーザーは閲覧のみ）。</p>
+      <p class="text-muted small">全ユーザーが編集可能です。自分に割り当てられたタスクが表示されます。</p>
       <h6>基本操作</h6>
       <ul>
         <li>タスク管理画面の「ガントチャート」ボタン、またはナビバーからアクセスします。</li>
-        <li>大区分でグループ化されたタスクがバーチャートで表示されます。</li>
+        <li>大区分でグループ化されたタスクがバーチャートで表示されます（ヘッダー固定）。</li>
         <li>◀前へ・次へ▶ ボタンで表示期間（4週間）をスクロールできます。</li>
         <li>「全開閉」ボタンでカテゴリの展開・折りたたみを一括切り替えできます。</li>
-        <li>カテゴリ行をクリックすると、そのカテゴリの展開・折りたたみを切り替えます。</li>
+        <li>「完了を表示」チェックで完了タスクの表示/非表示を切り替えます（デフォルトは非表示）。</li>
+        <li>今日の列は赤枠でハイライト表示されます。</li>
       </ul>
-      <h6 class="mt-3">左側列の表示</h6>
-      <table class="table table-sm table-bordered small">
-        <thead class="table-light">
-          <tr><th>列</th><th>内容</th><th>編集</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>項目名</td><td>タスク名を表示</td><td>-</td></tr>
-          <tr><td>担当</td><td>担当者名を表示</td><td>-</td></tr>
-          <tr><td>状態</td><td>タスクの状態（未着手・着手・順調・遅れ・完了・停止）</td><td>クリックで変更</td></tr>
-          <tr><td>遅延</td><td>進捗と日程から自動算出（遅れ: -N日 / 進み: +N日）</td><td>自動計算</td></tr>
-          <tr><td>進捗</td><td>進捗率（%）</td><td>クリックで入力</td></tr>
-        </tbody>
-      </table>
-      <h6 class="mt-3">バーのドラッグ操作（管理職・マスタのみ）</h6>
+      <h6 class="mt-3">イベント行</h6>
+      <ul>
+        <li>日付ヘッダーの下にイベント行があり、マイルストーン（MSチェック付きイベント）が表示されます。</li>
+        <li>マイルストーンは紫の縦線で全タスク領域を貫通して表示されます。</li>
+      </ul>
+      <h6 class="mt-3">バーのドラッグ操作</h6>
       <ul>
         <li><strong>バー中央をドラッグ</strong>：タスクの日程を前後にスライドします（開始日・終了日が同時に変更）。</li>
         <li><strong>バー左端をドラッグ</strong>：開始日のみ変更します。</li>
         <li><strong>バー右端をドラッグ</strong>：終了日のみ変更します。</li>
+        <li><strong>後続タスク連動</strong>：バーを移動すると、同じ中区分内で下にあるタスクも同じ日数分自動移動します。</li>
         <li>ドラッグ後に自動でサーバーに保存されます。</li>
       </ul>
-      <h6 class="mt-3">インライン編集（管理職・マスタのみ）</h6>
+      <h6 class="mt-3">インライン編集</h6>
       <ul>
         <li>状態・進捗の各セルをクリックすると、その場で編集できます。</li>
         <li>状態はプルダウンで選択、進捗率は数値を入力してEnterで確定します。</li>
-        <li>遅延列は進捗率と日程から自動計算されます（遅れている場合は赤字で -N日、進んでいる場合は緑字で +N日）。</li>
         <li>変更は即座にサーバーに保存されます。</li>
       </ul>
       <h6 class="mt-3">Excel出力</h6>
       <ul>
         <li>「📥 Excel出力」ボタンで、現在表示中の期間のガントチャートをExcelファイルとしてダウンロードできます。</li>
+        <li>完了表示のON/OFFが出力にも反映されます（完了タスクはグレー表示）。</li>
+        <li>今日の列は赤枠でハイライト、凡例行付き、横1枚印刷設定済み。</li>
+        <li>印刷ヘッダーに「商品開発室業務進捗」と出力日が記載されます。</li>
       </ul>
       <h6 class="mt-3">バーの色</h6>
       <ul>
         <li><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#93c5fd,#3b82f6);border-radius:3px;vertical-align:middle;"></span> 青：予定期間</li>
-        <li><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#6ee7b7,#10b981);border-radius:3px;vertical-align:middle;"></span> 緑：進捗（実績）/ 完了タスク</li>
+        <li><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#6ee7b7,#10b981);border-radius:3px;vertical-align:middle;"></span> 緑：進捗（実績）</li>
+        <li><span style="display:inline-block;width:14px;height:14px;background:#1E40AF;border-radius:3px;vertical-align:middle;"></span> 濃い青：完了タスク</li>
         <li><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#fca5a5,#ef4444);border-radius:3px;vertical-align:middle;"></span> 赤：遅延</li>
         <li><span style="display:inline-block;width:14px;height:14px;background:linear-gradient(135deg,#e5e7eb,#d1d5db);border-radius:3px;vertical-align:middle;"></span> グレー：停止中タスク</li>
         <li><span style="display:inline-block;width:2px;height:14px;border-left:2px dashed #7c3aed;vertical-align:middle;"></span> 紫破線：マイルストーン</li>
-        <li><span style="display:inline-block;width:2px;height:14px;border-left:2px dashed #ef4444;vertical-align:middle;"></span> 赤破線：今日の位置</li>
+        <li><span style="display:inline-block;width:14px;height:14px;background:rgba(239,68,68,0.12);border:2px solid rgba(239,68,68,0.5);border-radius:2px;vertical-align:middle;"></span> 赤枠：今日の列</li>
       </ul>
     </div></div>
   </div>
@@ -298,7 +316,7 @@
   <div class="tab-pane fade {% if page_name == 'overview' %}show active{% endif %}" id="tab-overview">
     <div class="card"><div class="card-body">
       <h5 class="card-title">📈 全体ステータスの使い方</h5>
-      <p class="text-muted small">管理職・マスタ権限のユーザーのみアクセスできます。</p>
+      <p class="text-muted small">管理職・マスタ権限のユーザーがアクセスできます。イベント・マイルストーンは集計対象外です。</p>
       <h6>概要</h6>
       <p>プロジェクト全体のタスク進捗をグラフとテーブルで俯瞰できるダッシュボード画面です。</p>
       <h6 class="mt-3">サマリーカード</h6>
