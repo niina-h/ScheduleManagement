@@ -37,13 +37,10 @@
     {# ── タスク一覧テーブル ── #}
     {% set ns = namespace(current_cat='') %}
     <div class="card shadow-sm mb-3">
-      <div class="card-header bg-primary text-white fw-semibold small py-1 d-flex justify-content-between align-items-center">
+      <div class="card-header bg-primary text-white fw-semibold small py-1 d-flex align-items-center gap-3">
         <span>📋 タスク一覧</span>
-        {% if privileged %}
         <button type="button" class="btn btn-outline-light btn-sm py-0" data-bs-toggle="collapse" data-bs-target="#addTaskForm">＋ タスク追加</button>
-        {% endif %}
       </div>
-      {% if privileged %}
       <div class="collapse" id="addTaskForm">
         <div class="card-body border-bottom p-2">
           <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}">
@@ -81,7 +78,7 @@
                 <select name="assigned_to" class="form-select form-select-sm" style="font-size:0.75rem;">
                   <option value="">--</option>
                   {% for u in users %}
-                  <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
+                  <option value="{{ u.id }}" {% if u.id == session.user_id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
                   {% endfor %}
                 </select>
               </div>
@@ -124,13 +121,29 @@
           </form>
         </div>
       </div>
-      {% endif %}
       {% if privileged %}
       <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="subcat_filter" id="bulkFormFilter" value="">
       {% endif %}
+      <div class="card-body p-1 pb-0">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <label class="form-label small fw-semibold mb-0">絞り込み：</label>
+          <select id="filterSubcat" class="form-select form-select-sm" style="width:180px; font-size:0.8rem;">
+            <option value="">すべて</option>
+            {% set used_subcats = tasks | rejectattr('is_event') | map(attribute='subcategory_name') | select | unique | sort %}
+            {% for sn in used_subcats %}
+            <option value="{{ sn }}">{{ sn }}</option>
+            {% endfor %}
+          </select>
+          <label class="form-check-label small ms-3" style="cursor:pointer; white-space:nowrap;">
+            <input type="checkbox" id="showCompleted" class="form-check-input" style="width:14px;height:14px;">
+            完了を表示
+          </label>
+        </div>
+      </div>
       <div class="card-body p-0">
-        <div style="max-height: 50vh; overflow-y: auto;">
+        <div style="max-height: 60vh; overflow-y: auto;">
         <table class="table table-sm table-hover mb-0" id="taskTable">
           <thead class="table-light" style="position: sticky; top: 0; z-index: 1;">
             <tr>
@@ -150,11 +163,11 @@
             {% for t in tasks if not t.is_event %}
             {% if (t.category_name or '（なし）') != ns.current_cat %}
               {% set ns.current_cat = t.category_name or '（なし）' %}
-              <tr class="table-secondary">
+              <tr class="table-secondary cat-header-row" data-cat="{{ ns.current_cat }}">
                 <td colspan="{{ 10 if privileged else 9 }}" class="fw-bold">{{ ns.current_cat }}</td>
               </tr>
             {% endif %}
-            <tr{% if t.is_milestone %} class="table-warning"{% endif %}>
+            <tr class="task-row{% if t.is_milestone %} table-warning{% endif %}" data-subcat="{{ t.subcategory_name or '' }}" data-cat="{{ t.category_name or '' }}" data-status="{{ t.status }}">
               {% if privileged %}
               <input type="hidden" form="bulkForm" name="task_id" value="{{ t.id }}">
               <input type="hidden" form="bulkForm" name="category_id_{{ t.id }}" value="{{ t.category_id or '' }}">
@@ -256,13 +269,10 @@
     <div class="row g-3 mb-2">
       <div class="col-md-6">
         <div class="card shadow-sm h-100">
-          <div class="card-header fw-semibold small py-1 d-flex justify-content-between align-items-center" style="background:#6d4c41;color:#fff;">
+          <div class="card-header fw-semibold small py-1 d-flex align-items-center gap-3" style="background:#6d4c41;color:#fff;">
             <span>🔁 定例 <span class="ms-2 small fw-normal text-warning">ガントチャート対象外・反映で定例行をキープ</span></span>
-            {% if privileged %}
             <button type="button" class="btn btn-outline-light btn-sm py-0" data-bs-toggle="collapse" data-bs-target="#addRoutineForm">＋ 定例追加</button>
-            {% endif %}
           </div>
-          {% if privileged %}
           <div class="collapse" id="addRoutineForm">
             <div class="card-body border-bottom p-2">
               {% if routine_task_options %}
@@ -318,7 +328,6 @@
               {% endif %}
             </div>
           </div>
-          {% endif %}
           <div class="card-body p-2">
             {# 登録済み一覧 #}
             <table class="table table-sm table-hover mb-0">
@@ -372,7 +381,7 @@
     {# ── イベント一覧テーブル ── #}
     {% set events = tasks | selectattr('is_event') | list %}
     <div class="card shadow-sm mb-3">
-      <div class="card-header bg-success text-white fw-semibold small py-1 d-flex justify-content-between align-items-center">
+      <div class="card-header bg-success text-white fw-semibold small py-1 d-flex align-items-center gap-3">
         <span>📅 イベント一覧（会議・行事など）</span>
         <button type="button" class="btn btn-outline-light btn-sm py-0" data-bs-toggle="collapse" data-bs-target="#addEventForm">＋ イベント追加</button>
       </div>
@@ -564,6 +573,90 @@
 #eventTable .ev-start-time, #eventTable .ev-end-time { width: 100% !important; min-width: 0; font-size: 0.75rem; padding: 1px 2px; }
 </style>
 <script>
+/* ── 中区分フィルター + 完了非表示（URLパラメータで保持） ── */
+(function() {
+  var filterSel = document.getElementById('filterSubcat');
+  var showCompCb = document.getElementById('showCompleted');
+  if (!filterSel) return;
+
+  // URLパラメータから復元
+  var params = new URLSearchParams(window.location.search);
+  var savedSubcat = params.get('subcat_filter') || '';
+  var savedShowComp = params.get('show_completed') === '1';
+  if (savedSubcat) filterSel.value = savedSubcat;
+  if (showCompCb) showCompCb.checked = savedShowComp;
+
+  function applyFilter() {
+    var subcatVal = filterSel.value;
+    var showComp = showCompCb ? showCompCb.checked : true;
+    var taskRows = document.querySelectorAll('#taskTable .task-row');
+    var catHeaders = document.querySelectorAll('#taskTable .cat-header-row');
+
+    // 全行を一旦表示
+    taskRows.forEach(function(r) { r.style.display = ''; });
+    catHeaders.forEach(function(r) { r.style.display = ''; });
+
+    // フィルタ適用
+    taskRows.forEach(function(r) {
+      var hide = false;
+      if (subcatVal && r.dataset.subcat !== subcatVal) hide = true;
+      if (!showComp && r.dataset.status === '完了') hide = true;
+      r.style.display = hide ? 'none' : '';
+    });
+
+    // タスクが全て非表示のカテゴリヘッダーも非表示
+    catHeaders.forEach(function(hdr) {
+      var cat = hdr.dataset.cat;
+      var hasVisible = false;
+      taskRows.forEach(function(r) {
+        if (r.dataset.cat === cat && r.style.display !== 'none') hasVisible = true;
+      });
+      if (!hasVisible) hdr.style.display = 'none';
+    });
+  }
+
+  function saveParams() {
+    var url = new URL(window.location);
+    if (filterSel.value) {
+      url.searchParams.set('subcat_filter', filterSel.value);
+    } else {
+      url.searchParams.delete('subcat_filter');
+    }
+    if (showCompCb && showCompCb.checked) {
+      url.searchParams.set('show_completed', '1');
+    } else {
+      url.searchParams.delete('show_completed');
+    }
+    window.history.replaceState({}, '', url);
+    var bf = document.getElementById('bulkFormFilter');
+    if (bf) bf.value = filterSel.value;
+  }
+
+  filterSel.addEventListener('change', function() { saveParams(); applyFilter(); });
+  if (showCompCb) showCompCb.addEventListener('change', function() { saveParams(); applyFilter(); });
+
+  // 初期適用
+  var bf = document.getElementById('bulkFormFilter');
+  if (bf) bf.value = filterSel.value;
+  applyFilter();
+})();
+
+/* ── タスク追加後にフォームを開いたままにする ── */
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('add_open') === '1') {
+    var form = document.getElementById('addTaskForm');
+    if (form) {
+      var bsCollapse = new bootstrap.Collapse(form, { show: true });
+    }
+    // URLからadd_openを消す
+    params.delete('add_open');
+    var url = new URL(window.location);
+    url.search = params.toString();
+    window.history.replaceState({}, '', url);
+  }
+})();
+
 document.addEventListener('DOMContentLoaded', function () {
   /* 大区分→中区分連動 */
   var catSelect = document.getElementById('add-cat');

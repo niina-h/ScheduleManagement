@@ -94,21 +94,8 @@ def task_list() -> str:
     login_dept = session.get("user_dept", "")
     privileged = is_privileged(login_role)
 
-    # 権限別タスク取得
-    if login_role == "マスタ":
-        # マスタ: 同一部署のメンバーのタスクのみ
-        accessible = get_accessible_users(login_id, login_role, login_dept)
-        accessible_ids = [u["id"] for u in accessible]
-        tasks = get_all_project_tasks(user_ids=accessible_ids)
-    elif login_role == "管理職":
-        # 管理職: 担当メンバー全員のタスク
-        accessible = get_accessible_users(login_id, login_role, login_dept)
-        accessible_ids = [u["id"] for u in accessible]
-        tasks = get_all_project_tasks(user_ids=accessible_ids)
-    elif privileged:
-        tasks = get_all_project_tasks()
-    else:
-        tasks = get_all_project_tasks(assigned_to=login_id)
+    # 全ユーザー共通: 自分に割り当てられたタスクのみ表示
+    tasks = get_all_project_tasks(assigned_to=login_id)
 
     categories = get_all_categories()
     subcategories = get_all_subcategories()
@@ -134,7 +121,7 @@ def task_list() -> str:
         categories=categories,
         subcategories=subcategories,
         statuses=PROJECT_TASK_STATUSES,
-        privileged=privileged,
+        privileged=True,
         users=users,
         routine_schedules=routine_schedules,
         routine_task_options=routine_task_options,
@@ -152,8 +139,6 @@ def add_task() -> object:
         object: 一覧画面へのリダイレクト
     """
     is_event_add = request.form.get("is_event") == "1"
-    if not is_event_add and not is_privileged(session.get("user_role", "")):
-        abort(403)
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
@@ -186,10 +171,11 @@ def add_task() -> object:
         delay_days = max(0, int(delay_str))
     except ValueError:
         delay_days = 0
+    # 担当者1: 未選択ならログインユーザーを自動セット
     try:
-        assigned_to = int(assigned_to_str) if assigned_to_str else None
+        assigned_to = int(assigned_to_str) if assigned_to_str else int(session["user_id"])
     except ValueError:
-        assigned_to = None
+        assigned_to = int(session["user_id"])
     assigned_to_2_str = request.form.get("assigned_to_2", "").strip()
     try:
         assigned_to_2 = int(assigned_to_2_str) if assigned_to_2_str else None
@@ -227,7 +213,7 @@ def add_task() -> object:
         planned_hours=planned_hours,
     )
     flash("タスクを追加しました。", "success")
-    return redirect(url_for("project_tasks_bp.task_list"))
+    return redirect(url_for("project_tasks_bp.task_list") + "?add_open=1")
 
 
 @project_tasks_bp.route("/update/<int:task_id>", methods=["POST"])
@@ -240,8 +226,6 @@ def update_task(task_id: int) -> object:
     Returns:
         object: 一覧画面へのリダイレクト
     """
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
@@ -326,8 +310,6 @@ def bulk_update_tasks() -> object:
     Returns:
         object: 一覧画面へのリダイレクト
     """
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
@@ -424,7 +406,11 @@ def bulk_update_tasks() -> object:
     if deleted_count:
         msgs.append(f"{deleted_count}件削除")
     flash("、".join(msgs) + "しました。" if msgs else "変更はありませんでした。", "success")
-    return redirect(url_for("project_tasks_bp.task_list"))
+    subcat_f = request.form.get("subcat_filter", "")
+    redir = url_for("project_tasks_bp.task_list")
+    if subcat_f:
+        redir += f"?subcat_filter={subcat_f}"
+    return redirect(redir)
 
 
 @project_tasks_bp.route("/import-brabio", methods=["POST"])
@@ -439,8 +425,6 @@ def import_brabio() -> object:
     """
     import pathlib
 
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
@@ -502,8 +486,6 @@ def delete_task(task_id: int) -> object:
     Returns:
         object: 一覧画面へのリダイレクト
     """
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
@@ -832,9 +814,6 @@ def gantt_update_dates(task_id: int) -> tuple:
     Returns:
         tuple: (Response, status_code) JSON形式のレスポンス。
     """
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
-
     # JSON APIのCSRFチェック（X-CSRF-Token ヘッダー）
     csrf = request.headers.get("X-CSRF-Token", "")
     if csrf != session.get("csrf_token"):
@@ -854,13 +833,19 @@ def gantt_update_dates(task_id: int) -> tuple:
     if not start_date or not end_date:
         return jsonify({"error": "開始日・終了日は必須です"}), 400
 
-    # 日付形式の検証
     from datetime import datetime
     try:
-        datetime.strptime(start_date, "%Y-%m-%d")
-        datetime.strptime(end_date, "%Y-%m-%d")
+        new_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        new_end = datetime.strptime(end_date, "%Y-%m-%d").date()
     except ValueError:
         return jsonify({"error": "日付形式が不正です（YYYY-MM-DD）"}), 400
+
+    # 元の日付との差分を計算（後続タスク連動用）
+    try:
+        old_end = date.fromisoformat(existing["end_date"])
+    except (ValueError, TypeError):
+        old_end = new_end
+    shift_days: int = (new_end - old_end).days
 
     update_project_task(
         task_id=task_id,
@@ -879,14 +864,46 @@ def gantt_update_dates(task_id: int) -> tuple:
         is_milestone=existing.get("is_milestone", 0),
     )
 
-    return jsonify({"ok": True, "start_date": start_date, "end_date": end_date}), 200
+    # 後続タスク連動: cascade_ids が指定されていれば同じ日数分ずらす
+    cascaded: list[dict] = []
+    cascade_ids: list[int] = data.get("cascade_ids", [])
+    if shift_days != 0 and cascade_ids:
+        for cid in cascade_ids:
+            ct = get_project_task_by_id(int(cid))
+            if not ct:
+                continue
+            try:
+                cs = date.fromisoformat(ct["start_date"])
+                ce = date.fromisoformat(ct["end_date"])
+            except (ValueError, TypeError):
+                continue
+            ns = (cs + timedelta(days=shift_days)).isoformat()
+            ne = (ce + timedelta(days=shift_days)).isoformat()
+            update_project_task(
+                task_id=int(cid),
+                category_id=ct.get("category_id"),
+                subcategory_id=ct.get("subcategory_id"),
+                task_name=ct["task_name"],
+                description=ct.get("description", ""),
+                start_date=ns, end_date=ne,
+                status=ct["status"],
+                progress=ct.get("progress", 0),
+                delay_days=ct.get("delay_days", 0),
+                updated_by=session.get("user_name", ""),
+                assigned_to=ct.get("assigned_to"),
+                assigned_to_2=ct.get("assigned_to_2"),
+                is_milestone=ct.get("is_milestone", 0),
+            )
+            cascaded.append({"id": int(cid), "start_date": ns, "end_date": ne})
+
+    return jsonify({"ok": True, "start_date": start_date, "end_date": end_date, "cascaded": cascaded}), 200
 
 
 @project_tasks_bp.route("/gantt/update-fields/<int:task_id>", methods=["POST"])
 def gantt_update_fields(task_id: int) -> tuple:
     """ガントチャートから状態・進捗・遅延日を更新するAPI。
 
-    管理職・マスタのみ使用可能。JSON形式で status / progress / delay_days を受け取る。
+    全ユーザー使用可能。JSON形式で status / progress / delay_days を受け取る。
 
     Args:
         task_id: 更新対象のタスクID。
@@ -894,9 +911,6 @@ def gantt_update_fields(task_id: int) -> tuple:
     Returns:
         tuple: (Response, status_code) JSON形式のレスポンス。
     """
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
-
     csrf = request.headers.get("X-CSRF-Token", "")
     if csrf != session.get("csrf_token"):
         abort(400)
@@ -955,9 +969,6 @@ def gantt_reorder() -> tuple:
     Returns:
         tuple: (Response, status_code)
     """
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
-
     csrf = request.headers.get("X-CSRF-Token", "")
     if csrf != session.get("csrf_token"):
         abort(400)
@@ -1049,7 +1060,7 @@ def gantt() -> str:
     return render_template(
         "project_tasks_gantt.html",
         gantt_json=json.dumps(gantt_data, ensure_ascii=False),
-        privileged=privileged,
+        privileged=True,
         csrf_token=session.get("csrf_token", ""),
     )
 
@@ -1084,6 +1095,7 @@ def _build_gantt_excel(
     tasks: list[dict],
     start_date: date,
     display_days: int,
+    show_completed: bool = False,
 ) -> openpyxl.Workbook:
     """ガントチャート付きExcelワークブックを生成する。
 
@@ -1189,16 +1201,20 @@ def _build_gantt_excel(
     # -- イベント(MS)とタスクを分離 --
     ms_tasks: list[dict] = []
     normal_tasks: list[dict] = []
+    completed_fill = PatternFill("solid", fgColor="F0F0F0")
+    completed_font = Font(size=9, name="游ゴシック", color="999999")
     for t in tasks:
         is_event = t.get("is_event", 0)
         is_ms = t.get("is_milestone", 0)
         if is_event and not is_ms:
-            continue  # MSなしイベントは除外
+            continue
         if is_event and is_ms:
             ms_tasks.append(t)
         elif is_ms:
             ms_tasks.append(t)
         else:
+            if not show_completed and t.get("status") == "完了":
+                continue
             normal_tasks.append(t)
 
     # -- イベント行（行3）: マイルストーンを日付セルに表示 --
@@ -1276,29 +1292,37 @@ def _build_gantt_excel(
 
             progress = t.get("progress", 0) or 0
             status = t.get("status", "")
+            is_completed = (status == "完了")
+            row_font = completed_font if is_completed else body_font
+            row_fill = completed_fill if is_completed else None
 
             # 固定列
-            ws.cell(row, 1, cat).font = body_font
+            ws.cell(row, 1, cat).font = row_font
             ws.cell(row, 1).alignment = left_align
             ws.cell(row, 1).border = thin_border
+            if row_fill: ws.cell(row, 1).fill = row_fill
 
-            ws.cell(row, 2, t["task_name"]).font = body_font
+            ws.cell(row, 2, t["task_name"]).font = row_font
             ws.cell(row, 2).alignment = left_align
             ws.cell(row, 2).border = thin_border
+            if row_fill: ws.cell(row, 2).fill = row_fill
 
-            ws.cell(row, 3, assigned).font = body_font
+            ws.cell(row, 3, assigned).font = row_font
             ws.cell(row, 3).alignment = center_align
             ws.cell(row, 3).border = thin_border
+            if row_fill: ws.cell(row, 3).fill = row_fill
 
             status_cell = ws.cell(row, 4, status)
-            status_cell.font = body_font
+            status_cell.font = row_font
             status_cell.alignment = center_align
             status_cell.border = thin_border
+            if row_fill: status_cell.fill = row_fill
 
             prog_cell = ws.cell(row, 5, f"{progress}%")
-            prog_cell.font = body_font
+            prog_cell.font = row_font
             prog_cell.alignment = center_align
             prog_cell.border = thin_border
+            if row_fill: prog_cell.fill = row_fill
 
             # ガントバー描画
             try:
@@ -1457,7 +1481,8 @@ def export_gantt() -> object:
         # 一般ユーザー: 自分のタスクのみ
         tasks = get_all_project_tasks(assigned_to=login_id)
 
-    wb = _build_gantt_excel(tasks, start_d, display_days)
+    show_comp = request.args.get("show_completed") == "1"
+    wb = _build_gantt_excel(tasks, start_d, display_days, show_completed=show_comp)
 
     buf = io.BytesIO()
     wb.save(buf)

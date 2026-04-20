@@ -11,6 +11,9 @@
         <span class="fw-semibold" id="ganttRange" style="min-width:200px; text-align:center;"></span>
         <button class="btn btn-outline-secondary btn-sm" id="ganttNext">次へ ▶</button>
         <button class="btn btn-outline-dark btn-sm ms-2" id="toggleAll" title="全グループ開閉">全開閉</button>
+        <label class="form-check-label small ms-3" style="cursor:pointer; white-space:nowrap;">
+          <input type="checkbox" id="showCompleted" class="form-check-input" style="width:14px;height:14px;"> 完了を表示
+        </label>
         <a class="btn btn-success btn-sm ms-2" id="ganttExport">📥 Excel出力</a>
         <a class="btn btn-outline-primary btn-sm ms-2" href="{{ url_for('project_tasks_bp.task_list') }}">一覧に戻る</a>
       </div>
@@ -89,6 +92,15 @@
   var collapsed = {};
   categoryOrder.forEach(function (c) { collapsed[c] = false; });
 
+  var showCompleted = false;
+  var showCompCb = document.getElementById('showCompleted');
+  if (showCompCb) {
+    showCompCb.addEventListener('change', function () {
+      showCompleted = showCompCb.checked;
+      drawGantt();
+    });
+  }
+
   var today = new Date();
   var dayOfWeek = today.getDay();
   var daysToThisMon = dayOfWeek === 0 ? 6 : (dayOfWeek - 1);
@@ -113,7 +125,8 @@
   document.getElementById('ganttExport').addEventListener('click', function () {
     var startStr = dateToStr(startDate);
     var url = '{{ url_for("project_tasks_bp.export_gantt") }}' +
-      '?start=' + startStr + '&days=' + DISPLAY_DAYS;
+      '?start=' + startStr + '&days=' + DISPLAY_DAYS +
+      (showCompleted ? '&show_completed=1' : '');
     window.location.href = url;
   });
 
@@ -295,11 +308,26 @@
     canvas.style.cursor = 'default';
 
     if (changed && didDrag) {
+      /* 後続タスクの連動: 同じ中区分内でドラッグしたタスクより後のタスクを検出 */
+      var cascadeIds = [];
+      var cat = task.category || '（未分類）';
+      var sub = task.subcategory || '（その他）';
+      var cm = categoryMap[cat];
+      if (cm && cm.subcatMap[sub]) {
+        var siblings = cm.subcatMap[sub];
+        var idx = siblings.indexOf(task);
+        if (idx >= 0) {
+          for (var si = idx + 1; si < siblings.length; si++) {
+            cascadeIds.push(siblings[si].id);
+          }
+        }
+      }
+
       var url = UPDATE_URL_BASE + taskId;
       fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
-        body: JSON.stringify({ start_date: task.start, end_date: task.end })
+        body: JSON.stringify({ start_date: task.start, end_date: task.end, cascade_ids: cascadeIds })
       }).then(function (r) {
         if (!r.ok) {
           r.text().then(function (t) {
@@ -307,6 +335,18 @@
             catch (e) { alert('保存に失敗しました（' + r.status + '）'); }
           });
           location.reload();
+        } else {
+          return r.json();
+        }
+      }).then(function (data) {
+        if (data && data.cascaded && data.cascaded.length > 0) {
+          /* 連動したタスクのJSデータも更新して再描画 */
+          data.cascaded.forEach(function (c) {
+            tasks.forEach(function (t) {
+              if (t.id === c.id) { t.start = c.start_date; t.end = c.end_date; }
+            });
+          });
+          drawGantt();
         }
       }).catch(function () { alert('通信エラー'); location.reload(); });
     }
@@ -474,14 +514,25 @@
     var dayWidth = Math.max(22, Math.floor((containerWidth - leftMargin) / DISPLAY_DAYS));
     var totalWidth = leftMargin + DISPLAY_DAYS * dayWidth + 2;
 
+    // 完了非表示時のタスク数を考慮した高さ計算
+    function countVisibleTasks(taskList) {
+      if (showCompleted) return taskList.length;
+      return taskList.filter(function(t) { return t.status !== '完了'; }).length;
+    }
     var totalRowHeight = 0;
     categoryOrder.forEach(function (cat) {
+      var cm = categoryMap[cat];
+      // カテゴリ内の表示タスク数を確認
+      var catVisible = 0;
+      cm.subcatOrder.forEach(function (sub) { catVisible += countVisibleTasks(cm.subcatMap[sub]); });
+      if (catVisible === 0 && !showCompleted) return; // カテゴリごと非表示
       totalRowHeight += catRowHeight;
       if (!collapsed[cat]) {
-        var cm = categoryMap[cat];
         cm.subcatOrder.forEach(function (sub) {
+          var visCount = countVisibleTasks(cm.subcatMap[sub]);
+          if (visCount === 0 && !showCompleted) return;
           totalRowHeight += subcatRowHeight;
-          totalRowHeight += cm.subcatMap[sub].length * rowHeight;
+          totalRowHeight += visCount * rowHeight;
         });
       }
     });
@@ -609,7 +660,12 @@
     categoryOrder.forEach(function (cat, catIdx) {
       var cm = categoryMap[cat];
       var totalTaskCount = 0;
-      cm.subcatOrder.forEach(function (s) { totalTaskCount += cm.subcatMap[s].length; });
+      var visibleTaskCount = 0;
+      cm.subcatOrder.forEach(function (s) {
+        totalTaskCount += cm.subcatMap[s].length;
+        visibleTaskCount += countVisibleTasks(cm.subcatMap[s]);
+      });
+      if (visibleTaskCount === 0 && !showCompleted) return;
       var isOpen = !collapsed[cat];
       var y = currentY;
       var accentColor = catColors[catIdx % catColors.length];
@@ -639,7 +695,7 @@
       ctx.fillStyle = '#1e293b'; ctx.textAlign = 'left';
       ctx.fillText(cat, iconX + 16, iconCY + 4);
       ctx.font = '9px sans-serif'; ctx.fillStyle = '#94a3b8';
-      ctx.fillText('(' + totalTaskCount + ')', iconX + 18 + ctx.measureText(cat).width + 4, iconCY + 4);
+      ctx.fillText('(' + visibleTaskCount + ')', iconX + 18 + ctx.measureText(cat).width + 4, iconCY + 4);
 
       catClickAreas.push({ cat: cat, y: y, h: catRowHeight, maxX: leftMargin });
       currentY += catRowHeight;
@@ -648,6 +704,8 @@
       /* ── 中区分ループ ── */
       cm.subcatOrder.forEach(function (sub) {
         var taskList = cm.subcatMap[sub];
+        var visCount = countVisibleTasks(taskList);
+        if (visCount === 0 && !showCompleted) return;
         var sy = currentY;
         var sMidY = sy + subcatRowHeight / 2;
 
@@ -675,6 +733,7 @@
 
         /* ── 子タスク描画 ── */
         taskList.forEach(function (task, ti) {
+        if (!showCompleted && task.status === '完了') return;
         var ty = currentY;
         var midY = ty + rowHeight / 2;
 
