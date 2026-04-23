@@ -101,11 +101,20 @@
   </datalist>
 
   <div class="table-responsive">
-    <table class="table table-bordered table-sm schedule-table">
+    <table class="table table-bordered table-sm schedule-table" style="table-layout:fixed; width:100%;">
+      <colgroup>
+        <col style="width:40px;">
+        <col style="width:30px;">
+        <col style="width:calc((100% - 70px) / 5);">
+        <col style="width:calc((100% - 70px) / 5);">
+        <col style="width:calc((100% - 70px) / 5);">
+        <col style="width:calc((100% - 70px) / 5);">
+        <col style="width:calc((100% - 70px) / 5);">
+      </colgroup>
       <thead class="table-light">
         <tr>
-          <th class="text-center" style="width:40px;">区分</th>
-          <th class="text-center" style="width:30px;">枠</th>
+          <th class="text-center">区分</th>
+          <th class="text-center">枠</th>
           {% for i in range(5) %}
           {% set day_labels = ['月', '火', '水', '木', '金'] %}
           {% set d = week_dates[i] %}
@@ -324,15 +333,20 @@
 {# ── 各曜日のイベント表示 ── #}
 {% if week_events is defined %}
 <style>
+.schedule-table td { overflow: hidden; }
+.schedule-table .task-input { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.schedule-table .hours-input { width: 50px; min-width: 50px; flex-shrink: 0; }
 .event-badge {
-  display: inline-block;
+  display: block;
   background: #fef3c7;
   border: 1px solid #f59e0b;
   border-radius: 4px;
   padding: 1px 6px;
-  font-size: 0.75rem;
-  margin: 1px;
+  font-size: 0.7rem;
+  margin: 1px 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>
 {% endif %}

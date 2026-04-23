@@ -5,7 +5,21 @@
   <div class="col-lg-12">
 
     <div class="d-flex align-items-center justify-content-between mb-2">
-      <h5 class="fw-bold mb-0">タスク管理</h5>
+      <div class="d-flex align-items-center gap-3">
+        <h5 class="fw-bold mb-0">タスク管理</h5>
+        {% if is_master is defined and is_master and selectable_users %}
+        <div class="d-flex align-items-center gap-1">
+          <label class="form-label small fw-semibold mb-0">担当者：</label>
+          <select id="userSwitch" class="form-select form-select-sm" style="width:140px; font-size:0.8rem;"
+                  onchange="location.href='{{ url_for('project_tasks_bp.task_list') }}?user_id='+this.value">
+            <option value="0" {% if target_user_id == 0 %}selected{% endif %}>全員</option>
+            {% for u in selectable_users %}
+            <option value="{{ u.id }}" {% if target_user_id == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+      </div>
       <div class="d-flex gap-2">
         <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_tasks_bp.gantt') }}">ガントチャート</a>
       </div>
@@ -140,6 +154,10 @@
             <input type="checkbox" id="showCompleted" class="form-check-input" style="width:14px;height:14px;">
             完了を表示
           </label>
+          <label class="form-check-label small ms-3" style="cursor:pointer; white-space:nowrap;">
+            <input type="checkbox" id="filterInPeriod" class="form-check-input" style="width:14px;height:14px;">
+            期間内のみ
+          </label>
         </div>
       </div>
       <div class="card-body p-0">
@@ -167,7 +185,7 @@
                 <td colspan="{{ 10 if privileged else 9 }}" class="fw-bold">{{ ns.current_cat }}</td>
               </tr>
             {% endif %}
-            <tr class="task-row{% if t.is_milestone %} table-warning{% endif %}" data-subcat="{{ t.subcategory_name or '' }}" data-cat="{{ t.category_name or '' }}" data-status="{{ t.status }}">
+            <tr class="task-row{% if t.is_milestone %} table-warning{% endif %}" data-subcat="{{ t.subcategory_name or '' }}" data-cat="{{ t.category_name or '' }}" data-status="{{ t.status }}" data-start="{{ t.start_date or '' }}" data-end="{{ t.end_date or '' }}">
               {% if privileged %}
               <input type="hidden" form="bulkForm" name="task_id" value="{{ t.id }}">
               <input type="hidden" form="bulkForm" name="category_id_{{ t.id }}" value="{{ t.category_id or '' }}">
@@ -577,18 +595,24 @@
 (function() {
   var filterSel = document.getElementById('filterSubcat');
   var showCompCb = document.getElementById('showCompleted');
+  var filterPeriodCb = document.getElementById('filterInPeriod');
   if (!filterSel) return;
 
   // URLパラメータから復元
   var params = new URLSearchParams(window.location.search);
   var savedSubcat = params.get('subcat_filter') || '';
   var savedShowComp = params.get('show_completed') === '1';
+  var savedPeriod = params.get('in_period') === '1';
   if (savedSubcat) filterSel.value = savedSubcat;
   if (showCompCb) showCompCb.checked = savedShowComp;
+  if (filterPeriodCb) filterPeriodCb.checked = savedPeriod;
+
+  var todayStr = new Date().toISOString().slice(0, 10);
 
   function applyFilter() {
     var subcatVal = filterSel.value;
     var showComp = showCompCb ? showCompCb.checked : true;
+    var inPeriod = filterPeriodCb ? filterPeriodCb.checked : false;
     var taskRows = document.querySelectorAll('#taskTable .task-row');
     var catHeaders = document.querySelectorAll('#taskTable .cat-header-row');
 
@@ -601,6 +625,11 @@
       var hide = false;
       if (subcatVal && r.dataset.subcat !== subcatVal) hide = true;
       if (!showComp && r.dataset.status === '完了') hide = true;
+      if (inPeriod) {
+        var s = r.dataset.start || '';
+        var e = r.dataset.end || '';
+        if (s && e && (todayStr < s || todayStr > e)) hide = true;
+      }
       r.style.display = hide ? 'none' : '';
     });
 
@@ -627,6 +656,11 @@
     } else {
       url.searchParams.delete('show_completed');
     }
+    if (filterPeriodCb && filterPeriodCb.checked) {
+      url.searchParams.set('in_period', '1');
+    } else {
+      url.searchParams.delete('in_period');
+    }
     window.history.replaceState({}, '', url);
     var bf = document.getElementById('bulkFormFilter');
     if (bf) bf.value = filterSel.value;
@@ -634,6 +668,7 @@
 
   filterSel.addEventListener('change', function() { saveParams(); applyFilter(); });
   if (showCompCb) showCompCb.addEventListener('change', function() { saveParams(); applyFilter(); });
+  if (filterPeriodCb) filterPeriodCb.addEventListener('change', function() { saveParams(); applyFilter(); });
 
   // 初期適用
   var bf = document.getElementById('bulkFormFilter');
@@ -644,13 +679,27 @@
 /* ── タスク追加後にフォームを開いたままにする ── */
 (function() {
   var params = new URLSearchParams(window.location.search);
-  if (params.get('add_open') === '1') {
-    var form = document.getElementById('addTaskForm');
+  var tab = params.get('tab');
+  var addOpen = params.get('add_open') === '1';
+
+  // タブ切替（tab=routine → 定例タブ）
+  if (tab === 'routine') {
+    var routineTabBtn = document.getElementById('tab-routine-btn');
+    if (routineTabBtn) {
+      var tabInst = new bootstrap.Tab(routineTabBtn);
+      tabInst.show();
+    }
+  }
+
+  if (addOpen) {
+    var targetFormId = (tab === 'routine') ? 'addRoutineForm' : 'addTaskForm';
+    var form = document.getElementById(targetFormId);
     if (form) {
       var bsCollapse = new bootstrap.Collapse(form, { show: true });
     }
-    // URLからadd_openを消す
+    // URLからadd_open/tabを消す
     params.delete('add_open');
+    params.delete('tab');
     var url = new URL(window.location);
     url.search = params.toString();
     window.history.replaceState({}, '', url);

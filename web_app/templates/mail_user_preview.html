@@ -69,7 +69,8 @@
     </div>
     <div class="alert alert-info border small mb-4">
       💡 <strong>使い方：</strong>「Outlookで開く」をクリック → 件名・宛先・署名が設定された新規メールが開きます。<br>
-      本文（游ゴシック 11pt 書式付き）は自動でコピーされるので、本文欄で <kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けてください。
+      本文（游ゴシック 11pt 書式付き）は自動でコピーされるので、本文欄で <kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けてください。<br>
+      ※Outlookが未起動でも、OSが自動的にOutlookを起動してメール作成画面を開きます。
     </div>
 
   </div>
@@ -114,21 +115,25 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 
   // Outlook で開く: 本文をクリップボードにコピーしてからmailtoを開く（署名を保持）
-  mailtoLink.addEventListener('click', function (e) {
-    e.preventDefault();
-    var href = mailtoLink.href;
-    copyHtmlToClipboard(bodyEl.value, function () {
-      window.location.href = href;
+  if (mailtoLink) {
+    mailtoLink.addEventListener('click', function (e) {
+      e.preventDefault();
+      var href = mailtoLink.href;
+      copyHtmlToClipboard(bodyEl.value, function () {
+        window.location.href = href;
+      });
     });
-  });
+  }
 
   // 本文コピーボタン
-  copyBtn.addEventListener('click', function () {
-    copyHtmlToClipboard(bodyEl.value, function () {
-      copyBtn.textContent = '✅ コピーしました';
-      setTimeout(function () { copyBtn.textContent = '📋 本文をコピー（テキスト）'; }, 2000);
+  if (copyBtn) {
+    copyBtn.addEventListener('click', function () {
+      copyHtmlToClipboard(bodyEl.value, function () {
+        copyBtn.textContent = '✅ コピーしました';
+        setTimeout(function () { copyBtn.textContent = '📋 本文をコピー（テキスト）'; }, 2000);
+      });
     });
-  });
+  }
 });
 </script>
 {% endblock %}

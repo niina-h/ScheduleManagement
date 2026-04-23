@@ -16,6 +16,7 @@ from ..models import (
     get_all_subcategories,
     get_daily_result,
     get_daily_comment,
+    get_events_for_user_date,
     get_global_task_category_map,
     get_mail_setting,
     get_task_master,
@@ -436,20 +437,20 @@ def _build_master_body(
             pt_by_subcat[key].append({"name": tname, "status": status})
 
     def _format_task_list(task_items: list[dict]) -> str:
-        """タスク一覧を状態先頭文字付きで整形し、70文字超で改行する。"""
+        """タスク一覧を状態先頭文字付きで整形し、100文字超で改行する。"""
         parts: list[str] = []
         for t in task_items:
             prefix = f"【{t['status'][:1]}】" if t["status"] else ""
             parts.append(f"{prefix}{t['name']}")
-        # 結合して70文字超で改行+インデント
+        # 結合して100文字超で改行+インデント
         joined = "、".join(parts)
-        if len(joined) <= 70:
+        if len(joined) <= 100:
             return joined
         lines: list[str] = []
         current = ""
         for i, p in enumerate(parts):
             candidate = (current + "、" + p) if current else p
-            if len(candidate) > 70 and current:
+            if len(candidate) > 100 and current:
                 lines.append(current + "、")
                 current = p
             else:
@@ -458,6 +459,29 @@ def _build_master_body(
             lines.append(current)
         return ("\n" + "　　　　　").join(lines)
 
+    # 中区分名の最大幅を計算（全角1文字=2, 半角1文字=1）
+    def _width(s: str) -> int:
+        """文字列の表示幅を概算する（全角=2, 半角=1）。"""
+        w = 0
+        for ch in s:
+            w += 2 if ord(ch) > 0x7F else 1
+        return w
+
+    def _pad(s: str, width: int) -> str:
+        """文字列を指定幅に全角スペースでパディングする。"""
+        diff = width - _width(s)
+        if diff <= 0:
+            return s
+        return s + "　" * (diff // 2) + " " * (diff % 2)
+
+    max_sub_width: int = 0
+    for cat_name in cat_order:
+        for sn in cat_subcats_ordered.get(cat_name, []):
+            if pt_by_subcat.get((cat_name, sn)):
+                max_sub_width = max(max_sub_width, _width(sn))
+    if max_sub_width < 10:
+        max_sub_width = 10
+
     content_lines: list[str] = ["業務内容\t対応内容\t達成"]
     for cat_name in cat_order:
         subcats = cat_subcats_ordered.get(cat_name, [])
@@ -465,13 +489,19 @@ def _build_master_body(
         if not has_tasks:
             continue
         content_lines.append(f"・{cat_name}")
+        # 改行時のインデント幅: "　　" + 中区分パディング幅 + 余白
+        indent = "　　" + "　" * ((max_sub_width + 2) // 2)
         for sub_name in subcats:
             task_items = pt_by_subcat.get((cat_name, sub_name), [])
             if not task_items:
                 continue
             task_names = [t["name"] for t in task_items]
             achieved = "○" if any(t in today_worked_tasks for t in task_names) else ""
-            content_lines.append(f"　　{sub_name}\t{_format_task_list(task_items)}\t{achieved}")
+            padded_sub = _pad(sub_name, max_sub_width)
+            task_str = _format_task_list(task_items)
+            # 改行がある場合はインデントを揃える
+            task_str = task_str.replace("\n" + "　　　　　", "\n" + indent)
+            content_lines.append(f"　　{padded_sub} {task_str}\t{achieved}")
 
     # メンバー AM/PM サマリ
     # 除外条件: 定例作業（大区分「定例」or 中区分「定例作業」）、AM1行目(idx=0)、PM最終行(idx=4)
@@ -508,8 +538,28 @@ def _build_master_body(
             member_lines.append(f"{name}：{am_str} / {pm_str}")
 
     # マスタ自身の振り返り・対策
+    def _wrap_text(text: str, width: int = 100) -> str:
+        """テキストを指定幅で改行する。"""
+        if len(text) <= width:
+            return text
+        lines: list[str] = []
+        while len(text) > width:
+            # 幅以内の最後の句読点・カンマで改行
+            pos = -1
+            for ch in ("。", "、", "，", ".", ",", "　"):
+                p = text.rfind(ch, 0, width)
+                if p > pos:
+                    pos = p
+            if pos <= 0:
+                pos = width  # 句読点なければ強制改行
+            lines.append(text[:pos + 1])
+            text = text[pos + 1:]
+        if text:
+            lines.append(text)
+        return "\n".join(lines)
+
     master_comment = get_daily_comment(login_id, date_str)
-    reflection = master_comment.get("reflection", "").strip() or "（未入力）"
+    reflection = _wrap_text(master_comment.get("reflection", "").strip() or "（未入力）")
     # ＜開発状況＞: AI開発関連タスク（同一人物・同一タスクは時間を合算）
     ai_totals: dict[tuple[str, str], float] = {}  # (name, task) -> hours
     ai_order: list[tuple[str, str]] = []
@@ -550,7 +600,25 @@ def _build_master_body(
             if t and t not in next_seen_list:
                 if master_tcm.get(t, {}).get("subcategory_name") != "定例作業":
                     next_seen_list.append(t)
-    next_schedule = "\n".join(f"・{t}" for t in next_seen_list) if next_seen_list else "（予定未入力）"
+    # 翌日のイベントを全メンバーから収集
+    next_date_str = next_day.isoformat()
+    next_events_seen: list[str] = []
+    for md in member_data:
+        uid = md["member"]["id"]
+        events = get_events_for_user_date(uid, next_date_str)
+        for ev in events:
+            name = ev.get("task_name", "").strip()
+            time_str = ""
+            if ev.get("event_start_time") and ev.get("event_end_time"):
+                time_str = f"（{ev['event_start_time']}〜{ev['event_end_time']}）"
+            label = f"📅 {name}{time_str}"
+            if label not in next_events_seen:
+                next_events_seen.append(label)
+
+    next_lines: list[str] = [f"・{t}" for t in next_seen_list]
+    if next_events_seen:
+        next_lines.extend(next_events_seen)
+    next_schedule = "\n".join(next_lines) if next_lines else "（予定未入力）"
 
     # 本文組み立て
     parts: list[str] = []
@@ -582,8 +650,6 @@ def _build_master_body(
         next_schedule,
         "",
         "以上になります。ご確認のほど、よろしくお願いいたします。",
-        "",
-        login_user.get("name", ""),
     ])
     return "\n".join(parts)
 
@@ -687,6 +753,8 @@ def _build_eml(setting: dict, subject: str, body: str) -> str:
         msg["Cc"] = setting["cc_address"]
     if setting.get("bcc_address"):
         msg["Bcc"] = setting["bcc_address"]
+    # Outlookで「編集可能な下書き」として開くためのマーカー（classic Outlookが解釈）
+    msg["X-Unsent"] = "1"
     return msg.as_string()
 
 
@@ -1104,9 +1172,12 @@ def save_user_body() -> object:
     return redirect(url_for("mail_report_bp.user_preview", date=date_str))
 
 
-@mail_report_bp.route("/download-user-eml")
+@mail_report_bp.route("/download-user-eml", methods=["GET", "POST"])
 def download_user_eml():
     """ユーザー用メールを.emlファイルとしてダウンロードする。
+
+    POSTの場合はフォームから本文を受け取り、編集後の内容をEMLに反映する。
+    GETの場合は保存済みテンプレートを用いる。
 
     Returns:
         Response: .emlファイルのダウンロードレスポンス。
@@ -1114,7 +1185,12 @@ def download_user_eml():
     if not session.get("user_id"):
         return redirect(url_for("auth.login"))
 
-    raw_date = request.args.get("date", "").strip()
+    # POST時はCSRFを検証
+    if request.method == "POST":
+        if request.form.get("csrf_token") != session.get("csrf_token"):
+            abort(400)
+
+    raw_date = (request.values.get("date", "") or "").strip()
     try:
         target_date = date.fromisoformat(raw_date)
     except ValueError:
@@ -1127,7 +1203,10 @@ def download_user_eml():
     uid = login_user["id"]
     setting = _get_user_mail_setting(uid)
     subject = _build_user_subject(login_user, target_date)
-    body = _get_user_body_template(uid)
+
+    # POSTで本文が渡されている場合は、編集後の本文を使用
+    posted_body = request.form.get("body", "").strip() if request.method == "POST" else ""
+    body = posted_body if posted_body else _get_user_body_template(uid)
 
     eml_content = _build_eml(setting, subject, body)
     filename = f"daily_report_{target_date.isoformat()}_user.eml"

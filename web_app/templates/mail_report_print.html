@@ -38,6 +38,7 @@
   }
   @media print {
     .no-print { display: none !important; }
+    .page-break { page-break-before: always; }
   }
 </style>
 </head>
@@ -47,7 +48,22 @@
     <a href="javascript:window.close()">閉じる</a>
   </div>
   <div class="subject">{{ subject }}</div>
-  <pre class="body">{{ body }}</pre>
+  <pre class="body" id="mailBody">{{ body }}</pre>
+  <script>
+  /* 「＜本日の振り返り＞」の前で改ページを挿入 */
+  (function() {
+    var el = document.getElementById('mailBody');
+    if (!el) return;
+    var html = el.innerHTML;
+    var marker = '＜本日の振り返り＞';
+    var idx = html.indexOf(marker);
+    if (idx > 0) {
+      el.innerHTML = html.substring(0, idx)
+        + '</pre><div class="page-break"></div><pre class="body">'
+        + html.substring(idx);
+    }
+  })();
+  </script>
   {% if mgr_remarks is defined and mgr_remarks %}
   <div style="margin-top: 20px; padding-top: 12px; border-top: 1px dashed #999;">
     <div style="font-size: 9pt; font-weight: bold; color: #666; margin-bottom: 4px;">【備考】</div>

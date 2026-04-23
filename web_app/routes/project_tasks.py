@@ -94,20 +94,36 @@ def task_list() -> str:
     login_dept = session.get("user_dept", "")
     privileged = is_privileged(login_role)
 
-    # 全ユーザー共通: 自分に割り当てられたタスクのみ表示
-    tasks = get_all_project_tasks(assigned_to=login_id)
+    # マスタ権限: ユーザー切替対応（デフォルトは全員）
+    target_user_id: int = login_id
+    selectable_users: list[dict] = []
+    if is_master(login_role):
+        selectable_users = get_accessible_users(login_id, login_role, login_dept)
+        req_uid = request.args.get("user_id", "").strip()
+        if req_uid is not None and req_uid != "":
+            try:
+                target_user_id = int(req_uid)
+            except ValueError:
+                target_user_id = 0
+        elif session.get("task_selected_user_id") is not None:
+            target_user_id = int(session["task_selected_user_id"])
+        else:
+            target_user_id = 0  # デフォルトは全員
+        session["task_selected_user_id"] = target_user_id
+        # 「全員」選択時は全メンバーのタスクを表示
+        if target_user_id == 0:
+            member_ids = [u["id"] for u in selectable_users]
+            tasks = get_all_project_tasks(user_ids=member_ids)
+        else:
+            tasks = get_all_project_tasks(assigned_to=target_user_id)
+    else:
+        tasks = get_all_project_tasks(assigned_to=login_id)
 
     categories = get_all_categories()
     subcategories = get_all_subcategories()
 
     # 関係者選択用のユーザーリスト
-    if login_role in ("マスタ", "管理職"):
-        users = get_accessible_users(login_id, login_role, login_dept)
-    elif privileged:
-        users = get_all_users()
-    else:
-        # 一般ユーザー: イベント登録の関係者選択用に全ユーザーを取得
-        users = get_all_users()
+    users = get_all_users()
 
     # 定例スケジュール
     routine_schedules = get_routine_schedules(login_id)
@@ -126,6 +142,9 @@ def task_list() -> str:
         routine_schedules=routine_schedules,
         routine_task_options=routine_task_options,
         used_rows=used_rows,
+        selectable_users=selectable_users,
+        target_user_id=target_user_id,
+        is_master=is_master(login_role),
     )
 
 
@@ -509,16 +528,18 @@ def save_routine() -> object:
     row_number_str = request.form.get("row_number", "0").strip()
     default_hours_str = request.form.get("default_hours", "0").strip()
 
+    redirect_url = url_for("project_tasks_bp.task_list") + "?tab=routine&add_open=1"
+
     if not task_name:
         flash("作業名を選択してください。", "warning")
-        return redirect(url_for("project_tasks_bp.task_list"))
+        return redirect(redirect_url)
     try:
         row_number = int(row_number_str)
         if not 1 <= row_number <= 10:
             raise ValueError
     except ValueError:
         flash("行番号は1〜10で指定してください。", "warning")
-        return redirect(url_for("project_tasks_bp.task_list"))
+        return redirect(redirect_url)
     try:
         default_hours = max(0.0, float(default_hours_str))
     except ValueError:
@@ -533,7 +554,7 @@ def save_routine() -> object:
     ok = save_routine_task(user_id, task_name, subcategory_name, default_hours, row_number, days)
     flash("定例スケジュールを登録しました。" if ok else "登録に失敗しました（行番号重複の可能性）。",
           "success" if ok else "warning")
-    return redirect(url_for("project_tasks_bp.task_list"))
+    return redirect(redirect_url)
 
 
 @project_tasks_bp.route("/routine/delete/<int:routine_id>", methods=["POST"])
@@ -1488,7 +1509,7 @@ def export_gantt() -> object:
     wb.save(buf)
     buf.seek(0)
 
-    filename = f"ガントチャート_{start_d.isoformat()}.xlsx"
+    filename = f"業務進捗_{date.today().isoformat()}.xlsx"
     return send_file(
         buf,
         as_attachment=True,

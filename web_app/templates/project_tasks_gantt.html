@@ -308,26 +308,11 @@
     canvas.style.cursor = 'default';
 
     if (changed && didDrag) {
-      /* 後続タスクの連動: 同じ中区分内でドラッグしたタスクより後のタスクを検出 */
-      var cascadeIds = [];
-      var cat = task.category || '（未分類）';
-      var sub = task.subcategory || '（その他）';
-      var cm = categoryMap[cat];
-      if (cm && cm.subcatMap[sub]) {
-        var siblings = cm.subcatMap[sub];
-        var idx = siblings.indexOf(task);
-        if (idx >= 0) {
-          for (var si = idx + 1; si < siblings.length; si++) {
-            cascadeIds.push(siblings[si].id);
-          }
-        }
-      }
-
       var url = UPDATE_URL_BASE + taskId;
       fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
-        body: JSON.stringify({ start_date: task.start, end_date: task.end, cascade_ids: cascadeIds })
+        body: JSON.stringify({ start_date: task.start, end_date: task.end })
       }).then(function (r) {
         if (!r.ok) {
           r.text().then(function (t) {
@@ -335,18 +320,6 @@
             catch (e) { alert('保存に失敗しました（' + r.status + '）'); }
           });
           location.reload();
-        } else {
-          return r.json();
-        }
-      }).then(function (data) {
-        if (data && data.cascaded && data.cascaded.length > 0) {
-          /* 連動したタスクのJSデータも更新して再描画 */
-          data.cascaded.forEach(function (c) {
-            tasks.forEach(function (t) {
-              if (t.id === c.id) { t.start = c.start_date; t.end = c.end_date; }
-            });
-          });
-          drawGantt();
         }
       }).catch(function () { alert('通信エラー'); location.reload(); });
     }
