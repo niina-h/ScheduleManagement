@@ -63,14 +63,16 @@
     </div>
 
     {# ── 操作ボタン ── #}
-    <div class="d-flex gap-2 mb-4">
+    <div class="d-flex gap-2 mb-4 flex-wrap">
       <a href="{{ mailto_url }}" class="btn btn-primary mailto-btn" id="mailto-link" data-body="">📨 Outlookで開く</a>
       <button type="button" class="btn btn-outline-secondary" id="copy-btn">📋 本文をコピー（テキスト）</button>
     </div>
-    <div class="alert alert-info border small mb-4">
-      💡 <strong>使い方：</strong>「Outlookで開く」をクリック → 件名・宛先・署名が設定された新規メールが開きます。<br>
-      本文（游ゴシック 11pt 書式付き）は自動でコピーされるので、本文欄で <kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けてください。<br>
-      ※Outlookが未起動の場合は、自動でOutlookを先に起動してから新規メール画面を表示します（数秒お待ちください）。
+    <div class="alert alert-warning border small mb-4">
+      ⚠️ <strong>送信前の必須手順：</strong><br>
+      <strong>① 先に Outlook アプリを起動してください</strong>（タスクバー・スタートメニュー・デスクトップアイコン等から）。受信トレイ画面が完全に表示されたことを確認してください。<br>
+      <strong>② 【📨 Outlookで開く】をクリック</strong> → 起動確認ダイアログで【OK】を押すと、件名・宛先・署名が設定された新規メール画面が開きます。<br>
+      <strong>③</strong> 本文（游ゴシック 11pt 書式付き）は自動でコピーされるので、本文欄で <kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付け → 送信してください。<br>
+      <span class="text-muted">※Outlook が完全に起動していない状態でメール作成・送信すると、メールが「送信トレイ」に残ったままになることがあります。その場合は Outlook の <kbd>F9</kbd>（送受信）を押すと送信されます。</span>
     </div>
 
   </div>
@@ -114,38 +116,31 @@ document.addEventListener('DOMContentLoaded', function () {
     if (callback) callback();
   }
 
-  // Outlook で開く: Outlook 未起動時の cold-start による「送信トレイ滞留」問題を回避するため、
-  // 1) クリップボードへ本文をコピー
-  // 2) 隠し iframe で空の mailto: を発火し Outlook を先行起動（cold-start を誘発）
-  // 3) 2秒待機してから本来の mailto: を発火し、メール作成画面を表示
+  // Outlook で開く: 本文をクリップボードにコピーしてから mailto を発火する。
+  // クリック時に「Outlook起動済みか」を確認するダイアログを表示し、
+  // cold-start による送信トレイ滞留事故を防止する。
   if (mailtoLink) {
-    var WARMUP_MS = 2000;  // Outlook 起動待ち時間
     mailtoLink.addEventListener('click', function (e) {
       e.preventDefault();
+      var confirmMsg = '【メール送信前のお願い】\n\n'
+        + '📂 Outlookアプリを起動してください。\n\n'
+        + '  ・タスクバー / スタートメニュー / デスクトップアイコン\n'
+        + '    などから Outlook を起動してください。\n'
+        + '  ・受信トレイの画面が完全に表示されるまでお待ちください。\n'
+        + '  ・既に起動済みの場合は、そのまま次へ進んでください。\n\n'
+        + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+        + '⚠ Outlookが起動していない状態でメール作成・送信すると、\n'
+        + '   メールが「送信トレイ」に残ったままとなり\n'
+        + '   相手に届かない場合があります。\n'
+        + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+        + '  【OK】     Outlookを起動した → メール作成画面へ\n'
+        + '  【キャンセル】後で操作する';
+      if (!window.confirm(confirmMsg)) {
+        return;  // ユーザーがキャンセル → 何もしない
+      }
       var href = mailtoLink.href;
-      var originalText = mailtoLink.textContent;
-      // ボタンを一時的にロック
-      mailtoLink.classList.add('disabled');
-      mailtoLink.setAttribute('aria-disabled', 'true');
-      mailtoLink.textContent = '⏳ Outlookを起動中…';
-
       copyHtmlToClipboard(bodyEl.value, function () {
-        // 隠し iframe で空 mailto を発火（Outlook 本体の起動誘発専用）
-        var warmupFrame = document.createElement('iframe');
-        warmupFrame.style.display = 'none';
-        warmupFrame.src = 'mailto:';
-        document.body.appendChild(warmupFrame);
-
-        setTimeout(function () {
-          // 起動誘発用 iframe を後片付け
-          if (warmupFrame.parentNode) warmupFrame.parentNode.removeChild(warmupFrame);
-          // ボタン状態を戻す
-          mailtoLink.classList.remove('disabled');
-          mailtoLink.removeAttribute('aria-disabled');
-          mailtoLink.textContent = originalText;
-          // 本来のメール作成 mailto を発火
-          window.location.href = href;
-        }, WARMUP_MS);
+        window.location.href = href;
       });
     });
   }
