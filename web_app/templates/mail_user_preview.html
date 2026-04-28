@@ -70,7 +70,7 @@
     <div class="alert alert-info border small mb-4">
       💡 <strong>使い方：</strong>「Outlookで開く」をクリック → 件名・宛先・署名が設定された新規メールが開きます。<br>
       本文（游ゴシック 11pt 書式付き）は自動でコピーされるので、本文欄で <kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けてください。<br>
-      ※Outlookが未起動でも、OSが自動的にOutlookを起動してメール作成画面を開きます。
+      ※Outlookが未起動の場合は、自動でOutlookを先に起動してから新規メール画面を表示します（数秒お待ちください）。
     </div>
 
   </div>
@@ -114,13 +114,38 @@ document.addEventListener('DOMContentLoaded', function () {
     if (callback) callback();
   }
 
-  // Outlook で開く: 本文をクリップボードにコピーしてからmailtoを開く（署名を保持）
+  // Outlook で開く: Outlook 未起動時の cold-start による「送信トレイ滞留」問題を回避するため、
+  // 1) クリップボードへ本文をコピー
+  // 2) 隠し iframe で空の mailto: を発火し Outlook を先行起動（cold-start を誘発）
+  // 3) 2秒待機してから本来の mailto: を発火し、メール作成画面を表示
   if (mailtoLink) {
+    var WARMUP_MS = 2000;  // Outlook 起動待ち時間
     mailtoLink.addEventListener('click', function (e) {
       e.preventDefault();
       var href = mailtoLink.href;
+      var originalText = mailtoLink.textContent;
+      // ボタンを一時的にロック
+      mailtoLink.classList.add('disabled');
+      mailtoLink.setAttribute('aria-disabled', 'true');
+      mailtoLink.textContent = '⏳ Outlookを起動中…';
+
       copyHtmlToClipboard(bodyEl.value, function () {
-        window.location.href = href;
+        // 隠し iframe で空 mailto を発火（Outlook 本体の起動誘発専用）
+        var warmupFrame = document.createElement('iframe');
+        warmupFrame.style.display = 'none';
+        warmupFrame.src = 'mailto:';
+        document.body.appendChild(warmupFrame);
+
+        setTimeout(function () {
+          // 起動誘発用 iframe を後片付け
+          if (warmupFrame.parentNode) warmupFrame.parentNode.removeChild(warmupFrame);
+          // ボタン状態を戻す
+          mailtoLink.classList.remove('disabled');
+          mailtoLink.removeAttribute('aria-disabled');
+          mailtoLink.textContent = originalText;
+          // 本来のメール作成 mailto を発火
+          window.location.href = href;
+        }, WARMUP_MS);
       });
     });
   }

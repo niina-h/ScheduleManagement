@@ -331,6 +331,18 @@ def save() -> Any:
 
     # 週間予定保存
     data = _parse_schedule_form(request.form)
+
+    # 編集ロック日（過去日・一般ユーザーの当日）はフロントで disabled 化されており
+    # ブラウザがフォーム送信しないため、ここでフォームからは空データが渡される。
+    # 既存DBデータの上書き消失を防ぐため、ロック対象日は保存対象から除外する。
+    today_date: date = date.today()
+    is_priv: bool = is_privileged(session.get("user_role", ""))
+    for day in list(data.keys()):
+        day_date: date = week_start_date + timedelta(days=day)
+        is_locked: bool = day_date < today_date or (day_date == today_date and not is_priv)
+        if is_locked:
+            del data[day]
+
     save_weekly_schedule(target_user_id, week_start, data, updated_by)
 
     # 休暇種別保存
