@@ -319,7 +319,12 @@
             <li>タスク期間が対象週と重なるもの（完了・停止除く）</li>
             <li>AMとPMスロットに均等配分（定例行は除く）</li>
             <li>イベントも対象週のものを自動配置</li>
+            <li>新規登録タスクほど優先配置（ID 降順）</li>
           </ul>
+          <p class="small text-danger mt-2 mb-0">
+            ⚠ 既存の取込タスク配置はクリアされ、最新タスクで再配置されます。<br>
+            （手動入力したタスクには影響しません）
+          </p>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">キャンセル</button>

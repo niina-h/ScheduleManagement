@@ -118,25 +118,26 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // Outlook で開く: 本文をクリップボードにコピーしてから mailto を発火する。
   // クリック時に「Outlook起動済みか」を確認するダイアログを表示し、
-  // cold-start による送信トレイ滞留事故を防止する。
+  // 未起動の場合は起動を依頼するメッセージを出して中断、cold-start による
+  // 送信トレイ滞留事故を防止する。
   if (mailtoLink) {
     mailtoLink.addEventListener('click', function (e) {
       e.preventDefault();
-      var confirmMsg = '【メール送信前のお願い】\n\n'
-        + '📂 Outlookアプリを起動してください。\n\n'
-        + '  ・タスクバー / スタートメニュー / デスクトップアイコン\n'
-        + '    などから Outlook を起動してください。\n'
-        + '  ・受信トレイの画面が完全に表示されるまでお待ちください。\n'
-        + '  ・既に起動済みの場合は、そのまま次へ進んでください。\n\n'
-        + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-        + '⚠ Outlookが起動していない状態でメール作成・送信すると、\n'
-        + '   メールが「送信トレイ」に残ったままとなり\n'
-        + '   相手に届かない場合があります。\n'
-        + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
-        + '  【OK】     Outlookを起動した → メール作成画面へ\n'
-        + '  【キャンセル】後で操作する';
+      var confirmMsg = '【メール送信前のご確認】\n\n'
+        + 'Outlookアプリは起動していますか？\n\n'
+        + '⚠ 未起動のままメール作成すると、送信ボタンを押しても\n'
+        + 'メールが「送信トレイ」に残り、相手に届かない場合があります。\n\n'
+        + '・【OK】Outlook起動済み → このまま新規メールを作成\n'
+        + '・【キャンセル】未起動 → Outlook起動を依頼するメッセージを表示';
       if (!window.confirm(confirmMsg)) {
-        return;  // ユーザーがキャンセル → 何もしない
+        // 未起動の場合: Outlookアプリの起動を依頼するメッセージを表示
+        window.alert('📂 Outlookアプリを起動してください\n\n'
+          + 'タスクバー・スタートメニュー・デスクトップアイコンなどから\n'
+          + 'Outlookアプリを起動し、受信トレイ画面が完全に表示されたことを\n'
+          + '確認してください。\n\n'
+          + 'Outlookの起動が完了したら、もう一度【📨 Outlookで開く】\n'
+          + 'ボタンをクリックしてください。');
+        return;
       }
       var href = mailtoLink.href;
       copyHtmlToClipboard(bodyEl.value, function () {

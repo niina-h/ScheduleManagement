@@ -19,6 +19,7 @@ from ..models import (
     get_events_for_user_date,
     get_global_task_category_map,
     get_mail_setting,
+    get_next_business_day,
     get_task_master,
     get_weekly_schedule,
     save_mail_setting,
@@ -43,21 +44,6 @@ def _require_privileged() -> None | object:
 
 
 _WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
-
-
-def _next_workday(from_date: date) -> date:
-    """翌稼働日（土日を除く）を返す。
-
-    Args:
-        from_date: 基準日
-
-    Returns:
-        date: 翌稼働日
-    """
-    d = from_date + timedelta(days=1)
-    while d.weekday() >= 5:  # 5=土, 6=日
-        d += timedelta(days=1)
-    return d
 
 
 def _build_mgr_self_body(login_user: dict, target_date: date) -> tuple[str, str]:
@@ -97,8 +83,9 @@ def _build_mgr_self_body(login_user: dict, target_date: date) -> tuple[str, str]
     work_lines: list[str] = [f"・{t}　{work_totals[t]}h" for t in work_order]
     work_results = "\n".join(work_lines) if work_lines else "（実績なし）"
 
-    # 翌稼働日の予定（同一作業名は1つにまとめる）
-    next_day = _next_workday(target_date)
+    # 翌営業日の予定（同一作業名は1つにまとめる。
+    # 土日・会社休日・本人の休暇設定をスキップして、実際に出勤する日の予定を表示する）
+    next_day = get_next_business_day(uid, target_date)
     next_dow = next_day.weekday()  # 0=月〜4=金
     next_week_start = (next_day - timedelta(days=next_dow)).isoformat()
     next_schedule_data = get_weekly_schedule(uid, next_week_start)
@@ -585,8 +572,9 @@ def _build_master_body(
     ]
     ai_section = "\n".join(ai_lines) if ai_lines else "  （AI開発作業なし）"
 
-    # ＜次回予定＞: マスタ自身の翌稼働日予定（定例作業は除外）
-    next_day = _next_workday(target_date)
+    # ＜次回予定＞: マスタ自身の翌営業日予定（定例作業は除外）
+    # 土日・会社休日・本人の休暇設定をスキップして、実際に出勤する日の予定を表示する
+    next_day = get_next_business_day(login_id, target_date)
     next_dow = next_day.weekday()
     next_week_start = (next_day - timedelta(days=next_dow)).isoformat()
     next_schedule_data = get_weekly_schedule(login_id, next_week_start)

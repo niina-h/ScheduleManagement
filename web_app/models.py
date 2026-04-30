@@ -699,6 +699,8 @@ def copy_last_week_schedule(user_id: int, week_start: str) -> bool:
     """1週間前の週間予定を空き枠にのみコピーする。
 
     コピー先に既にデータがある枠（リスケ済みなど）は上書きしない。
+    コピー先の曜日が会社休日・本人の全休休暇日（1日有休・特休・その他休み・祝日）の場合、
+    その日の全スロットへのコピーをスキップして既存値を維持する。
 
     Args:
         user_id: ユーザーID
@@ -724,16 +726,30 @@ def copy_last_week_schedule(user_id: int, week_start: str) -> bool:
     if not has_data:
         return False
 
+    # 休日判定用キャッシュ（同一週は1回のみクエリ）
+    holiday_dates: set[str] = {h["holiday_date"] for h in get_company_holidays()}
+    leave_cache: dict[str, dict[int, str]] = {}
+
     # コピー先の既存データを取得し、データがある枠はスキップ
     current_data = get_weekly_schedule(user_id, week_start)
     merged_data: dict = {}
     for day, slots in last_week_data.items():
+        day_int = int(day)
+        # コピー先のその曜日が休日なら前週データをコピーしない（既存値を維持）
+        day_date_obj = target_date + timedelta(days=day_int)
+        is_holiday: bool = is_holiday_for_user(
+            user_id, day_date_obj, holiday_dates, leave_cache,
+        )
+
         merged_data[day] = {}
         for slot, entries in slots.items():
             merged_data[day][slot] = []
             for idx, entry in enumerate(entries):
                 cur_entry = current_data[day][slot][idx]
-                if cur_entry["task_name"] or cur_entry.get("hours", 0.0) > 0.0:
+                if is_holiday:
+                    # 休日 → 前週データはコピーせず、既存値（空 or 既存）を維持
+                    merged_data[day][slot].append(cur_entry)
+                elif cur_entry["task_name"] or cur_entry.get("hours", 0.0) > 0.0:
                     # コピー先に既存データあり → 既存データを維持
                     merged_data[day][slot].append(cur_entry)
                 else:
@@ -2201,10 +2217,16 @@ def import_tasks_to_weekly_schedule(
     week_start: str,
     updated_by: str = "",
 ) -> int:
-    """ログインユーザーに割り当てられた期間内タスクを週間予定に自動インポートする。
+    """ログインユーザーに割り当てられた期間内タスクを週間予定に再配置する。
+
+    【上書き再配置仕様】
+    呼び出し時に、対象週で既に取込済みの project_task 配置（project_task_id IS NOT NULL）
+    を一旦すべてクリアしてから、最新のタスク一覧を再配置する。
+    これにより、新規追加されたタスクや状態変更（完了化）が確実に反映される。
+    手動入力タスク（project_task_id IS NULL）は影響を受けない。
 
     各曜日（月〜金）について、その日を含む期間のタスクをAM/PMに均等配分して配置する。
-    定例予約行はスキップする。
+    定例予約行はスキップする。配置順は ID 降順（新規登録タスクほど優先）。
 
     Args:
         user_id: ユーザーID
@@ -2212,7 +2234,7 @@ def import_tasks_to_weekly_schedule(
         updated_by: 更新者名
 
     Returns:
-        int: 実際にインポートした件数
+        int: 実際に配置した件数
     """
     import sqlite3 as _sqlite3
     from datetime import timedelta as _timedelta
@@ -2223,7 +2245,17 @@ def import_tasks_to_weekly_schedule(
     ws = datetime.strptime(week_start, "%Y-%m-%d")
     week_end: str = (ws + _timedelta(days=4)).strftime("%Y-%m-%d")
 
-    # 対象週と期間が重なる、ユーザー担当タスクを取得（start_date/end_dateも取得）
+    # 既存の project_task 配置を一旦クリア（手動入力タスクは project_task_id IS NULL なので保持）
+    db.execute(
+        "UPDATE weekly_schedule "
+        "SET task_name='', hours=0.0, subcategory_name='', project_task_id=NULL, "
+        "    updated_at=?, updated_by=? "
+        "WHERE user_id=? AND week_start=? AND project_task_id IS NOT NULL",
+        (now, updated_by, user_id, week_start),
+    )
+
+    # 対象週と期間が重なる、ユーザー担当タスクを取得
+    # 配置順は ID 降順（新規タスクほど先に配置されるよう優先）
     rows = db.execute(
         "SELECT pt.id, pt.task_name, COALESCE(ts.name,'') AS subcategory_name,"
         "       pt.start_date, pt.end_date "
@@ -2233,11 +2265,13 @@ def import_tasks_to_weekly_schedule(
         "  AND pt.is_event = 0 "
         "  AND pt.status NOT IN ('完了', '停止') "
         "  AND pt.start_date <= ? AND pt.end_date >= ? "
-        "ORDER BY pt.start_date, pt.id",
+        "ORDER BY pt.id DESC",
         (user_id, user_id, week_end, week_start),
     ).fetchall()
 
     if not rows:
+        # クリア結果を反映するために commit
+        db.commit()
         return 0
 
     # 定例予約行を除外
@@ -2245,29 +2279,27 @@ def import_tasks_to_weekly_schedule(
     reserved_am = {r - 1 for r in reserved if 1 <= r <= 5}
     reserved_pm = {r - 6 for r in reserved if 6 <= r <= 10}
 
+    # 休日判定用キャッシュ（同一週は1回のみクエリ）
+    holiday_dates: set[str] = {h["holiday_date"] for h in get_company_holidays()}
+    leave_cache: dict[str, dict[int, str]] = {}
+
     imported = 0
 
     # 曜日ごとに処理（月〜金）
     for day_idx in range(5):
-        day_date: str = (ws + _timedelta(days=day_idx)).strftime("%Y-%m-%d")
+        day_date_obj = ws.date() + _timedelta(days=day_idx)
+        day_date: str = day_date_obj.strftime("%Y-%m-%d")
+
+        # 会社休日・本人の全休休暇日にはタスクを配置しない
+        if is_holiday_for_user(user_id, day_date_obj, holiday_dates, leave_cache):
+            continue
 
         # この曜日を含む期間のタスクを抽出
         day_tasks = [r for r in rows if r["start_date"] <= day_date <= r["end_date"]]
         if not day_tasks:
             continue
 
-        # この曜日に既に配置済みの project_task_id
-        existing_day: set[int] = {
-            r["project_task_id"]
-            for r in db.execute(
-                "SELECT project_task_id FROM weekly_schedule "
-                "WHERE user_id=? AND week_start=? AND day_of_week=? "
-                "  AND project_task_id IS NOT NULL",
-                (user_id, week_start, day_idx),
-            ).fetchall()
-        }
-
-        # この曜日の空きスロットを取得
+        # この曜日の空きスロットを取得（クリア済みなので project_task 配置は除外されない）
         def _free_slots(slot: str, reserved_set: set[int]) -> list[int]:
             result = []
             for idx in range(5):
@@ -2287,8 +2319,11 @@ def import_tasks_to_weekly_schedule(
         pm_free = _free_slots("pm", reserved_pm)
         am_ptr, pm_ptr = 0, 0
 
+        # この曜日に同一タスクが二重配置されないよう、配置済みの id を追跡
+        placed_ids: set[int] = set()
+
         for i, task in enumerate(day_tasks):
-            if task["id"] in existing_day:
+            if task["id"] in placed_ids:
                 continue
             # AM/PM に交互配分
             if i % 2 == 0:
@@ -2317,12 +2352,11 @@ def import_tasks_to_weekly_schedule(
                      task["id"], now, updated_by),
                 )
                 imported += 1
-                existing_day.add(task["id"])
+                placed_ids.add(task["id"])
             except _sqlite3.DatabaseError:
                 pass
 
-    if imported > 0:
-        db.commit()
+    db.commit()  # クリアと配置を確実にコミット
     return imported
 
 
@@ -3012,6 +3046,96 @@ def get_company_holidays(year: int | None = None) -> list[dict]:
             "FROM company_holiday ORDER BY holiday_date"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def is_holiday_for_user(
+    user_id: int,
+    target_date: date,
+    holiday_dates: set[str] | None = None,
+    leave_cache: dict[str, dict[int, str]] | None = None,
+) -> bool:
+    """指定日がユーザーにとって休日かを判定する。
+
+    以下のいずれかに該当する場合は True を返す：
+
+    - 土曜・日曜（曜日インデックス >= 5）
+    - 会社休日（``company_holiday`` テーブルに登録された日付）
+    - 本人の週間予定で「1日有休 / 特休 / その他休み / 祝日」が設定された曜日
+      （AM半休・PM半休は半日勤務扱いとして False を返す）
+
+    タスク取込・週間予定コピー時に「休みの日には予定を入れない」判定で使用する。
+
+    Args:
+        user_id: ユーザーID。
+        target_date: 判定対象日。
+        holiday_dates: 会社休日の ISO 日付セット（オプション、複数日判定時の再利用用）。
+        leave_cache: 週単位の休暇キャッシュ（オプション、同一週への重複クエリ削減用）。
+
+    Returns:
+        bool: 休日なら True、営業日なら False。
+    """
+    if target_date.weekday() >= 5:
+        return True
+    if holiday_dates is None:
+        holiday_dates = {h["holiday_date"] for h in get_company_holidays()}
+    if target_date.isoformat() in holiday_dates:
+        return True
+
+    full_leave_types: set[str] = {"1日有休", "特休", "その他休み", "祝日"}
+    week_start_str: str = (target_date - timedelta(days=target_date.weekday())).isoformat()
+    if leave_cache is not None and week_start_str in leave_cache:
+        leave_data = leave_cache[week_start_str]
+    else:
+        leave_data = get_weekly_leave(user_id, week_start_str)
+        if leave_cache is not None:
+            leave_cache[week_start_str] = leave_data
+    return leave_data.get(target_date.weekday(), "") in full_leave_types
+
+
+def get_next_business_day(user_id: int, from_date: date) -> date:
+    """指定ユーザーの「次の営業日」を返す。
+
+    ``from_date`` の翌日から探索を開始し、以下に該当する日をスキップする：
+
+    - 土曜・日曜（曜日インデックス >= 5）
+    - 会社休日（``company_holiday`` テーブルに登録された日付）
+    - 本人の週間予定で「1日有休 / 特休 / その他休み / 祝日」が設定された曜日
+      （AM半休・PM半休は半日勤務扱いとしてスキップしない）
+
+    日報・日報メールの「次回予定」を表示する際に、休みの日を飛ばして
+    実際に出勤する次の営業日の予定を案内するために使用する。
+
+    Args:
+        user_id: ユーザーID。
+        from_date: 基準日。この翌日から営業日を探索する。
+
+    Returns:
+        date: 次の営業日。最大14日先まで探索し、それでも見つからなければ
+              最後に評価した日付を返す（無限ループ防止）。
+    """
+    holiday_dates: set[str] = {h["holiday_date"] for h in get_company_holidays()}
+    full_leave_types: set[str] = {"1日有休", "特休", "その他休み", "祝日"}
+    leave_cache: dict[str, dict[int, str]] = {}
+
+    d: date = from_date + timedelta(days=1)
+    for _ in range(14):
+        # 土日
+        if d.weekday() >= 5:
+            d += timedelta(days=1)
+            continue
+        # 会社休日
+        if d.isoformat() in holiday_dates:
+            d += timedelta(days=1)
+            continue
+        # 本人の週間休暇設定（同一週は1回のみクエリ）
+        week_start_str: str = (d - timedelta(days=d.weekday())).isoformat()
+        if week_start_str not in leave_cache:
+            leave_cache[week_start_str] = get_weekly_leave(user_id, week_start_str)
+        if leave_cache[week_start_str].get(d.weekday(), "") in full_leave_types:
+            d += timedelta(days=1)
+            continue
+        return d
+    return d
 
 
 def add_company_holiday(

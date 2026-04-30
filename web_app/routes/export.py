@@ -18,6 +18,7 @@ from ..models import (
     get_all_users,
     get_daily_comment,
     get_daily_result,
+    get_next_business_day,
     get_user_by_id,
     get_weekly_leave,
     get_weekly_schedule,
@@ -1211,10 +1212,8 @@ def export_daily(date_str: str) -> object:
     result = get_daily_result(user["id"], date_str)
     comment = get_daily_comment(user["id"], date_str)
 
-    # 翌日予定取得
-    next_date = date_obj + timedelta(days=1)
-    while next_date.weekday() >= 5:
-        next_date += timedelta(days=1)
+    # 翌営業日予定取得（土日・会社休日・本人の休暇設定をスキップ）
+    next_date = get_next_business_day(user["id"], date_obj)
     next_week_start = _get_monday(next_date).isoformat()
     next_day_of_week = next_date.weekday()
     next_schedule = get_weekly_schedule(user["id"], next_week_start)
@@ -1343,10 +1342,8 @@ def export_admin_report(date_str: str) -> object:
     admin_result = get_daily_result(admin_user["id"], date_str)
     admin_comment = get_daily_comment(admin_user["id"], date_str)
 
-    # 翌日予定
-    next_date = date_obj + timedelta(days=1)
-    while next_date.weekday() >= 5:
-        next_date += timedelta(days=1)
+    # 翌営業日予定（土日・会社休日・本人の休暇設定をスキップ）
+    next_date = get_next_business_day(admin_user["id"], date_obj)
     next_week_start = _get_monday(next_date).isoformat()
     next_day_of_week = next_date.weekday()
     next_schedule = get_weekly_schedule(admin_user["id"], next_week_start)
@@ -1943,10 +1940,8 @@ def download_report() -> object:
     result: dict = get_daily_result(target_user["id"], date_str)
     comment: dict = get_daily_comment(target_user["id"], date_str)
 
-    # 翌日予定
-    next_date = date_obj + timedelta(days=1)
-    while next_date.weekday() >= 5:
-        next_date += timedelta(days=1)
+    # 翌営業日予定（土日・会社休日・本人の休暇設定をスキップ）
+    next_date = get_next_business_day(target_user["id"], date_obj)
     next_week_start: str = _get_monday(next_date).isoformat()
     next_dow: int = next_date.weekday()
     next_schedule: dict = get_weekly_schedule(target_user["id"], next_week_start)
@@ -2020,10 +2015,8 @@ def print_report() -> object:
     result: dict = get_daily_result(target_user["id"], date_str)
     comment: dict = get_daily_comment(target_user["id"], date_str)
 
-    # 翌日予定
-    next_date = date_obj + timedelta(days=1)
-    while next_date.weekday() >= 5:
-        next_date += timedelta(days=1)
+    # 翌営業日予定（土日・会社休日・本人の休暇設定をスキップ）
+    next_date = get_next_business_day(target_user["id"], date_obj)
     next_week_start: str = _get_monday(next_date).isoformat()
     next_dow: int = next_date.weekday()
     next_schedule: dict = get_weekly_schedule(target_user["id"], next_week_start)
