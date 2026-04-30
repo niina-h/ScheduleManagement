@@ -1260,13 +1260,9 @@ def export_admin_daily(date_str: str) -> object:
         date_obj = date.today()
         date_str = date_obj.isoformat()
 
-    # 管理職の場合は自部署のみ、マスタは全員
-    login_role_exp: str = session.get("user_role", "")
+    # スコープ制限: マスタ・管理職ともに自部署のみ（他部署のテストユーザー等の混入を防ぐ）
     login_dept_exp: str = session.get("user_dept", "")
-    if is_master(login_role_exp):
-        all_users = get_all_users()
-    else:
-        all_users = get_all_users(dept_filter=login_dept_exp if login_dept_exp else None)
+    all_users = get_all_users(dept_filter=login_dept_exp if login_dept_exp else None)
     if not all_users:
         flash("ユーザーが存在しないためExcelを生成できません", "warning")
         return redirect(url_for("admin_bp.dashboard"))
@@ -1351,13 +1347,9 @@ def export_admin_report(date_str: str) -> object:
     next_am = next_day_sch.get("am", [])
     next_pm = next_day_sch.get("pm", [])
 
-    # 部下一覧（管理職の場合は自部署のみ、マスタは全員・特権ユーザー自身は除外）
-    sub_login_role: str = session.get("user_role", "")
+    # 部下一覧（マスタ・管理職ともに自部署のみ。特権ユーザー自身は除外）
     sub_login_dept: str = session.get("user_dept", "")
-    if is_master(sub_login_role):
-        all_target_users = get_all_users()
-    else:
-        all_target_users = get_all_users(dept_filter=sub_login_dept if sub_login_dept else None)
+    all_target_users = get_all_users(dept_filter=sub_login_dept if sub_login_dept else None)
     subordinates = [u for u in all_target_users if not is_privileged(u["role"]) and u["id"] != admin_user["id"]]
 
     wb = openpyxl.Workbook()
