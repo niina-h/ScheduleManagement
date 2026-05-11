@@ -4,9 +4,16 @@
 <div class="row justify-content-center">
   <div class="col-12">
 
-    <div class="d-flex align-items-center justify-content-between mb-3">
+    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
       <h5 class="fw-bold mb-0">ガントチャート</h5>
-      <div class="d-flex gap-2 align-items-center">
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        <label class="form-label small mb-0 fw-semibold">絞り込み：</label>
+        <select id="ganttSubcatFilter" class="form-select form-select-sm" style="width:160px; font-size:0.8rem;">
+          <option value="">すべて</option>
+          {% for sn in subcat_options %}
+          <option value="{{ sn }}" {% if sn == initial_subcat %}selected{% endif %}>{{ sn }}</option>
+          {% endfor %}
+        </select>
         <button class="btn btn-outline-secondary btn-sm" id="ganttPrev">◀ 前へ</button>
         <span class="fw-semibold" id="ganttRange" style="min-width:200px; text-align:center;"></span>
         <button class="btn btn-outline-secondary btn-sm" id="ganttNext">次へ ▶</button>
@@ -72,25 +79,57 @@
     '遅れ': '#f87171', '完了': '#10b981', '停止': '#d1d5db'
   };
 
+  /* ── 中区分フィルタ ── */
+  var subcatFilter = '{{ initial_subcat }}';
+  var subcatSel = document.getElementById('ganttSubcatFilter');
+
   /* ── 大区分 → 中区分 → タスク の3階層グループ化 ── */
   var categoryOrder = [];
   var categoryMap = {};   /* cat -> { subcatOrder: [], subcatMap: { subcat -> [tasks] } } */
   var milestoneOnlyTasks = [];
-  tasks.forEach(function (t) {
-    if (t.milestone_only) { milestoneOnlyTasks.push(t); return; }
-    var cat = t.category || '（未分類）';
-    var sub = t.subcategory || '（その他）';
-    if (!categoryMap[cat]) {
-      categoryMap[cat] = { subcatOrder: [], subcatMap: {} };
-      categoryOrder.push(cat);
-    }
-    var cm = categoryMap[cat];
-    if (!cm.subcatMap[sub]) { cm.subcatMap[sub] = []; cm.subcatOrder.push(sub); }
-    cm.subcatMap[sub].push(t);
-  });
+
+  /* タスクから categoryMap を再構築する（絞り込み変更時にも呼ぶ）。 */
+  function rebuildCategoryMap() {
+    categoryOrder = [];
+    categoryMap = {};
+    milestoneOnlyTasks = [];
+    tasks.forEach(function (t) {
+      if (t.milestone_only) { milestoneOnlyTasks.push(t); return; }
+      // 中区分絞り込みが指定されている場合、それ以外はスキップ
+      if (subcatFilter && (t.subcategory || '') !== subcatFilter) return;
+      var cat = t.category || '（未分類）';
+      var sub = t.subcategory || '（その他）';
+      if (!categoryMap[cat]) {
+        categoryMap[cat] = { subcatOrder: [], subcatMap: {} };
+        categoryOrder.push(cat);
+      }
+      var cm = categoryMap[cat];
+      if (!cm.subcatMap[sub]) { cm.subcatMap[sub] = []; cm.subcatOrder.push(sub); }
+      cm.subcatMap[sub].push(t);
+    });
+  }
+  rebuildCategoryMap();
 
   var collapsed = {};
   categoryOrder.forEach(function (c) { collapsed[c] = false; });
+
+  /* 絞り込み変更時：URL更新・再構築・再描画 */
+  if (subcatSel) {
+    subcatSel.addEventListener('change', function () {
+      subcatFilter = subcatSel.value;
+      var url = new URL(window.location);
+      if (subcatFilter) {
+        url.searchParams.set('subcat_filter', subcatFilter);
+      } else {
+        url.searchParams.delete('subcat_filter');
+      }
+      window.history.replaceState({}, '', url);
+      rebuildCategoryMap();
+      collapsed = {};
+      categoryOrder.forEach(function (c) { collapsed[c] = false; });
+      drawGantt();
+    });
+  }
 
   var showCompleted = false;
   var showCompCb = document.getElementById('showCompleted');
@@ -126,7 +165,8 @@
     var startStr = dateToStr(startDate);
     var url = '{{ url_for("project_tasks_bp.export_gantt") }}' +
       '?start=' + startStr + '&days=' + DISPLAY_DAYS +
-      (showCompleted ? '&show_completed=1' : '');
+      (showCompleted ? '&show_completed=1' : '') +
+      (subcatFilter ? '&subcat_filter=' + encodeURIComponent(subcatFilter) : '');
     window.location.href = url;
   });
 
@@ -197,25 +237,28 @@
     var mx = e.clientX - rect.left;
     var my = e.clientY - rect.top;
 
-    /* 行ドラッグ（左端エリア） */
+    /* バー上の日付ドラッグを優先 */
+    var hit = getBarAt(mx, my);
+    if (hit) {
+      e.preventDefault();
+      didDrag = false;
+      dragState = {
+        task: hit.bar.task, edge: hit.edge,
+        origStart: hit.bar.task.start, origEnd: hit.bar.task.end,
+        startX: mx, dayWidth: hit.bar.dayWidth
+      };
+      canvas.style.cursor = hit.edge === 'middle' ? 'grabbing' : 'col-resize';
+      return;
+    }
+
+    /* バーがない場所では行ドラッグ（タスク名・担当者列内で可能） */
     var rowHit = getRowAt(mx, my);
     if (rowHit) {
       e.preventDefault();
       rowDrag = { cat: rowHit.cat, sub: rowHit.sub, fromIdx: rowHit.idx, task: rowHit.task, startY: my, currentIdx: rowHit.idx };
-      canvas.style.cursor = 'ns-resize';
+      canvas.style.cursor = 'grabbing';
       return;
     }
-
-    var hit = getBarAt(mx, my);
-    if (!hit) return;
-    e.preventDefault();
-    didDrag = false;
-    dragState = {
-      task: hit.bar.task, edge: hit.edge,
-      origStart: hit.bar.task.start, origEnd: hit.bar.task.end,
-      startX: mx, dayWidth: hit.bar.dayWidth
-    };
-    canvas.style.cursor = hit.edge === 'middle' ? 'grabbing' : 'col-resize';
   });
 
   canvas.addEventListener('mousemove', function (e) {
@@ -280,24 +323,37 @@
       var a = catClickAreas[i];
       if (my >= a.y && my < a.y + a.h && mx < a.maxX) { onCat = true; break; }
     }
-    /* 行ドラッグハンドル領域のカーソル */
+    /* 行ドラッグハンドル領域のカーソル（タスク名・担当者列内） */
     var rowHit = PRIVILEGED ? getRowAt(mx, my) : null;
-    if (rowHit) { canvas.style.cursor = 'ns-resize'; return; }
+    if (rowHit) { canvas.style.cursor = 'grab'; return; }
     canvas.style.cursor = onCat ? 'pointer' : 'default';
   });
 
   canvas.addEventListener('mouseup', function () {
-    /* 行ドラッグ完了 → サーバーに保存 */
+    /* 行ドラッグ完了 → サーバーに保存（fetch の成否を明示的にハンドリング） */
     if (rowDrag) {
       var list = categoryMap[rowDrag.cat].subcatMap[rowDrag.sub];
       var order = list.map(function (t) { return t.id; });
       rowDrag = null;
       canvas.style.cursor = 'default';
+      if (order.length < 2) { return; }  // 並び替え不要
       fetch(REORDER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF_TOKEN },
         body: JSON.stringify({ order: order })
-      }).catch(function () { alert('並び替えの保存に失敗しました'); });
+      }).then(function (r) {
+        if (!r.ok) {
+          return r.text().then(function (t) {
+            var msg = '並び替えの保存に失敗しました（' + r.status + '）';
+            try { var j = JSON.parse(t); if (j.error) msg += ': ' + j.error; } catch (e) {}
+            alert(msg);
+            location.reload();
+          });
+        }
+      }).catch(function () {
+        alert('並び替えの保存に失敗しました（通信エラー）');
+        location.reload();
+      });
       return;
     }
     if (!dragState) return;
@@ -710,9 +766,12 @@
         var ty = currentY;
         var midY = ty + rowHeight / 2;
 
-        /* 行ドラッグ領域を登録（左端20px） */
+        /* 行ドラッグ領域を登録（タスク名列＋担当者列をドラッグ可能領域とする） */
         if (PRIVILEGED) {
-          rowAreas.push({ cat: cat, sub: sub, idx: ti, task: task, y: ty, h: rowHeight, handleX: 20 });
+          rowAreas.push({
+            cat: cat, sub: sub, idx: ti, task: task,
+            y: ty, h: rowHeight, handleX: nameColW + assignColW,
+          });
         }
 
         /* ドラッグ中の行ハイライト */

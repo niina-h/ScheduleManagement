@@ -387,6 +387,13 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         if "assigned_to_2" not in pt_cols:
             db.execute("ALTER TABLE project_task ADD COLUMN assigned_to_2 INTEGER REFERENCES users(id) ON DELETE SET NULL")
             logger.info("project_task.assigned_to_2 カラムを追加しました。")
+        # 担当者ごとの「週間予定タスク管理反映」対象フラグ（デフォルト=ONで後方互換）
+        if "import_to_schedule_1" not in pt_cols:
+            db.execute("ALTER TABLE project_task ADD COLUMN import_to_schedule_1 INTEGER NOT NULL DEFAULT 1")
+            logger.info("project_task.import_to_schedule_1 カラムを追加しました。")
+        if "import_to_schedule_2" not in pt_cols:
+            db.execute("ALTER TABLE project_task ADD COLUMN import_to_schedule_2 INTEGER NOT NULL DEFAULT 1")
+            logger.info("project_task.import_to_schedule_2 カラムを追加しました。")
 
     # project_task にイベント関連カラムを追加（なければ）
     if "project_task" in tables:

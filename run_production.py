@@ -45,9 +45,22 @@ def main() -> None:
     """本番サーバーを起動する。"""
     args = parse_args()
 
+    # ログ出力先：標準出力（pythonw 起動時は捨てられる）に加えて logs/server.log にも記録する
+    import os as _os
+    from logging.handlers import RotatingFileHandler as _RFH
+    _log_dir = _os.path.join(_os.path.dirname(__file__), "logs")
+    _os.makedirs(_log_dir, exist_ok=True)
+    _log_path = _os.path.join(_log_dir, "server.log")
+    _fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+    _file_handler = _RFH(_log_path, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    _file_handler.setFormatter(_fmt)
+    _stream_handler = logging.StreamHandler()
+    _stream_handler.setFormatter(_fmt)
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[_file_handler, _stream_handler],
     )
     logger = logging.getLogger(__name__)
 

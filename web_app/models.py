@@ -2034,6 +2034,8 @@ def add_project_task(
     event_start_time: str = "",
     event_end_time: str = "",
     planned_hours: float = 0.0,
+    import_to_schedule_1: int = 1,
+    import_to_schedule_2: int = 1,
 ) -> int:
     """プロジェクトタスクを追加する。
 
@@ -2071,12 +2073,14 @@ def add_project_task(
         "(category_id, subcategory_id, task_name, description, assigned_to, assigned_to_2, "
         " is_milestone, start_date, end_date, status, delay_days, progress, "
         " display_order, created_by, updated_by, "
-        " is_event, event_start_time, event_end_time, planned_hours) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " is_event, event_start_time, event_end_time, planned_hours, "
+        " import_to_schedule_1, import_to_schedule_2) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (category_id, subcategory_id, task_name, description, assigned_to, assigned_to_2,
          is_milestone, start_date, end_date, status, delay_days, calc_progress,
          max_order + 1, created_by, updated_by,
-         is_event, event_start_time, event_end_time, planned_hours),
+         is_event, event_start_time, event_end_time, planned_hours,
+         import_to_schedule_1, import_to_schedule_2),
     )
     db.commit()
     return cur.lastrowid
@@ -2101,6 +2105,8 @@ def update_project_task(
     event_start_time: str = "",
     event_end_time: str = "",
     planned_hours: float = 0.0,
+    import_to_schedule_1: int = 1,
+    import_to_schedule_2: int = 1,
 ) -> None:
     """プロジェクトタスクを更新する。
 
@@ -2132,12 +2138,14 @@ def update_project_task(
         "assigned_to=?, assigned_to_2=?, is_milestone=?, start_date=?, end_date=?, "
         "status=?, delay_days=?, progress=?, "
         "is_event=?, event_start_time=?, event_end_time=?, planned_hours=?, "
+        "import_to_schedule_1=?, import_to_schedule_2=?, "
         "updated_at=datetime('now','localtime'), updated_by=? "
         "WHERE id=?",
         (category_id, subcategory_id, task_name, description,
          assigned_to, assigned_to_2, is_milestone, start_date, end_date,
          status, delay_days, calc_progress,
          is_event, event_start_time, event_end_time, planned_hours,
+         import_to_schedule_1, import_to_schedule_2,
          updated_by, task_id),
     )
     db.commit()
@@ -2256,12 +2264,16 @@ def import_tasks_to_weekly_schedule(
 
     # 対象週と期間が重なる、ユーザー担当タスクを取得
     # 配置順は ID 降順（新規タスクほど先に配置されるよう優先）
+    # 担当者ごとの「予定反映」フラグ (import_to_schedule_1 / import_to_schedule_2) を考慮:
+    #   担当1としての対象は import_to_schedule_1=1 のとき
+    #   担当2としての対象は import_to_schedule_2=1 のとき
     rows = db.execute(
         "SELECT pt.id, pt.task_name, COALESCE(ts.name,'') AS subcategory_name,"
         "       pt.start_date, pt.end_date "
         "FROM project_task pt "
         "LEFT JOIN task_subcategory ts ON ts.id = pt.subcategory_id "
-        "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?) "
+        "WHERE ((pt.assigned_to = ? AND pt.import_to_schedule_1 = 1)"
+        "    OR (pt.assigned_to_2 = ? AND pt.import_to_schedule_2 = 1)) "
         "  AND pt.is_event = 0 "
         "  AND pt.status NOT IN ('完了', '停止') "
         "  AND pt.start_date <= ? AND pt.end_date >= ? "

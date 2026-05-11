@@ -21,7 +21,9 @@
         {% endif %}
       </div>
       <div class="d-flex gap-2">
-        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('project_tasks_bp.gantt') }}">ガントチャート</a>
+        <a class="btn btn-outline-secondary btn-sm gantt-link"
+           data-base="{{ url_for('project_tasks_bp.gantt') }}"
+           href="{{ url_for('project_tasks_bp.gantt') }}">ガントチャート</a>
       </div>
     </div>
 
@@ -87,23 +89,33 @@
                 <label class="form-label small fw-semibold">対応内容</label>
                 <input type="text" name="description" class="form-control form-control-sm">
               </div>
-              <div class="col-auto" style="width:80px;">
-                <label class="form-label small fw-semibold">担当者1</label>
-                <select name="assigned_to" class="form-select form-select-sm" style="font-size:0.75rem;">
-                  <option value="">--</option>
-                  {% for u in users %}
-                  <option value="{{ u.id }}" {% if u.id == session.user_id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
-                  {% endfor %}
-                </select>
+              <div class="col-auto" style="width:130px;">
+                <label class="form-label small fw-semibold">担当者1 <small class="text-muted fw-normal" style="font-size:0.65rem;">(☑反映＝週間予定取込)</small></label>
+                <div class="d-flex gap-1 align-items-center">
+                  <select name="assigned_to" class="form-select form-select-sm" style="font-size:0.75rem; min-width:0; flex:1;">
+                    <option value="">--</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}" {% if u.id == session.user_id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <label class="form-check-label mb-0" style="font-size:0.7rem; white-space:nowrap;" title="この担当者の週間予定にタスク管理反映する">
+                    <input type="checkbox" name="import_to_schedule_1" value="1" class="form-check-input" checked>反映
+                  </label>
+                </div>
               </div>
-              <div class="col-auto" style="width:80px;">
-                <label class="form-label small fw-semibold">担当者2</label>
-                <select name="assigned_to_2" class="form-select form-select-sm" style="font-size:0.75rem;">
-                  <option value="">--</option>
-                  {% for u in users %}
-                  <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
-                  {% endfor %}
-                </select>
+              <div class="col-auto" style="width:130px;">
+                <label class="form-label small fw-semibold">担当者2 <small class="text-muted fw-normal" style="font-size:0.65rem;">(☑反映＝週間予定取込)</small></label>
+                <div class="d-flex gap-1 align-items-center">
+                  <select name="assigned_to_2" class="form-select form-select-sm" style="font-size:0.75rem; min-width:0; flex:1;">
+                    <option value="">--</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <label class="form-check-label mb-0" style="font-size:0.7rem; white-space:nowrap;" title="この担当者の週間予定にタスク管理反映する">
+                    <input type="checkbox" name="import_to_schedule_2" value="1" class="form-check-input" checked>反映
+                  </label>
+                </div>
               </div>
               <div class="col-auto" style="width:130px;">
                 <label class="form-label small fw-semibold">開始日 <span class="text-danger">*</span></label>
@@ -168,7 +180,7 @@
               <th style="width:7%">中区分</th>
               <th style="width:13%">タスク名</th>
               <th style="width:11%">対応内容</th>
-              <th style="width:14%">担当者</th>
+              <th style="width:14%">担当者 <small class="text-muted fw-normal" style="font-size:0.65rem; white-space:nowrap;">（☑反映＝週間予定の自動取込対象）</small></th>
               <th style="width:4%">開始日</th>
               <th style="width:4%">終了日</th>
               <th style="width:5%">状態</th>
@@ -201,19 +213,27 @@
               <td><input type="text" form="bulkForm" name="task_name_{{ t.id }}" value="{{ t.task_name }}" class="form-control form-control-sm"></td>
               <td><input type="text" form="bulkForm" name="description_{{ t.id }}" value="{{ t.description or '' }}" class="form-control form-control-sm"></td>
               <td>
-                <div class="d-flex gap-1">
-                  <select form="bulkForm" name="assigned_to_{{ t.id }}" class="form-select form-select-sm">
+                <div class="d-flex gap-1 align-items-center">
+                  <select form="bulkForm" name="assigned_to_{{ t.id }}" class="form-select form-select-sm" style="min-width:0; flex:1;">
                     <option value="">--</option>
                     {% for u in users %}
                     <option value="{{ u.id }}" {% if t.assigned_to == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
                     {% endfor %}
                   </select>
-                  <select form="bulkForm" name="assigned_to_2_{{ t.id }}" class="form-select form-select-sm">
+                  <label class="form-check-label mb-0" style="font-size:0.7rem; white-space:nowrap;" title="担当1の週間予定にタスク管理反映">
+                    <input type="checkbox" form="bulkForm" name="import_to_schedule_1_{{ t.id }}" value="1" class="form-check-input"
+                           {% if t.import_to_schedule_1 %}checked{% endif %}>反映
+                  </label>
+                  <select form="bulkForm" name="assigned_to_2_{{ t.id }}" class="form-select form-select-sm" style="min-width:0; flex:1;">
                     <option value="">--</option>
                     {% for u in users %}
                     <option value="{{ u.id }}" {% if t.assigned_to_2 == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
                     {% endfor %}
                   </select>
+                  <label class="form-check-label mb-0" style="font-size:0.7rem; white-space:nowrap;" title="担当2の週間予定にタスク管理反映">
+                    <input type="checkbox" form="bulkForm" name="import_to_schedule_2_{{ t.id }}" value="1" class="form-check-input"
+                           {% if t.import_to_schedule_2 %}checked{% endif %}>反映
+                  </label>
                 </div>
               </td>
               <td><input type="date" form="bulkForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}" class="form-control form-control-sm px-1" style="width:100px;"></td>
@@ -664,6 +684,14 @@
     window.history.replaceState({}, '', url);
     var bf = document.getElementById('bulkFormFilter');
     if (bf) bf.value = filterSel.value;
+    // ガントチャート遷移用リンクにも絞り込み状態を引き継ぐ
+    var gl = document.querySelector('.gantt-link');
+    if (gl) {
+      var base = gl.dataset.base || gl.href.split('?')[0];
+      gl.href = filterSel.value
+        ? base + '?subcat_filter=' + encodeURIComponent(filterSel.value)
+        : base;
+    }
   }
 
   filterSel.addEventListener('change', function() { saveParams(); applyFilter(); });

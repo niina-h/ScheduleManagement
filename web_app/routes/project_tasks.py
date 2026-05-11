@@ -210,6 +210,9 @@ def add_task() -> object:
         planned_hours = max(0.0, float(planned_hours_str))
     except ValueError:
         planned_hours = 0.0
+    # 担当者ごとの予定反映フラグ（チェックボックス）。未送信は OFF として扱う。
+    import_to_schedule_1 = 1 if request.form.get("import_to_schedule_1") == "1" else 0
+    import_to_schedule_2 = 1 if request.form.get("import_to_schedule_2") == "1" else 0
 
     add_project_task(
         category_id=int(cat_id) if cat_id else None,
@@ -230,6 +233,8 @@ def add_task() -> object:
         event_start_time=event_start_time,
         event_end_time=event_end_time,
         planned_hours=planned_hours,
+        import_to_schedule_1=import_to_schedule_1,
+        import_to_schedule_2=import_to_schedule_2,
     )
     flash("タスクを追加しました。", "success")
     return redirect(url_for("project_tasks_bp.task_list") + "?add_open=1")
@@ -297,6 +302,9 @@ def update_task(task_id: int) -> object:
         planned_hours = max(0.0, float(planned_hours_str))
     except ValueError:
         planned_hours = 0.0
+    # 担当者ごとの予定反映フラグ
+    import_to_schedule_1 = 1 if request.form.get("import_to_schedule_1") == "1" else 0
+    import_to_schedule_2 = 1 if request.form.get("import_to_schedule_2") == "1" else 0
 
     update_project_task(
         task_id=task_id,
@@ -317,6 +325,8 @@ def update_task(task_id: int) -> object:
         event_start_time=event_start_time,
         event_end_time=event_end_time,
         planned_hours=planned_hours,
+        import_to_schedule_1=import_to_schedule_1,
+        import_to_schedule_2=import_to_schedule_2,
     )
     flash("タスクを更新しました。", "success")
     return redirect(url_for("project_tasks_bp.task_list"))
@@ -396,6 +406,9 @@ def bulk_update_tasks() -> object:
             planned_hours_val = max(0.0, float(planned_hours_str))
         except ValueError:
             planned_hours_val = 0.0
+        # 担当者ごとの予定反映フラグ
+        import_to_schedule_1 = 1 if request.form.get(f"import_to_schedule_1{sfx}") == "1" else 0
+        import_to_schedule_2 = 1 if request.form.get(f"import_to_schedule_2{sfx}") == "1" else 0
 
         update_project_task(
             task_id=task_id,
@@ -416,6 +429,8 @@ def bulk_update_tasks() -> object:
             event_start_time=event_start_time,
             event_end_time=event_end_time,
             planned_hours=planned_hours_val,
+            import_to_schedule_1=import_to_schedule_1,
+            import_to_schedule_2=import_to_schedule_2,
         )
         updated_count += 1
 
@@ -985,28 +1000,63 @@ def gantt_update_fields(task_id: int) -> tuple:
 def gantt_reorder() -> tuple:
     """ガントチャート上でタスクの表示順を入れ替えるAPI。
 
-    JSON: { "order": [id1, id2, ...] } — カテゴリ内の表示順を更新する。
+    JSON: { "order": [id1, id2, ...] } — 対象タスクの表示順を更新する。
+    対象タスクが持つ既存 display_order 値の集合を、新しい順序で各 ID に再割当することで、
+    対象外のタスクとの相対順序を壊さずに並び替えを実現する。
 
     Returns:
         tuple: (Response, status_code)
     """
-    csrf = request.headers.get("X-CSRF-Token", "")
-    if csrf != session.get("csrf_token"):
-        abort(400)
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
 
-    data = request.get_json(silent=True)
-    if not data or "order" not in data:
-        return jsonify({"error": "orderが必要です"}), 400
+    try:
+        csrf = request.headers.get("X-CSRF-Token", "")
+        if csrf != session.get("csrf_token"):
+            return jsonify({"error": "CSRFトークン不一致"}), 400
 
-    db = get_db()
-    order_list = data["order"]
-    for idx, task_id in enumerate(order_list):
-        db.execute(
-            "UPDATE project_task SET display_order = ? WHERE id = ?",
-            (idx, int(task_id)),
-        )
-    db.commit()
-    return jsonify({"ok": True}), 200
+        data = request.get_json(silent=True)
+        if not data or "order" not in data:
+            return jsonify({"error": "orderが必要です"}), 400
+
+        order_list = data["order"]
+        if not order_list:
+            return jsonify({"ok": True, "updated": 0}), 200
+
+        try:
+            ids: list[int] = [int(x) for x in order_list]
+        except (TypeError, ValueError):
+            return jsonify({"error": "不正なID形式"}), 400
+
+        from ..database import get_db
+        db = get_db()
+        placeholders = ",".join("?" * len(ids))
+        rows = db.execute(
+            f"SELECT id, display_order FROM project_task WHERE id IN ({placeholders})",
+            tuple(ids),
+        ).fetchall()
+        if not rows:
+            return jsonify({"error": "対象タスクが見つかりません"}), 400
+
+        existing_orders: list[int] = sorted(int(r["display_order"] or 0) for r in rows)
+        updated_by: str = session.get("user_name", "") or ""
+        updated = 0
+        for idx, task_id in enumerate(ids):
+            if idx >= len(existing_orders):
+                break
+            db.execute(
+                "UPDATE project_task SET display_order = ?, "
+                "  updated_at=datetime('now','localtime'), updated_by=? "
+                "WHERE id = ?",
+                (existing_orders[idx], updated_by, task_id),
+            )
+            updated += 1
+        db.commit()
+        return jsonify({"ok": True, "updated": updated}), 200
+    except Exception as e:
+        # 例外詳細をログに残し、クライアントにもメッセージを返してデバッグしやすくする
+        _logger.exception("gantt_reorder で例外発生")
+        return jsonify({"error": f"内部エラー: {type(e).__name__}: {str(e)}"}), 500
 
 
 @project_tasks_bp.route("/gantt")
@@ -1078,11 +1128,23 @@ def gantt() -> str:
             "is_milestone": 0,
         })
 
+    # タスク管理画面から引き継いだ中区分フィルタ初期値（クエリパラメータ）
+    initial_subcat: str = request.args.get("subcat_filter", "").strip()
+
+    # ガントチャート画面のプルダウン用：表示対象タスクの中区分名（重複なし・ソート済）
+    subcat_options: list[str] = sorted({
+        (t.get("subcategory_name") or "")
+        for t in tasks
+        if not t.get("is_event", 0) and (t.get("subcategory_name") or "")
+    })
+
     return render_template(
         "project_tasks_gantt.html",
         gantt_json=json.dumps(gantt_data, ensure_ascii=False),
         privileged=True,
         csrf_token=session.get("csrf_token", ""),
+        subcat_options=subcat_options,
+        initial_subcat=initial_subcat,
     )
 
 
@@ -1503,6 +1565,12 @@ def export_gantt() -> object:
         tasks = get_all_project_tasks(assigned_to=login_id)
 
     show_comp = request.args.get("show_completed") == "1"
+
+    # 中区分絞り込み（ガントチャート画面から引き継ぐ）
+    subcat_f: str = request.args.get("subcat_filter", "").strip()
+    if subcat_f:
+        tasks = [t for t in tasks if (t.get("subcategory_name") or "") == subcat_f]
+
     wb = _build_gantt_excel(tasks, start_d, display_days, show_completed=show_comp)
 
     buf = io.BytesIO()
