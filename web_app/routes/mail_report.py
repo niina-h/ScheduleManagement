@@ -21,6 +21,7 @@ from ..models import (
     get_mail_setting,
     get_next_business_day,
     get_task_master,
+    get_weekly_leave,
     get_weekly_schedule,
     save_mail_setting,
     get_user_by_id,
@@ -331,12 +332,15 @@ def _build_master_body(
             for item in schedule_data.get(target_dow, {}).get(slot, [])
             if item.get("task_name", "").strip()
         }
+        # 当日の休暇種別（1日有休 / AM半休 / PM半休 / 特休 / 祝日 / その他休み）
+        leave_type: str = get_weekly_leave(uid, week_start_str).get(target_dow, "")
         member_data.append({
             "member": member,
             "result": result,
             "comment": comment_row,
             "task_cat_map": task_cat_map,
             "scheduled_tasks": scheduled_tasks,
+            "leave_type": leave_type,
         })
 
     # 全メンバーの予定時間合計（週間スケジュールの入力時間）
@@ -393,11 +397,17 @@ def _build_master_body(
                 if task and hours > 0:
                     today_worked_tasks.add(task)
 
-    # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ、イベント除外）
+    # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ、イベント除外）。
+    # 当日以前に完了したタスクは過去の業務報告で既に表示済みなので本文から除外する。
     member_ids = [m["id"] for m in members]
+    target_date_str: str = target_date.isoformat()
     project_tasks = [
         t for t in get_all_project_tasks(user_ids=member_ids)
         if not t.get("is_event", 0)
+        and not (
+            t.get("status") == "完了"
+            and (t.get("end_date") or "") <= target_date_str
+        )
     ]
     all_cats = get_all_categories()
     all_subcats = get_all_subcategories()
@@ -498,11 +508,21 @@ def _build_master_body(
         return (info.get("category_name") in ("定例", "定例作業")
                 or info.get("subcategory_name") in ("定例", "定例作業"))
 
+    # 終日休暇（出勤なし）と判定する種別
+    FULL_LEAVE_TYPES: set[str] = {"1日有休", "特休", "その他休み", "祝日"}
+
     member_lines: list[str] = []
     for md in member_data:
         name = md["member"]["name"]
         result = md["result"]
         tcm = md["task_cat_map"]
+        leave = md.get("leave_type", "")
+
+        # 終日休暇の場合：休暇種別のみを表示
+        if leave in FULL_LEAVE_TYPES:
+            member_lines.append(f"{name}：{leave}")
+            continue
+
         am_tasks = list(dict.fromkeys(
             item["task_name"]
             for idx, item in enumerate(result.get("am", []))
@@ -519,7 +539,13 @@ def _build_master_body(
         ))
         am_str = "/ ".join(am_tasks) if am_tasks else "（なし）"
         pm_str = "/ ".join(pm_tasks) if pm_tasks else "（なし）"
-        if am_str == pm_str:
+
+        # 半休の場合：休んでいる側を休暇種別表記、もう片方は通常通り
+        if leave == "AM半休":
+            member_lines.append(f"{name}：AM半休 / {pm_str}")
+        elif leave == "PM半休":
+            member_lines.append(f"{name}：{am_str} / PM半休")
+        elif am_str == pm_str:
             member_lines.append(f"{name}：{am_str}")
         else:
             member_lines.append(f"{name}：{am_str} / {pm_str}")

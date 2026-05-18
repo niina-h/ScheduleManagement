@@ -7,13 +7,29 @@
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
       <h5 class="fw-bold mb-0">ガントチャート</h5>
       <div class="d-flex gap-2 align-items-center flex-wrap">
-        <label class="form-label small mb-0 fw-semibold">絞り込み：</label>
+        {% if is_master_flag and selectable_users %}
+        <label class="form-label small mb-0 fw-semibold">担当者：</label>
+        <select id="ganttUserSelect" class="form-select form-select-sm" style="width:120px; font-size:0.8rem;">
+          <option value="0" {% if initial_target_user_id == 0 %}selected{% endif %}>全員</option>
+          {% for u in selectable_users %}
+          <option value="{{ u.id }}" {% if initial_target_user_id == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+          {% endfor %}
+        </select>
+        {% endif %}
+        <label class="form-label small mb-0 fw-semibold">中区分：</label>
         <select id="ganttSubcatFilter" class="form-select form-select-sm" style="width:160px; font-size:0.8rem;">
           <option value="">すべて</option>
           {% for sn in subcat_options %}
           <option value="{{ sn }}" {% if sn == initial_subcat %}selected{% endif %}>{{ sn }}</option>
           {% endfor %}
         </select>
+        <span class="ms-2 small text-muted">期間：</span>
+        <input type="date" id="ganttPeriodStart" class="form-control form-control-sm" style="width:140px; font-size:0.8rem;" value="{{ initial_period_start }}">
+        <span class="small text-muted">〜</span>
+        <input type="date" id="ganttPeriodEnd" class="form-control form-control-sm" style="width:140px; font-size:0.8rem;" value="{{ initial_period_end }}">
+        <button type="button" class="btn btn-outline-secondary btn-sm py-0" id="ganttPeriodThisWeek" style="font-size:0.75rem;">今週</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm py-0" id="ganttPeriodNextWeek" style="font-size:0.75rem;">次週</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm py-0" id="ganttPeriodClear" style="font-size:0.75rem;">クリア</button>
         <button class="btn btn-outline-secondary btn-sm" id="ganttPrev">◀ 前へ</button>
         <span class="fw-semibold" id="ganttRange" style="min-width:200px; text-align:center;"></span>
         <button class="btn btn-outline-secondary btn-sm" id="ganttNext">次へ ▶</button>
@@ -79,9 +95,30 @@
     '遅れ': '#f87171', '完了': '#10b981', '停止': '#d1d5db'
   };
 
-  /* ── 中区分フィルタ ── */
+  /* ── フィルタ（中区分・期間） ── */
   var subcatFilter = '{{ initial_subcat }}';
+  var periodStartVal = '{{ initial_period_start }}';
+  var periodEndVal = '{{ initial_period_end }}';
+  var initialTargetUserId = '{{ initial_target_user_id }}';
   var subcatSel = document.getElementById('ganttSubcatFilter');
+  var periodStartEl = document.getElementById('ganttPeriodStart');
+  var periodEndEl = document.getElementById('ganttPeriodEnd');
+
+  function _toIso(d) {
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+  function _getMonFri(weekOffset) {
+    var d = new Date();
+    var dow = d.getDay();
+    var daysToMon = dow === 0 ? 6 : (dow - 1);
+    var monday = new Date(d);
+    monday.setDate(d.getDate() - daysToMon + weekOffset * 7);
+    var friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+    return { start: _toIso(monday), end: _toIso(friday) };
+  }
 
   /* ── 大区分 → 中区分 → タスク の3階層グループ化 ── */
   var categoryOrder = [];
@@ -97,6 +134,9 @@
       if (t.milestone_only) { milestoneOnlyTasks.push(t); return; }
       // 中区分絞り込みが指定されている場合、それ以外はスキップ
       if (subcatFilter && (t.subcategory || '') !== subcatFilter) return;
+      // 期間絞り込み: タスクの期間が指定範囲と重なるもののみ
+      if (periodStartVal && t.end && t.end < periodStartVal) return;
+      if (periodEndVal && t.start && t.start > periodEndVal) return;
       var cat = t.category || '（未分類）';
       var sub = t.subcategory || '（その他）';
       if (!categoryMap[cat]) {
@@ -113,23 +153,80 @@
   var collapsed = {};
   categoryOrder.forEach(function (c) { collapsed[c] = false; });
 
-  /* 絞り込み変更時：URL更新・再構築・再描画 */
+  /* URL更新ヘルパー（中区分・期間・担当者を一括反映） */
+  function syncUrl() {
+    var url = new URL(window.location);
+    if (subcatFilter) url.searchParams.set('subcat_filter', subcatFilter); else url.searchParams.delete('subcat_filter');
+    if (periodStartVal) url.searchParams.set('period_start', periodStartVal); else url.searchParams.delete('period_start');
+    if (periodEndVal) url.searchParams.set('period_end', periodEndVal); else url.searchParams.delete('period_end');
+    window.history.replaceState({}, '', url);
+  }
+
+  function reapplyFilter() {
+    rebuildCategoryMap();
+    collapsed = {};
+    categoryOrder.forEach(function (c) { collapsed[c] = false; });
+    drawGantt();
+  }
+
   if (subcatSel) {
     subcatSel.addEventListener('change', function () {
       subcatFilter = subcatSel.value;
-      var url = new URL(window.location);
-      if (subcatFilter) {
-        url.searchParams.set('subcat_filter', subcatFilter);
-      } else {
-        url.searchParams.delete('subcat_filter');
-      }
-      window.history.replaceState({}, '', url);
-      rebuildCategoryMap();
-      collapsed = {};
-      categoryOrder.forEach(function (c) { collapsed[c] = false; });
-      drawGantt();
+      syncUrl();
+      reapplyFilter();
     });
   }
+  // マスタ用：担当者切替（変更時はサーバー側で再フィルタするためページ再ロード）
+  var userSel = document.getElementById('ganttUserSelect');
+  if (userSel) {
+    userSel.addEventListener('change', function () {
+      var url = new URL(window.location);
+      var uid = userSel.value;
+      if (uid && uid !== '0') {
+        url.searchParams.set('user_id', uid);
+      } else {
+        url.searchParams.delete('user_id');
+      }
+      window.location.href = url.toString();
+    });
+  }
+  if (periodStartEl) {
+    periodStartEl.addEventListener('change', function () {
+      periodStartVal = periodStartEl.value;
+      syncUrl();
+      reapplyFilter();
+    });
+  }
+  if (periodEndEl) {
+    periodEndEl.addEventListener('change', function () {
+      periodEndVal = periodEndEl.value;
+      syncUrl();
+      reapplyFilter();
+    });
+  }
+  var btnPThis = document.getElementById('ganttPeriodThisWeek');
+  var btnPNext = document.getElementById('ganttPeriodNextWeek');
+  var btnPClear = document.getElementById('ganttPeriodClear');
+  if (btnPThis) btnPThis.addEventListener('click', function () {
+    var w = _getMonFri(0);
+    periodStartVal = w.start; periodEndVal = w.end;
+    if (periodStartEl) periodStartEl.value = w.start;
+    if (periodEndEl) periodEndEl.value = w.end;
+    syncUrl(); reapplyFilter();
+  });
+  if (btnPNext) btnPNext.addEventListener('click', function () {
+    var w = _getMonFri(1);
+    periodStartVal = w.start; periodEndVal = w.end;
+    if (periodStartEl) periodStartEl.value = w.start;
+    if (periodEndEl) periodEndEl.value = w.end;
+    syncUrl(); reapplyFilter();
+  });
+  if (btnPClear) btnPClear.addEventListener('click', function () {
+    periodStartVal = ''; periodEndVal = '';
+    if (periodStartEl) periodStartEl.value = '';
+    if (periodEndEl) periodEndEl.value = '';
+    syncUrl(); reapplyFilter();
+  });
 
   var showCompleted = false;
   var showCompCb = document.getElementById('showCompleted');
@@ -166,7 +263,10 @@
     var url = '{{ url_for("project_tasks_bp.export_gantt") }}' +
       '?start=' + startStr + '&days=' + DISPLAY_DAYS +
       (showCompleted ? '&show_completed=1' : '') +
-      (subcatFilter ? '&subcat_filter=' + encodeURIComponent(subcatFilter) : '');
+      (subcatFilter ? '&subcat_filter=' + encodeURIComponent(subcatFilter) : '') +
+      (periodStartVal ? '&period_start=' + encodeURIComponent(periodStartVal) : '') +
+      (periodEndVal ? '&period_end=' + encodeURIComponent(periodEndVal) : '') +
+      (initialTargetUserId && initialTargetUserId !== '0' ? '&user_id=' + encodeURIComponent(initialTargetUserId) : '');
     window.location.href = url;
   });
 

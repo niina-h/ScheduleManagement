@@ -587,7 +587,8 @@ def delete_routine(routine_id: int) -> object:
     user_id = int(session["user_id"])
     delete_routine_task(routine_id, user_id)
     flash("定例スケジュールを削除しました。", "success")
-    return redirect(url_for("project_tasks_bp.task_list"))
+    # 削除後は定例タブをそのまま維持する
+    return redirect(url_for("project_tasks_bp.task_list") + "?tab=routine")
 
 
 # -- ステータス→色マッピング（ダッシュボード用） --
@@ -1073,8 +1074,22 @@ def gantt() -> str:
     login_dept = session.get("user_dept", "")
     privileged = is_privileged(login_role)
 
+    # タスク管理画面から引き継がれる担当者絞り込み（マスタ・管理職のみ有効）
+    target_user_id_str: str = request.args.get("user_id", "").strip()
+    target_user_id_int: int | None = None
+    if target_user_id_str and privileged:
+        try:
+            tid = int(target_user_id_str)
+            if tid > 0:
+                target_user_id_int = tid
+        except ValueError:
+            target_user_id_int = None
+
     # タスク一覧と同じスコープで取得
-    if login_role == "マスタ":
+    if target_user_id_int is not None:
+        # 担当者絞り込みあり: 指定ユーザーが担当のタスクのみ
+        tasks = get_all_project_tasks(assigned_to=target_user_id_int)
+    elif login_role == "マスタ":
         accessible = get_accessible_users(login_id, login_role, login_dept)
         accessible_ids = [u["id"] for u in accessible]
         tasks = get_all_project_tasks(user_ids=accessible_ids)
@@ -1128,8 +1143,10 @@ def gantt() -> str:
             "is_milestone": 0,
         })
 
-    # タスク管理画面から引き継いだ中区分フィルタ初期値（クエリパラメータ）
+    # タスク管理画面から引き継いだフィルタ初期値（クエリパラメータ）
     initial_subcat: str = request.args.get("subcat_filter", "").strip()
+    initial_period_start: str = request.args.get("period_start", "").strip()
+    initial_period_end: str = request.args.get("period_end", "").strip()
 
     # ガントチャート画面のプルダウン用：表示対象タスクの中区分名（重複なし・ソート済）
     subcat_options: list[str] = sorted({
@@ -1138,6 +1155,12 @@ def gantt() -> str:
         if not t.get("is_event", 0) and (t.get("subcategory_name") or "")
     })
 
+    # マスタ権限の場合、画面上で担当者を切り替えられるよう選択肢を渡す
+    is_master_flag: bool = is_master(login_role)
+    selectable_users: list[dict] = []
+    if is_master_flag:
+        selectable_users = get_accessible_users(login_id, login_role, login_dept)
+
     return render_template(
         "project_tasks_gantt.html",
         gantt_json=json.dumps(gantt_data, ensure_ascii=False),
@@ -1145,6 +1168,11 @@ def gantt() -> str:
         csrf_token=session.get("csrf_token", ""),
         subcat_options=subcat_options,
         initial_subcat=initial_subcat,
+        initial_period_start=initial_period_start,
+        initial_period_end=initial_period_end,
+        initial_target_user_id=target_user_id_int or 0,
+        is_master_flag=is_master_flag,
+        selectable_users=selectable_users,
     )
 
 
@@ -1339,122 +1367,147 @@ def _build_gantt_excel(
                 cell.fill = milestone_fill
         row += 1
 
-    # -- カテゴリ別にグループ化 --
+    # -- 大区分→中区分→タスクの3階層にグループ化（画面のガントチャート構造に合わせる） --
     cat_order: list[str] = []
-    cat_map: dict[str, list[dict]] = {}
+    cat_map: dict[str, dict] = {}
+    # cat_map[cat] = {"subcat_order": [...], "subcat_map": {subcat: [task...]}, "total": int}
     for t in normal_tasks:
         cat = t.get("category_name") or "（未分類）"
+        sub = t.get("subcategory_name") or "（その他）"
         if cat not in cat_map:
-            cat_map[cat] = []
+            cat_map[cat] = {"subcat_order": [], "subcat_map": {}, "total": 0}
             cat_order.append(cat)
-        cat_map[cat].append(t)
-    for cat in cat_order:
-        task_list = cat_map[cat]
+        cm = cat_map[cat]
+        if sub not in cm["subcat_map"]:
+            cm["subcat_map"][sub] = []
+            cm["subcat_order"].append(sub)
+        cm["subcat_map"][sub].append(t)
+        cm["total"] += 1
 
-        # カテゴリ行
+    # 中区分行スタイル（大区分よりやや薄く）
+    subcat_fill = PatternFill("solid", fgColor="F1F5F9")
+    subcat_font = Font(bold=True, size=9, name="游ゴシック", color="475569")
+
+    for cat in cat_order:
+        cm = cat_map[cat]
+
+        # 大区分行
         ws.merge_cells(start_row=row, start_column=1,
                        end_row=row, end_column=fixed_cols + display_days)
-        cell = ws.cell(row, 1, f"■ {cat}（{len(task_list)}件）")
+        cell = ws.cell(row, 1, f"▼ {cat}（{cm['total']}件）")
         cell.fill = cat_fill
         cell.font = cat_font
         cell.alignment = left_align
         cell.border = thin_border
         row += 1
 
-        # タスク行
-        for t in task_list:
-            # 担当者名
-            names = []
-            ln1 = t.get("assigned_last_name") or t.get("assigned_name") or ""
-            ln2 = t.get("assigned_last_name_2") or t.get("assigned_name_2") or ""
-            if ln1:
-                names.append(ln1)
-            if ln2:
-                names.append(ln2)
-            assigned = "・".join(names)
+        for sub in cm["subcat_order"]:
+            sub_tasks = cm["subcat_map"][sub]
 
-            progress = t.get("progress", 0) or 0
-            status = t.get("status", "")
-            is_completed = (status == "完了")
-            row_font = completed_font if is_completed else body_font
-            row_fill = completed_fill if is_completed else None
-
-            # 固定列
-            ws.cell(row, 1, cat).font = row_font
-            ws.cell(row, 1).alignment = left_align
-            ws.cell(row, 1).border = thin_border
-            if row_fill: ws.cell(row, 1).fill = row_fill
-
-            ws.cell(row, 2, t["task_name"]).font = row_font
-            ws.cell(row, 2).alignment = left_align
-            ws.cell(row, 2).border = thin_border
-            if row_fill: ws.cell(row, 2).fill = row_fill
-
-            ws.cell(row, 3, assigned).font = row_font
-            ws.cell(row, 3).alignment = center_align
-            ws.cell(row, 3).border = thin_border
-            if row_fill: ws.cell(row, 3).fill = row_fill
-
-            status_cell = ws.cell(row, 4, status)
-            status_cell.font = row_font
-            status_cell.alignment = center_align
-            status_cell.border = thin_border
-            if row_fill: status_cell.fill = row_fill
-
-            prog_cell = ws.cell(row, 5, f"{progress}%")
-            prog_cell.font = row_font
-            prog_cell.alignment = center_align
-            prog_cell.border = thin_border
-            if row_fill: prog_cell.fill = row_fill
-
-            # ガントバー描画
-            try:
-                t_start = date.fromisoformat(t["start_date"])
-                t_end = date.fromisoformat(t["end_date"])
-            except (ValueError, TypeError, KeyError):
-                row += 1
-                continue
-
-            for di in range(display_days):
-                dt = start_date + timedelta(days=di)
-                col = fixed_cols + di + 1
-                cell = ws.cell(row, col)
-                is_today = (dt == today_d)
-                cell.border = today_border_mid if is_today else thin_border
-
-                # 土日背景
-                if dt.weekday() == 5:
-                    cell.fill = sat_fill
-                elif dt.weekday() == 6:
-                    cell.fill = sun_fill
-
-                # 今日ハイライト
-                if is_today:
-                    cell.fill = today_fill_body
-
-                # タスク期間内
-                if t_start <= dt <= t_end:
-                    if status == "完了":
-                        cell.fill = PatternFill("solid", fgColor="1E40AF")
-                    elif status == "停止":
-                        cell.fill = PatternFill("solid", fgColor="E5E7EB")
-                    else:
-                        # 進捗バー計算
-                        total_days = (t_end - t_start).days + 1
-                        day_idx = (dt - t_start).days
-                        prog_days = round(total_days * progress / 100)
-
-                        if day_idx < prog_days:
-                            # 進捗済み部分
-                            fill_color = _PROGRESS_FILL.get(
-                                status, _PROGRESS_FILL["_default"]
-                            )
-                            cell.fill = PatternFill("solid", fgColor=fill_color)
-                        else:
-                            # 予定部分
-                            cell.fill = PatternFill("solid", fgColor="93C5FD")
-
+            # 中区分行
+            ws.merge_cells(start_row=row, start_column=1,
+                           end_row=row, end_column=fixed_cols + display_days)
+            scell = ws.cell(row, 1, f"　└ {sub}（{len(sub_tasks)}件）")
+            scell.fill = subcat_fill
+            scell.font = subcat_font
+            scell.alignment = left_align
+            scell.border = thin_border
             row += 1
+
+            # タスク行（中区分内）
+            for t in sub_tasks:
+                # 担当者名
+                names = []
+                ln1 = t.get("assigned_last_name") or t.get("assigned_name") or ""
+                ln2 = t.get("assigned_last_name_2") or t.get("assigned_name_2") or ""
+                if ln1:
+                    names.append(ln1)
+                if ln2:
+                    names.append(ln2)
+                assigned = "・".join(names)
+
+                progress = t.get("progress", 0) or 0
+                status = t.get("status", "")
+                is_completed = (status == "完了")
+                row_font = completed_font if is_completed else body_font
+                row_fill = completed_fill if is_completed else None
+
+                # 固定列
+                ws.cell(row, 1, cat).font = row_font
+                ws.cell(row, 1).alignment = left_align
+                ws.cell(row, 1).border = thin_border
+                if row_fill: ws.cell(row, 1).fill = row_fill
+
+                ws.cell(row, 2, t["task_name"]).font = row_font
+                ws.cell(row, 2).alignment = left_align
+                ws.cell(row, 2).border = thin_border
+                if row_fill: ws.cell(row, 2).fill = row_fill
+
+                ws.cell(row, 3, assigned).font = row_font
+                ws.cell(row, 3).alignment = center_align
+                ws.cell(row, 3).border = thin_border
+                if row_fill: ws.cell(row, 3).fill = row_fill
+
+                status_cell = ws.cell(row, 4, status)
+                status_cell.font = row_font
+                status_cell.alignment = center_align
+                status_cell.border = thin_border
+                if row_fill: status_cell.fill = row_fill
+
+                prog_cell = ws.cell(row, 5, f"{progress}%")
+                prog_cell.font = row_font
+                prog_cell.alignment = center_align
+                prog_cell.border = thin_border
+                if row_fill: prog_cell.fill = row_fill
+
+                # ガントバー描画
+                try:
+                    t_start = date.fromisoformat(t["start_date"])
+                    t_end = date.fromisoformat(t["end_date"])
+                except (ValueError, TypeError, KeyError):
+                    row += 1
+                    continue
+
+                for di in range(display_days):
+                    dt = start_date + timedelta(days=di)
+                    col = fixed_cols + di + 1
+                    cell = ws.cell(row, col)
+                    is_today = (dt == today_d)
+                    cell.border = today_border_mid if is_today else thin_border
+
+                    # 土日背景
+                    if dt.weekday() == 5:
+                        cell.fill = sat_fill
+                    elif dt.weekday() == 6:
+                        cell.fill = sun_fill
+
+                    # 今日ハイライト
+                    if is_today:
+                        cell.fill = today_fill_body
+
+                    # タスク期間内
+                    if t_start <= dt <= t_end:
+                        if status == "完了":
+                            cell.fill = PatternFill("solid", fgColor="1E40AF")
+                        elif status == "停止":
+                            cell.fill = PatternFill("solid", fgColor="E5E7EB")
+                        else:
+                            # 進捗バー計算
+                            total_days = (t_end - t_start).days + 1
+                            day_idx = (dt - t_start).days
+                            prog_days = round(total_days * progress / 100)
+
+                            if day_idx < prog_days:
+                                # 進捗済み部分
+                                fill_color = _PROGRESS_FILL.get(
+                                    status, _PROGRESS_FILL["_default"]
+                                )
+                                cell.fill = PatternFill("solid", fgColor=fill_color)
+                            else:
+                                # 予定部分
+                                cell.fill = PatternFill("solid", fgColor="93C5FD")
+
+                row += 1
 
     # 今日の列の最終行に下罫線を付ける
     if today_col_idx > 0:
@@ -1546,8 +1599,22 @@ def export_gantt() -> object:
     else:
         start_d = _get_monday(date.today()) - timedelta(days=7)
 
+    # 担当者絞り込み（マスタ・管理職のみ有効）
+    target_user_id_str: str = request.args.get("user_id", "").strip()
+    target_user_id_int: int | None = None
+    if target_user_id_str and privileged:
+        try:
+            tid = int(target_user_id_str)
+            if tid > 0:
+                target_user_id_int = tid
+        except ValueError:
+            target_user_id_int = None
+
     # 権限別タスク取得
-    if is_master(login_role):
+    if target_user_id_int is not None:
+        # 担当者絞り込みあり: 指定ユーザーが担当のタスクのみ
+        tasks = get_all_project_tasks(assigned_to=target_user_id_int)
+    elif is_master(login_role):
         # マスタ: 全タスク
         tasks = get_all_project_tasks()
     elif privileged:
@@ -1570,6 +1637,18 @@ def export_gantt() -> object:
     subcat_f: str = request.args.get("subcat_filter", "").strip()
     if subcat_f:
         tasks = [t for t in tasks if (t.get("subcategory_name") or "") == subcat_f]
+
+    # 期間絞り込み（タスクの期間と指定範囲が重なるもの）
+    period_start: str = request.args.get("period_start", "").strip()
+    period_end: str = request.args.get("period_end", "").strip()
+    if period_start or period_end:
+        tasks = [
+            t for t in tasks
+            if (
+                (not period_end or (t.get("start_date") or "") <= period_end)
+                and (not period_start or (t.get("end_date") or "") >= period_start)
+            )
+        ]
 
     wb = _build_gantt_excel(tasks, start_d, display_days, show_completed=show_comp)
 

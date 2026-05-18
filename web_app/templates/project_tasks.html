@@ -153,7 +153,7 @@
         <input type="hidden" name="subcat_filter" id="bulkFormFilter" value="">
       {% endif %}
       <div class="card-body p-1 pb-0">
-        <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
           <label class="form-label small fw-semibold mb-0">絞り込み：</label>
           <select id="filterSubcat" class="form-select form-select-sm" style="width:180px; font-size:0.8rem;">
             <option value="">すべて</option>
@@ -162,14 +162,22 @@
             <option value="{{ sn }}">{{ sn }}</option>
             {% endfor %}
           </select>
-          <label class="form-check-label small ms-3" style="cursor:pointer; white-space:nowrap;">
+          <label class="form-check-label small ms-2" style="cursor:pointer; white-space:nowrap;">
             <input type="checkbox" id="showCompleted" class="form-check-input" style="width:14px;height:14px;">
             完了を表示
           </label>
-          <label class="form-check-label small ms-3" style="cursor:pointer; white-space:nowrap;">
+          <label class="form-check-label small ms-2" style="cursor:pointer; white-space:nowrap;">
             <input type="checkbox" id="filterInPeriod" class="form-check-input" style="width:14px;height:14px;">
             期間内のみ
           </label>
+          {# 期間絞り込み（デフォルト空白＝全範囲） #}
+          <span class="ms-2 small text-muted">期間：</span>
+          <input type="date" id="filterPeriodStart" class="form-control form-control-sm" style="width:140px; font-size:0.8rem;">
+          <span class="small text-muted">〜</span>
+          <input type="date" id="filterPeriodEnd" class="form-control form-control-sm" style="width:140px; font-size:0.8rem;">
+          <button type="button" class="btn btn-outline-secondary btn-sm py-0" id="filterPeriodThisWeek" style="font-size:0.75rem;">今週</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm py-0" id="filterPeriodNextWeek" style="font-size:0.75rem;">次週</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm py-0" id="filterPeriodClear" style="font-size:0.75rem;">クリア</button>
         </div>
       </div>
       <div class="card-body p-0">
@@ -616,6 +624,11 @@
   var filterSel = document.getElementById('filterSubcat');
   var showCompCb = document.getElementById('showCompleted');
   var filterPeriodCb = document.getElementById('filterInPeriod');
+  var periodStart = document.getElementById('filterPeriodStart');
+  var periodEnd = document.getElementById('filterPeriodEnd');
+  var btnThisWeek = document.getElementById('filterPeriodThisWeek');
+  var btnNextWeek = document.getElementById('filterPeriodNextWeek');
+  var btnClear = document.getElementById('filterPeriodClear');
   if (!filterSel) return;
 
   // URLパラメータから復元
@@ -623,16 +636,39 @@
   var savedSubcat = params.get('subcat_filter') || '';
   var savedShowComp = params.get('show_completed') === '1';
   var savedPeriod = params.get('in_period') === '1';
+  var savedPeriodStart = params.get('period_start') || '';
+  var savedPeriodEnd = params.get('period_end') || '';
   if (savedSubcat) filterSel.value = savedSubcat;
   if (showCompCb) showCompCb.checked = savedShowComp;
   if (filterPeriodCb) filterPeriodCb.checked = savedPeriod;
+  if (periodStart) periodStart.value = savedPeriodStart;
+  if (periodEnd) periodEnd.value = savedPeriodEnd;
 
   var todayStr = new Date().toISOString().slice(0, 10);
+
+  // 日付ユーティリティ
+  function _toIso(d) {
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+  function _getMonFri(weekOffset) {
+    var d = new Date();
+    var dow = d.getDay(); // 0=日, 1=月..6=土
+    var daysToMon = dow === 0 ? 6 : (dow - 1);
+    var monday = new Date(d);
+    monday.setDate(d.getDate() - daysToMon + weekOffset * 7);
+    var friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+    return { start: _toIso(monday), end: _toIso(friday) };
+  }
 
   function applyFilter() {
     var subcatVal = filterSel.value;
     var showComp = showCompCb ? showCompCb.checked : true;
     var inPeriod = filterPeriodCb ? filterPeriodCb.checked : false;
+    var pStart = periodStart ? periodStart.value : '';
+    var pEnd = periodEnd ? periodEnd.value : '';
     var taskRows = document.querySelectorAll('#taskTable .task-row');
     var catHeaders = document.querySelectorAll('#taskTable .cat-header-row');
 
@@ -649,6 +685,13 @@
         var s = r.dataset.start || '';
         var e = r.dataset.end || '';
         if (s && e && (todayStr < s || todayStr > e)) hide = true;
+      }
+      // 期間絞り込み: タスクの期間が指定範囲と重なるもののみ表示
+      if (!hide && (pStart || pEnd)) {
+        var ts = r.dataset.start || '';
+        var te = r.dataset.end || '';
+        if (pStart && te && te < pStart) hide = true;
+        if (pEnd && ts && ts > pEnd) hide = true;
       }
       r.style.display = hide ? 'none' : '';
     });
@@ -681,30 +724,59 @@
     } else {
       url.searchParams.delete('in_period');
     }
+    var pS = periodStart ? periodStart.value : '';
+    var pE = periodEnd ? periodEnd.value : '';
+    if (pS) url.searchParams.set('period_start', pS); else url.searchParams.delete('period_start');
+    if (pE) url.searchParams.set('period_end', pE); else url.searchParams.delete('period_end');
     window.history.replaceState({}, '', url);
     var bf = document.getElementById('bulkFormFilter');
     if (bf) bf.value = filterSel.value;
-    // ガントチャート遷移用リンクにも絞り込み状態を引き継ぐ
+    // ガントチャート遷移用リンクにも絞り込み状態（中区分・担当者・期間）を引き継ぐ
     var gl = document.querySelector('.gantt-link');
     if (gl) {
       var base = gl.dataset.base || gl.href.split('?')[0];
-      gl.href = filterSel.value
-        ? base + '?subcat_filter=' + encodeURIComponent(filterSel.value)
-        : base;
+      var qs = [];
+      if (filterSel.value) qs.push('subcat_filter=' + encodeURIComponent(filterSel.value));
+      // タスク管理画面の担当者切替（target_user_id）も引き継ぐ
+      var tuid = '{{ target_user_id if target_user_id is defined else 0 }}';
+      if (tuid && tuid !== '0') qs.push('user_id=' + encodeURIComponent(tuid));
+      if (pS) qs.push('period_start=' + encodeURIComponent(pS));
+      if (pE) qs.push('period_end=' + encodeURIComponent(pE));
+      gl.href = qs.length ? base + '?' + qs.join('&') : base;
     }
   }
 
   filterSel.addEventListener('change', function() { saveParams(); applyFilter(); });
   if (showCompCb) showCompCb.addEventListener('change', function() { saveParams(); applyFilter(); });
   if (filterPeriodCb) filterPeriodCb.addEventListener('change', function() { saveParams(); applyFilter(); });
+  if (periodStart) periodStart.addEventListener('change', function() { saveParams(); applyFilter(); });
+  if (periodEnd) periodEnd.addEventListener('change', function() { saveParams(); applyFilter(); });
+  if (btnThisWeek) btnThisWeek.addEventListener('click', function() {
+    var w = _getMonFri(0);
+    if (periodStart) periodStart.value = w.start;
+    if (periodEnd) periodEnd.value = w.end;
+    saveParams(); applyFilter();
+  });
+  if (btnNextWeek) btnNextWeek.addEventListener('click', function() {
+    var w = _getMonFri(1);
+    if (periodStart) periodStart.value = w.start;
+    if (periodEnd) periodEnd.value = w.end;
+    saveParams(); applyFilter();
+  });
+  if (btnClear) btnClear.addEventListener('click', function() {
+    if (periodStart) periodStart.value = '';
+    if (periodEnd) periodEnd.value = '';
+    saveParams(); applyFilter();
+  });
 
-  // 初期適用
+  // 初期適用（ガントチャートリンクの初期 URL も含めて構築）
   var bf = document.getElementById('bulkFormFilter');
   if (bf) bf.value = filterSel.value;
+  saveParams();
   applyFilter();
 })();
 
-/* ── タスク追加後にフォームを開いたままにする ── */
+/* ── タスク追加後にフォームを開いたままにする + 連続入力対応 ── */
 (function() {
   var params = new URLSearchParams(window.location.search);
   var tab = params.get('tab');
@@ -731,6 +803,70 @@
     var url = new URL(window.location);
     url.search = params.toString();
     window.history.replaceState({}, '', url);
+  }
+
+  /* ── タスク追加フォーム連続入力：保持フィールドを sessionStorage で引き継ぐ ── */
+  // フォーム送信前に、保持したい項目（大区分・中区分・担当者・期間・状態・反映チェック）を保存
+  var addTaskFormEl = document.querySelector('#addTaskForm form[action*="add"]');
+  var KEEP_FIELDS = [
+    'category_id', 'subcategory_id',
+    'assigned_to', 'assigned_to_2',
+    'import_to_schedule_1', 'import_to_schedule_2',
+    'start_date', 'end_date', 'status',
+  ];
+  var STORAGE_KEY = 'addTaskKeepValues_v1';
+
+  if (addTaskFormEl) {
+    addTaskFormEl.addEventListener('submit', function() {
+      var saved = {};
+      KEEP_FIELDS.forEach(function(name) {
+        var el = addTaskFormEl.querySelector('[name="' + name + '"]');
+        if (!el) return;
+        if (el.type === 'checkbox') {
+          saved[name] = el.checked ? '1' : '0';
+        } else {
+          saved[name] = el.value;
+        }
+      });
+      try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(saved)); } catch (e) {}
+    });
+  }
+
+  // ページロード時：add_open=1 なら保持値を復元
+  if (addOpen && addTaskFormEl) {
+    var raw = null;
+    try { raw = sessionStorage.getItem(STORAGE_KEY); } catch (e) {}
+    if (raw) {
+      try {
+        var values = JSON.parse(raw);
+        // 大区分は最初に復元（中区分の絞り込みロジックが動くため）
+        if (values.category_id !== undefined) {
+          var catEl = addTaskFormEl.querySelector('[name="category_id"]');
+          if (catEl) {
+            catEl.value = values.category_id;
+            catEl.dispatchEvent(new Event('change'));
+          }
+        }
+        // その他のフィールドを復元
+        KEEP_FIELDS.forEach(function(name) {
+          if (name === 'category_id') return;  // 復元済み
+          if (values[name] === undefined) return;
+          var el = addTaskFormEl.querySelector('[name="' + name + '"]');
+          if (!el) return;
+          if (el.type === 'checkbox') {
+            el.checked = values[name] === '1';
+          } else {
+            el.value = values[name];
+          }
+        });
+      } catch (e) {}
+      try { sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
+    }
+    // 連続入力をスムーズにするため、タスク名フィールドにフォーカスを移す
+    var nameEl = addTaskFormEl.querySelector('[name="task_name"]');
+    if (nameEl) {
+      setTimeout(function() { try { nameEl.focus(); } catch (e) {} }, 150);
+    }
   }
 })();
 

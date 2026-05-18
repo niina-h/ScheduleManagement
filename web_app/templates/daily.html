@@ -369,10 +369,9 @@
   </div>
 
   {# ---- 管理者（上長）コメント欄 ---- #}
-  {# 表示条件: 管理職→対象がユーザーのみ / マスタ→対象が管理職orユーザー #}
+  {# 入力フォーム表示条件: 管理職→管理職/マスタ以外、マスタ→全員（自分以外）。管理職→マスタは閲覧専用ブロックで表示する #}
   {% if (session.user_role == '管理職' or session.user_role == 'マスタ') and is_admin_view is defined and is_admin_view
-      and not (session.user_role == '管理職' and target_user.get('role','') in ('管理職','マスタ'))
-      and not (session.user_role == 'マスタ' and target_user.get('role','') == 'マスタ') %}
+      and not (session.user_role == '管理職' and target_user.get('role','') in ('管理職','マスタ')) %}
   {# 管理者が部下の画面を閲覧中: 振り返り（左）＋上長コメント（右）の2カラム #}
   <div class="row g-3 mt-1">
     <!-- 左: 部下の振り返り（読み取り専用） -->
@@ -462,17 +461,19 @@
       </div>
     </div>
   </div>
-  {% elif session.user_role != '管理職' and session.user_role != 'マスタ' %}
-  {# 一般ユーザー: 読み取り専用で上長コメントを表示 #}
+  {% elif comment and comment.admin_comment %}
+  {# 自分自身の画面または閲覧専用ケース（管理職→マスタ等）：上長コメントを読み取り専用で表示 #}
   <div class="row g-3 mt-1">
     <div class="col-12">
       <div class="card border-success">
         <div class="card-header bg-success text-white py-2 d-flex justify-content-between align-items-center">
           <strong>📝 管理者（上長）コメント</strong>
-          {% if result_meta and result_meta.updated_at %}
+          {% if comment.updated_at %}
           <small class="text-white-50">
-            {% if comment and comment.updated_by and comment.admin_comment %}
+            {% if comment.updated_by %}
             最終更新: {{ comment.updated_at[:16] | replace('T', ' ') }}（{{ comment.updated_by }}）
+            {% else %}
+            最終更新: {{ comment.updated_at[:16] | replace('T', ' ') }}
             {% endif %}
           </small>
           {% endif %}
@@ -480,7 +481,7 @@
         <div class="card-body p-2">
           <div id="admin-comment-view"
                style="min-height:60px; max-height:200px; overflow-y:auto; white-space:pre-wrap; padding:0.5rem; background:#f8f9fa; border-radius:4px;">
-            {{ comment.admin_comment if comment and comment.admin_comment else '（コメントなし）' }}
+            {{ comment.admin_comment }}
           </div>
         </div>
       </div>

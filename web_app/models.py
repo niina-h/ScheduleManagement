@@ -2253,7 +2253,7 @@ def import_tasks_to_weekly_schedule(
     ws = datetime.strptime(week_start, "%Y-%m-%d")
     week_end: str = (ws + _timedelta(days=4)).strftime("%Y-%m-%d")
 
-    # 既存の project_task 配置を一旦クリア（手動入力タスクは project_task_id IS NULL なので保持）
+    # 既存の project_task 配置を一旦クリア
     db.execute(
         "UPDATE weekly_schedule "
         "SET task_name='', hours=0.0, subcategory_name='', project_task_id=NULL, "
@@ -2280,6 +2280,25 @@ def import_tasks_to_weekly_schedule(
         "ORDER BY pt.id DESC",
         (user_id, user_id, week_end, week_start),
     ).fetchall()
+
+    # 取込対象タスクの task_name と一致する手動入力スロットもクリア
+    # （過去に手動でタスク名を入力したスロットが「空き」とみなされず、
+    #   後ろに並んだタスクが配置できなくなる事象を防ぐ）
+    if rows:
+        target_names: set[str] = {r["task_name"] for r in rows if r["task_name"]}
+        if target_names:
+            name_placeholders = ",".join("?" * len(target_names))
+            clear_params: list = [now, updated_by, user_id, week_start]
+            clear_params.extend(target_names)
+            db.execute(
+                f"UPDATE weekly_schedule "
+                f"SET task_name='', hours=0.0, subcategory_name='', "
+                f"    updated_at=?, updated_by=? "
+                f"WHERE user_id=? AND week_start=? "
+                f"  AND project_task_id IS NULL "
+                f"  AND task_name IN ({name_placeholders})",
+                tuple(clear_params),
+            )
 
     if not rows:
         # クリア結果を反映するために commit

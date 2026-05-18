@@ -38,7 +38,7 @@ def is_master(role: str) -> bool:
 def can_access_user(login_user: dict, target_user: dict) -> bool:
     """ログインユーザーが対象ユーザーを参照・編集できるか返す。
 
-    マスタは全ユーザー（マスタ以外）にアクセス可。
+    マスタは全ユーザー（他のマスタを含む）にアクセス可。
     管理職は、対象ユーザーの manager_id が自分のIDと一致する場合にアクセス可。
     manager_id が未設定の場合は同一部署であればアクセス可（後方互換）。
     一般ユーザーはこの関数を呼び出す前に弾くこと。
@@ -53,12 +53,8 @@ def can_access_user(login_user: dict, target_user: dict) -> bool:
     role: str = login_user.get("role", "")
     if not is_privileged(role):
         return False
-    # マスタは自分自身＋全部署のマスタ以外全員にアクセス可
+    # マスタは全ユーザーにアクセス可（他のマスタへの上長コメントなどに対応）
     if role == "マスタ":
-        if target_user.get("id") == login_user.get("id"):
-            return True
-        if target_user.get("role", "") == "マスタ":
-            return False
         return True
     # 管理職: manager_id が設定されていれば自分のIDと一致するか確認
     target_manager_id = target_user.get("manager_id")
