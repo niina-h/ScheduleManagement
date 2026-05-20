@@ -523,6 +523,39 @@ def reorder_users() -> str:
     return _redirect_dashboard()
 
 
+@admin_bp.route("/db-download")
+def db_download():
+    """DBファイル（web_app.db）をマスタ権限ユーザー向けにダウンロードさせる。
+
+    端末故障時の手動バックアップ用途。マスタ以外は 403 を返す。
+
+    Returns:
+        Response: SQLite DB ファイルのダウンロードレスポンス。
+    """
+    from datetime import datetime as _dt
+    from flask import current_app
+    import pathlib as _pathlib
+
+    if not is_master(session.get("user_role", "")):
+        abort(403)
+
+    db_path_str: str = current_app.config.get("DATABASE", "")
+    if not db_path_str:
+        abort(500)
+    db_path = _pathlib.Path(db_path_str)
+    if not db_path.exists():
+        abort(404)
+
+    ts: str = _dt.now().strftime("%Y%m%d_%H%M%S")
+    filename: str = f"web_app_{ts}.db"
+    return send_file(
+        str(db_path),
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/octet-stream",
+    )
+
+
 @admin_bp.route("/api/daily_status")
 def api_daily_status():
     """本日の実績入力状況をJSON形式で返すAPIエンドポイント（ポーリング用）。

@@ -10,6 +10,8 @@
     {% if session.user_role == 'マスタ' %}
     <a href="{{ url_for('export_bp.import_schedule') }}" class="btn btn-outline-success btn-sm">📥 予定インポート</a>
     <a href="{{ url_for('mail_report_bp.settings') }}" class="btn btn-outline-warning btn-sm">⚙ メール設定</a>
+    <a href="{{ url_for('admin_bp.db_download') }}" class="btn btn-outline-dark btn-sm"
+       title="現時点のDBファイルをダウンロード（端末故障時の復旧用バックアップ）">💾 DBバックアップ取得</a>
     {% endif %}
     <a href="{{ url_for('admin_bp.operation_logs') }}" class="btn btn-outline-secondary">操作ログ</a>
   </div>

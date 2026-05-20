@@ -104,6 +104,12 @@ Phase 3（v2.2.0）── 運用効率化
 - 管理職／マスタが自分自身の画面でも上長コメントを読み取り専用で参照可能に
 - run_production.py にファイルログ機能を追加（`logs/server.log`、5MB×5世代でローテーション）
 
+### バックアップ仕組み（3層構成・端末故障時の復旧対応）
+- **層① 本番ローカル世代**：`db\backups\` に日次バックアップ（30世代）— `bat\backup_db.bat`、タスクスケジューラ `ScheduleBackup`（毎日18:00）
+- **層② オフサイト**：開発機 `c:\DEV(ClaudCode)\Backup\ScheduleManagement\` に日次プル（30世代）— `bat\pull_backup_from_prod.bat`、タスクスケジューラ `ScheduleBackupPull`（毎日18:30）
+- **層③ 手動取得**：管理ダッシュボード右上「💾 DBバックアップ取得」（マスタ権限のみ、`/admin/db-download`）
+- 復旧手順書：[`docs/backup_recovery.md`](docs/backup_recovery.md)
+
 ---
 
 > このドキュメントは各機能の着手時に詳細設計へ展開し、完了時に進捗記録を更新する。
