@@ -19,6 +19,7 @@ from ..models import (
     get_task_master,
     get_user_by_id,
     get_accessible_users,
+    update_task_master_default_hours,
     update_task_order,
     get_all_categories,
     get_all_subcategories,
@@ -172,6 +173,40 @@ def add() -> str:
         flash("その作業名はすでに登録されています", "warning")
 
     return redirect(url_for("tasks.task_list", user_id=target_user_id))
+
+
+@tasks_bp.route("/update-hours/<int:task_id>", methods=["POST"])
+def update_hours(task_id: int) -> tuple:
+    """作業マスタの標準時間（default_hours）を AJAX で更新する。
+
+    フォーム値:
+        default_hours: 新しい標準時間（0〜24）
+        target_user_id: 対象ユーザーID（管理職／マスタが他人を編集する場合）
+
+    Returns:
+        tuple: JSON 応答と HTTP ステータスコード。
+    """
+    redir = _require_login()
+    if redir is not None:
+        return jsonify({"error": "unauthorized"}), 401
+
+    # CSRF チェック
+    csrf = request.form.get("csrf_token", "") or request.headers.get("X-CSRF-Token", "")
+    if csrf != session.get("csrf_token"):
+        return jsonify({"error": "csrf"}), 400
+
+    target_user_id: int = _resolve_target_user_id()
+
+    try:
+        hours = float(request.form.get("default_hours", "0") or "0")
+    except (TypeError, ValueError):
+        return jsonify({"error": "不正な値"}), 400
+    hours = max(0.0, min(hours, 24.0))
+
+    ok: bool = update_task_master_default_hours(task_id, target_user_id, hours)
+    if not ok:
+        return jsonify({"error": "対象が見つかりません or 権限がありません"}), 404
+    return jsonify({"ok": True, "hours": hours}), 200
 
 
 @tasks_bp.route("/delete/<int:task_id>", methods=["POST"])

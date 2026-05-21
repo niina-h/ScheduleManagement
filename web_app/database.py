@@ -394,6 +394,10 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         if "import_to_schedule_2" not in pt_cols:
             db.execute("ALTER TABLE project_task ADD COLUMN import_to_schedule_2 INTEGER NOT NULL DEFAULT 1")
             logger.info("project_task.import_to_schedule_2 カラムを追加しました。")
+        # イベント参加者を複数保存するためのカンマ区切りIDリスト（"5,10,7" など）
+        if "event_member_ids" not in pt_cols:
+            db.execute("ALTER TABLE project_task ADD COLUMN event_member_ids TEXT NOT NULL DEFAULT ''")
+            logger.info("project_task.event_member_ids カラムを追加しました。")
 
     # project_task にイベント関連カラムを追加（なければ）
     if "project_task" in tables:

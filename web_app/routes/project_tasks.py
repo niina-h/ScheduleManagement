@@ -214,6 +214,38 @@ def add_task() -> object:
     import_to_schedule_1 = 1 if request.form.get("import_to_schedule_1") == "1" else 0
     import_to_schedule_2 = 1 if request.form.get("import_to_schedule_2") == "1" else 0
 
+    # イベントの場合は参加者を複数受け取り、event_member_ids に保存。
+    # 先頭2人は assigned_to / assigned_to_2 にも反映して既存機能との互換を保つ。
+    event_member_ids: str = ""
+    if is_event_add:
+        ids_raw = request.form.getlist("event_members")
+        valid_ids: list[str] = []
+        for raw in ids_raw:
+            try:
+                valid_ids.append(str(int(raw)))
+            except (TypeError, ValueError):
+                continue
+        # 重複除外（順序維持）
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        for s in valid_ids:
+            if s not in seen:
+                seen.add(s)
+                unique_ids.append(s)
+        event_member_ids = ",".join(unique_ids)
+        if unique_ids:
+            try:
+                assigned_to = int(unique_ids[0])
+            except ValueError:
+                pass
+            if len(unique_ids) >= 2:
+                try:
+                    assigned_to_2 = int(unique_ids[1])
+                except ValueError:
+                    assigned_to_2 = None
+            else:
+                assigned_to_2 = None
+
     add_project_task(
         category_id=int(cat_id) if cat_id else None,
         subcategory_id=int(subcat_id) if subcat_id else None,
@@ -235,6 +267,7 @@ def add_task() -> object:
         planned_hours=planned_hours,
         import_to_schedule_1=import_to_schedule_1,
         import_to_schedule_2=import_to_schedule_2,
+        event_member_ids=event_member_ids,
     )
     flash("タスクを追加しました。", "success")
 
@@ -436,6 +469,37 @@ def bulk_update_tasks() -> object:
         import_to_schedule_1 = 1 if request.form.get(f"import_to_schedule_1{sfx}") == "1" else 0
         import_to_schedule_2 = 1 if request.form.get(f"import_to_schedule_2{sfx}") == "1" else 0
 
+        # イベントの場合は参加者を複数受け取り、event_member_ids に保存
+        event_member_ids: str = ""
+        if is_event == 1:
+            ids_raw = request.form.getlist(f"event_members{sfx}")
+            valid_ids: list[str] = []
+            for raw in ids_raw:
+                try:
+                    valid_ids.append(str(int(raw)))
+                except (TypeError, ValueError):
+                    continue
+            seen: set[str] = set()
+            unique_ids: list[str] = []
+            for s in valid_ids:
+                if s not in seen:
+                    seen.add(s)
+                    unique_ids.append(s)
+            event_member_ids = ",".join(unique_ids)
+            # 先頭2人を assigned_to / assigned_to_2 にも反映（互換性保持）
+            if unique_ids:
+                try:
+                    assigned_to = int(unique_ids[0])
+                except ValueError:
+                    pass
+                if len(unique_ids) >= 2:
+                    try:
+                        assigned_to_2 = int(unique_ids[1])
+                    except ValueError:
+                        assigned_to_2 = None
+                else:
+                    assigned_to_2 = None
+
         update_project_task(
             task_id=task_id,
             category_id=int(cat_id) if cat_id else None,
@@ -457,6 +521,7 @@ def bulk_update_tasks() -> object:
             planned_hours=planned_hours_val,
             import_to_schedule_1=import_to_schedule_1,
             import_to_schedule_2=import_to_schedule_2,
+            event_member_ids=event_member_ids,
         )
         updated_count += 1
 

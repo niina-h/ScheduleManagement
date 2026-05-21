@@ -51,7 +51,15 @@
               <td class="ps-3">{{ task.task_name }}</td>
               <td class="text-muted small">{{ task.category_name or '—' }}</td>
               <td class="text-muted small">{{ task.subcategory_name or '—' }}</td>
-              <td class="text-center">{{ task.default_hours if task.default_hours else '—' }}</td>
+              <td class="text-center">
+                <input type="number" class="form-control form-control-sm hours-input mx-auto"
+                       data-task-id="{{ task.id }}"
+                       value="{{ task.default_hours if task.default_hours else '' }}"
+                       step="0.25" min="0" max="24"
+                       placeholder="—"
+                       style="width:72px; text-align:right;"
+                       title="変更すると自動保存されます">
+              </td>
               <td class="text-center">
                 <button type="button" class="btn btn-outline-secondary btn-sm px-1 btn-move-up" data-task-id="{{ task.id }}" title="上へ">▲</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm px-1 btn-move-down" data-task-id="{{ task.id }}" title="下へ">▼</button>
@@ -387,6 +395,46 @@
         return r.style.display !== 'none';
       });
     }
+
+    // --- 標準時間のインライン編集（change で AJAX 保存）---
+    var CSRF_TOKEN = '{{ session.csrf_token }}';
+    var TARGET_UID = {{ target_user_id }};
+    document.querySelectorAll('.hours-input').forEach(function(inp) {
+      var prevValue = inp.value;
+      inp.addEventListener('change', function() {
+        var taskId = inp.dataset.taskId;
+        var hours = inp.value.trim();
+        if (hours !== '' && (isNaN(parseFloat(hours)) || parseFloat(hours) < 0)) {
+          alert('0以上の数値を入力してください');
+          inp.value = prevValue;
+          return;
+        }
+        var body = 'default_hours=' + encodeURIComponent(hours)
+          + '&csrf_token=' + encodeURIComponent(CSRF_TOKEN)
+          + '&target_user_id=' + encodeURIComponent(TARGET_UID);
+        inp.disabled = true;
+        fetch('{{ url_for("tasks.update_hours", task_id=0) }}'.replace('/0', '/' + taskId), {
+          method: 'POST',
+          headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+          body: body
+        }).then(function(res) {
+          if (res.ok) {
+            prevValue = inp.value;
+            // 視覚的な保存完了フィードバック
+            inp.style.backgroundColor = '#d1fae5';
+            setTimeout(function(){ inp.style.backgroundColor = ''; }, 800);
+          } else {
+            inp.value = prevValue;
+            alert('標準時間の保存に失敗しました');
+          }
+        }).catch(function() {
+          inp.value = prevValue;
+          alert('通信エラー');
+        }).finally(function() {
+          inp.disabled = false;
+        });
+      });
+    });
 
     document.querySelectorAll('.btn-move-up, .btn-move-down').forEach(function(btn) {
       btn.addEventListener('click', function(e) {

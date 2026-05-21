@@ -507,6 +507,28 @@ def add_task(
         return False
 
 
+def update_task_master_default_hours(task_id: int, user_id: int, default_hours: float) -> bool:
+    """作業マスタの標準時間（default_hours）を更新する。
+
+    所有者ユーザーID（user_id）が一致する場合のみ更新する。
+
+    Args:
+        task_id: 作業マスタの ID。
+        user_id: 所有者ユーザーID（所有確認用）。
+        default_hours: 新しい標準時間（0以上の浮動小数）。
+
+    Returns:
+        bool: 1件以上更新できれば True。
+    """
+    db = get_db()
+    cur = db.execute(
+        "UPDATE task_master SET default_hours = ? WHERE id = ? AND user_id = ?",
+        (default_hours, task_id, user_id),
+    )
+    db.commit()
+    return cur.rowcount > 0
+
+
 def update_task_order(task_id: int, user_id: int, display_order: int) -> None:
     """タスクの表示順を更新する。
 
@@ -2036,6 +2058,7 @@ def add_project_task(
     planned_hours: float = 0.0,
     import_to_schedule_1: int = 1,
     import_to_schedule_2: int = 1,
+    event_member_ids: str = "",
 ) -> int:
     """プロジェクトタスクを追加する。
 
@@ -2074,13 +2097,13 @@ def add_project_task(
         " is_milestone, start_date, end_date, status, delay_days, progress, "
         " display_order, created_by, updated_by, "
         " is_event, event_start_time, event_end_time, planned_hours, "
-        " import_to_schedule_1, import_to_schedule_2) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " import_to_schedule_1, import_to_schedule_2, event_member_ids) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (category_id, subcategory_id, task_name, description, assigned_to, assigned_to_2,
          is_milestone, start_date, end_date, status, delay_days, calc_progress,
          max_order + 1, created_by, updated_by,
          is_event, event_start_time, event_end_time, planned_hours,
-         import_to_schedule_1, import_to_schedule_2),
+         import_to_schedule_1, import_to_schedule_2, event_member_ids),
     )
     db.commit()
     return cur.lastrowid
@@ -2107,6 +2130,7 @@ def update_project_task(
     planned_hours: float = 0.0,
     import_to_schedule_1: int = 1,
     import_to_schedule_2: int = 1,
+    event_member_ids: str = "",
 ) -> None:
     """プロジェクトタスクを更新する。
 
@@ -2138,14 +2162,14 @@ def update_project_task(
         "assigned_to=?, assigned_to_2=?, is_milestone=?, start_date=?, end_date=?, "
         "status=?, delay_days=?, progress=?, "
         "is_event=?, event_start_time=?, event_end_time=?, planned_hours=?, "
-        "import_to_schedule_1=?, import_to_schedule_2=?, "
+        "import_to_schedule_1=?, import_to_schedule_2=?, event_member_ids=?, "
         "updated_at=datetime('now','localtime'), updated_by=? "
         "WHERE id=?",
         (category_id, subcategory_id, task_name, description,
          assigned_to, assigned_to_2, is_milestone, start_date, end_date,
          status, delay_days, calc_progress,
          is_event, event_start_time, event_end_time, planned_hours,
-         import_to_schedule_1, import_to_schedule_2,
+         import_to_schedule_1, import_to_schedule_2, event_member_ids,
          updated_by, task_id),
     )
     db.commit()
@@ -3293,6 +3317,11 @@ def calc_planned_hours(start_date_str: str, end_date_str: str, std_hours_per_day
 def get_routine_schedules(user_id: int) -> list[dict]:
     """ユーザーの定例スケジュール一覧を取得する。
 
+    ``default_hours`` は ``task_master`` の同名作業の標準時間を優先採用する
+    （作業マスタを更新すれば定例の工数にも自動で反映されるため、ユーザーが
+    定例側を手修正する必要がない）。task_master 側に該当作業がなければ
+    routine_schedule の保存値、それもなければ 0.0 を返す。
+
     Args:
         user_id: ユーザーID
 
@@ -3301,8 +3330,14 @@ def get_routine_schedules(user_id: int) -> list[dict]:
     """
     db = get_db()
     rows = db.execute(
-        "SELECT id, user_id, task_name, subcategory_name, default_hours, row_number, days"
-        " FROM routine_schedule WHERE user_id = ? ORDER BY row_number ASC",
+        "SELECT rs.id, rs.user_id, rs.task_name, rs.subcategory_name,"
+        " COALESCE(tm.default_hours, rs.default_hours, 0.0) AS default_hours,"
+        " rs.row_number, rs.days"
+        " FROM routine_schedule rs"
+        " LEFT JOIN task_master tm"
+        "   ON tm.user_id = rs.user_id AND tm.task_name = rs.task_name"
+        " WHERE rs.user_id = ?"
+        " ORDER BY rs.row_number ASC",
         (user_id,),
     ).fetchall()
     return [dict(r) for r in rows]

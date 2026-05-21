@@ -399,7 +399,7 @@
                     <span class="{% if day_flags[di]|trim == '1' %}text-primary fw-bold{% else %}text-muted{% endif %}" style="margin:0 1px;">{{ dn }}</span>
                     {% endfor %}
                   </td>
-                  <td class="small text-center">{{ r.default_hours }}h</td>
+                  <td class="small text-center" title="作業マスタの標準時間を自動反映">{{ '%g'|format(r.default_hours|float) }}h</td>
                   <td class="text-center">
                     <form method="post" action="{{ url_for('project_tasks_bp.delete_routine', routine_id=r.id) }}"
                           class="d-inline" onsubmit="return confirm('削除しますか？')">
@@ -537,17 +537,24 @@
               <input type="hidden" form="bulkEventForm" name="category_id_{{ t.id }}" value="{{ t.category_id or '' }}">
               <input type="hidden" form="bulkEventForm" name="subcategory_id_{{ t.id }}" value="{{ t.subcategory_id or '' }}">
               <input type="hidden" form="bulkEventForm" name="description_{{ t.id }}" value="{{ t.description or '' }}">
-              <input type="hidden" form="bulkEventForm" name="assigned_to_2_{{ t.id }}" value="">
               <input type="hidden" form="bulkEventForm" name="status_{{ t.id }}" value="{{ t.status }}">
               <input type="hidden" form="bulkEventForm" name="delay_days_{{ t.id }}" value="{{ t.delay_days or 0 }}">
               <input type="hidden" form="bulkEventForm" name="progress_{{ t.id }}" value="{{ t.progress }}">
               <input type="hidden" form="bulkEventForm" name="is_event_{{ t.id }}" value="1">
+              {# assigned_to / assigned_to_2 は event_members から先頭2人をサーバー側で自動セットするためここでは送信しない #}
               <td><input type="text" form="bulkEventForm" name="task_name_{{ t.id }}" value="{{ t.task_name }}" class="form-control form-control-sm"></td>
               <td>
-                <select form="bulkEventForm" name="assigned_to_{{ t.id }}" class="form-select form-select-sm">
-                  <option value="">--</option>
+                {% set member_id_list = (t.event_member_ids or '').split(',') | reject('equalto', '') | list %}
+                {% if not member_id_list %}
+                  {# 後方互換: assigned_to / assigned_to_2 をフォールバック #}
+                  {% set member_id_list = [] %}
+                  {% if t.assigned_to %}{% set _ = member_id_list.append(t.assigned_to|string) %}{% endif %}
+                  {% if t.assigned_to_2 %}{% set _ = member_id_list.append(t.assigned_to_2|string) %}{% endif %}
+                {% endif %}
+                <select form="bulkEventForm" name="event_members_{{ t.id }}" class="form-select form-select-sm"
+                        multiple size="3" style="min-height:62px; font-size:0.75rem;" title="Ctrl/Shiftで複数選択">
                   {% for u in users %}
-                  <option value="{{ u.id }}" {% if t.assigned_to == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+                  <option value="{{ u.id }}" {% if (u.id|string) in member_id_list %}selected{% endif %}>{{ u.last_name or u.name }}</option>
                   {% endfor %}
                 </select>
               </td>
@@ -589,7 +596,16 @@
               </td>
               {% else %}
               <td class="small">{{ t.task_name }}{% if t.is_milestone %} <span class="badge bg-warning text-dark">MS</span>{% endif %}</td>
-              <td class="small">{{ t.assigned_name or '' }}</td>
+              <td class="small">
+                {% set member_id_list_ro = (t.event_member_ids or '').split(',') | reject('equalto', '') | list %}
+                {% if member_id_list_ro %}
+                  {% set _names = [] %}
+                  {% for u in users %}{% if (u.id|string) in member_id_list_ro %}{% set _ = _names.append(u.last_name or u.name) %}{% endif %}{% endfor %}
+                  {{ _names | join('・') }}
+                {% else %}
+                  {{ t.assigned_name or '' }}{% if t.assigned_name_2 %}・{{ t.assigned_name_2 }}{% endif %}
+                {% endif %}
+              </td>
               <td class="small">{{ t.start_date }}</td>
               <td class="small">{{ t.end_date or t.start_date }}</td>
               <td class="text-center small">{% if t.is_milestone %}◆{% endif %}</td>
@@ -1219,6 +1235,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (row) row.classList.toggle('table-danger', cb.checked);
     });
   });
+
 });
 
 function timeToMin(t) {
