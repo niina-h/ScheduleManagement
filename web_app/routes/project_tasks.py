@@ -237,6 +237,32 @@ def add_task() -> object:
         import_to_schedule_2=import_to_schedule_2,
     )
     flash("タスクを追加しました。", "success")
+
+    # ガントチャート画面から追加された場合は、絞り込み状態を引き継いでガントチャートに戻る
+    return_to: str = request.form.get("return_to", "").strip()
+    if return_to == "gantt":
+        from urllib.parse import quote as _quote
+        params: list[str] = []
+        for src_key, url_key in (
+            ("return_subcat_filter", "subcat_filter"),
+            ("return_period_start", "period_start"),
+            ("return_period_end", "period_end"),
+        ):
+            v = request.form.get(src_key, "").strip()
+            if v:
+                params.append(f"{url_key}={_quote(v)}")
+        ruid = request.form.get("return_user_id", "").strip()
+        if ruid and ruid != "0":
+            params.append(f"user_id={_quote(ruid)}")
+        redir = url_for("project_tasks_bp.gantt")
+        if params:
+            redir += "?" + "&".join(params)
+        return redirect(redir)
+
+    # イベント追加時はイベントタブを開いた状態で戻る
+    if is_event == 1:
+        return redirect(url_for("project_tasks_bp.task_list") + "?tab=events&add_open=1")
+
     return redirect(url_for("project_tasks_bp.task_list") + "?add_open=1")
 
 
@@ -441,9 +467,15 @@ def bulk_update_tasks() -> object:
         msgs.append(f"{deleted_count}件削除")
     flash("、".join(msgs) + "しました。" if msgs else "変更はありませんでした。", "success")
     subcat_f = request.form.get("subcat_filter", "")
+    from_tab = request.form.get("from_tab", "").strip()
     redir = url_for("project_tasks_bp.task_list")
+    params: list[str] = []
+    if from_tab == "events":
+        params.append("tab=events")
     if subcat_f:
-        redir += f"?subcat_filter={subcat_f}"
+        params.append(f"subcat_filter={subcat_f}")
+    if params:
+        redir += "?" + "&".join(params)
     return redirect(redir)
 
 
@@ -1161,6 +1193,11 @@ def gantt() -> str:
     if is_master_flag:
         selectable_users = get_accessible_users(login_id, login_role, login_dept)
 
+    # ガントチャート画面でのタスク追加モーダル用データ
+    add_categories = get_all_categories()
+    add_subcategories = get_all_subcategories()
+    add_users = get_all_users()
+
     return render_template(
         "project_tasks_gantt.html",
         gantt_json=json.dumps(gantt_data, ensure_ascii=False),
@@ -1173,6 +1210,10 @@ def gantt() -> str:
         initial_target_user_id=target_user_id_int or 0,
         is_master_flag=is_master_flag,
         selectable_users=selectable_users,
+        add_categories=add_categories,
+        add_subcategories=add_subcategories,
+        add_users=add_users,
+        statuses=PROJECT_TASK_STATUSES,
     )
 
 

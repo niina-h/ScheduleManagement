@@ -37,8 +37,117 @@
         <label class="form-check-label small ms-3" style="cursor:pointer; white-space:nowrap;">
           <input type="checkbox" id="showCompleted" class="form-check-input" style="width:14px;height:14px;"> 完了を表示
         </label>
+        <button type="button" class="btn btn-primary btn-sm ms-2" data-bs-toggle="modal" data-bs-target="#ganttAddTaskModal">＋ タスク追加</button>
         <a class="btn btn-success btn-sm ms-2" id="ganttExport">📥 Excel出力</a>
         <a class="btn btn-outline-primary btn-sm ms-2" href="{{ url_for('project_tasks_bp.task_list') }}">一覧に戻る</a>
+      </div>
+    </div>
+
+    {# ── タスク追加モーダル ── #}
+    <div class="modal fade" id="ganttAddTaskModal" tabindex="-1" aria-labelledby="ganttAddTaskModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="is_event" value="0">
+            <input type="hidden" name="is_milestone" value="0">
+            <input type="hidden" name="planned_hours" value="0">
+            <input type="hidden" name="delay_days" value="0">
+            {# 追加後にガントチャートへ戻るためのフラグ #}
+            <input type="hidden" name="return_to" value="gantt">
+            <input type="hidden" name="return_subcat_filter" value="{{ initial_subcat }}">
+            <input type="hidden" name="return_period_start" value="{{ initial_period_start }}">
+            <input type="hidden" name="return_period_end" value="{{ initial_period_end }}">
+            <input type="hidden" name="return_user_id" value="{{ initial_target_user_id }}">
+
+            <div class="modal-header">
+              <h6 class="modal-title fw-bold" id="ganttAddTaskModalLabel">＋ タスク追加</h6>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="閉じる"></button>
+            </div>
+            <div class="modal-body">
+              <div class="row g-2">
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">大区分</label>
+                  <select name="category_id" class="form-select form-select-sm" id="gantt-add-cat">
+                    <option value="">--</option>
+                    {% for c in add_categories %}
+                    <option value="{{ c.id }}">{{ c.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">中区分</label>
+                  <select name="subcategory_id" class="form-select form-select-sm" id="gantt-add-subcat">
+                    <option value="">--</option>
+                    {% for s in add_subcategories %}
+                    <option value="{{ s.id }}" data-cat="{{ s.category_id }}">{{ s.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">タスク名 <span class="text-danger">*</span></label>
+                  <input type="text" name="task_name" class="form-control form-control-sm" required>
+                </div>
+                <div class="col-md-12">
+                  <label class="form-label small fw-semibold">対応内容</label>
+                  <input type="text" name="description" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">担当者1 <small class="text-muted fw-normal" style="font-size:0.65rem;">(☑反映＝週間予定取込)</small></label>
+                  <div class="d-flex gap-1 align-items-center">
+                    <select name="assigned_to" class="form-select form-select-sm" style="min-width:0; flex:1;">
+                      <option value="">--</option>
+                      {% for u in add_users %}
+                      <option value="{{ u.id }}" {% if u.id == session.user_id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
+                      {% endfor %}
+                    </select>
+                    <label class="form-check-label mb-0" style="font-size:0.75rem; white-space:nowrap;">
+                      <input type="checkbox" name="import_to_schedule_1" value="1" class="form-check-input" checked>反映
+                    </label>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold">担当者2 <small class="text-muted fw-normal" style="font-size:0.65rem;">(☑反映＝週間予定取込)</small></label>
+                  <div class="d-flex gap-1 align-items-center">
+                    <select name="assigned_to_2" class="form-select form-select-sm" style="min-width:0; flex:1;">
+                      <option value="">--</option>
+                      {% for u in add_users %}
+                      <option value="{{ u.id }}">{{ u.last_name or u.name }}</option>
+                      {% endfor %}
+                    </select>
+                    <label class="form-check-label mb-0" style="font-size:0.75rem; white-space:nowrap;">
+                      <input type="checkbox" name="import_to_schedule_2" value="1" class="form-check-input" checked>反映
+                    </label>
+                  </div>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">開始日 <span class="text-danger">*</span></label>
+                  <input type="date" name="start_date" class="form-control form-control-sm" required>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">終了日 <span class="text-danger">*</span></label>
+                  <input type="date" name="end_date" class="form-control form-control-sm" required>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">状態</label>
+                  <select name="status" class="form-select form-select-sm">
+                    {% for s in statuses %}
+                    <option value="{{ s }}">{{ s }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label small fw-semibold">進捗%</label>
+                  <input type="number" name="progress" class="form-control form-control-sm" value="0" min="0" max="200">
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">キャンセル</button>
+              <button type="submit" class="btn btn-primary btn-sm">追加</button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
 
@@ -190,6 +299,23 @@
       window.location.href = url.toString();
     });
   }
+
+  /* タスク追加モーダル内：大区分→中区分の絞り込み連動 */
+  (function() {
+    var gCat = document.getElementById('gantt-add-cat');
+    var gSub = document.getElementById('gantt-add-subcat');
+    if (!gCat || !gSub) return;
+    var allOpts = Array.from(gSub.querySelectorAll('option[data-cat]'));
+    gCat.addEventListener('change', function() {
+      var catId = gCat.value;
+      gSub.innerHTML = '<option value="">--</option>';
+      allOpts.forEach(function(opt) {
+        if (!catId || opt.dataset.cat === catId) {
+          gSub.appendChild(opt.cloneNode(true));
+        }
+      });
+    });
+  })();
   if (periodStartEl) {
     periodStartEl.addEventListener('change', function () {
       periodStartVal = periodStartEl.value;

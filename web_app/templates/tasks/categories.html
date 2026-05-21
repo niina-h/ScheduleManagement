@@ -60,7 +60,10 @@
   {# ── 右カラム：中区分 ── #}
   <div class="col-lg-7">
     <div class="card shadow-sm">
-      <div class="card-header fw-bold">中区分一覧</div>
+      <div class="card-header fw-bold d-flex justify-content-between align-items-center">
+        <span>中区分一覧</span>
+        <small class="text-muted fw-normal" style="font-size:0.75rem;">💡 行左端の ⠿ をドラッグして並び替え（ガントチャートに即反映）</small>
+      </div>
       <div class="card-body p-2">
         {% if categories %}
           <div class="accordion" id="subcatAccordion">
@@ -94,8 +97,10 @@
                     </thead>
                     <tbody class="subSortable" data-cat-id="{{ cat.id }}">
                       {% for sub in sub_list %}
-                      <tr data-id="{{ sub.id }}" style="cursor:grab">
-                        <td class="align-middle text-muted px-1">☰</td>
+                      <tr data-id="{{ sub.id }}" style="cursor:grab;">
+                        <td class="align-middle text-primary px-1 text-center"
+                            style="cursor:grab; font-size:18px; user-select:none; background:#f1f5f9;"
+                            title="ドラッグして並び替え">⠿</td>
                         <td class="align-middle">{{ sub.name }}</td>
                         <td class="text-end">
                           <form method="post"
@@ -171,6 +176,20 @@
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+  /* 保存トースト表示 */
+  function showSaveToast(message, ok) {
+    var t = document.createElement('div');
+    t.textContent = message;
+    t.style.cssText = 'position:fixed;bottom:24px;right:24px;'
+      + 'background:' + (ok ? '#10b981' : '#ef4444') + ';color:#fff;'
+      + 'padding:8px 16px;border-radius:6px;z-index:9999;'
+      + 'font-size:0.9rem;box-shadow:0 4px 12px rgba(0,0,0,0.15);'
+      + 'transition:opacity 0.3s';
+    document.body.appendChild(t);
+    setTimeout(function(){ t.style.opacity = '0'; }, 1800);
+    setTimeout(function(){ if (t.parentNode) t.remove(); }, 2200);
+  }
+
   /* 大区分の並び替え */
   var catEl = document.getElementById('catSortable');
   if (catEl) {
@@ -183,6 +202,10 @@ document.addEventListener('DOMContentLoaded', function() {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({order: ids})
+        }).then(function(res) {
+          showSaveToast(res.ok ? '✓ 大区分の並び順を保存しました' : '✗ 保存に失敗しました', res.ok);
+        }).catch(function() {
+          showSaveToast('✗ 通信エラー', false);
         });
       }
     });
@@ -198,6 +221,10 @@ document.addEventListener('DOMContentLoaded', function() {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({order: ids})
+        }).then(function(res) {
+          showSaveToast(res.ok ? '✓ 中区分の並び順を保存しました（ガントチャートに反映されます）' : '✗ 保存に失敗しました', res.ok);
+        }).catch(function() {
+          showSaveToast('✗ 通信エラー', false);
         });
       }
     });

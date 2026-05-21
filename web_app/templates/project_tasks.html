@@ -439,7 +439,6 @@
             <input type="hidden" name="status" value="未着手">
             <input type="hidden" name="progress" value="0">
             <input type="hidden" name="delay_days" value="0">
-            <input type="hidden" name="end_date" id="ev-end-date">
             <input type="hidden" name="planned_hours" id="ev-planned-hours" value="0">
             <div class="row g-2 align-items-end">
               <div class="col-md-3">
@@ -466,9 +465,14 @@
                 <input type="hidden" name="assigned_to_2" id="ev-assigned-to-2" value="">
               </div>
               <div class="col-auto">
-                <label class="form-label small fw-semibold">開催日 <span class="text-danger">*</span></label>
+                <label class="form-label small fw-semibold">開始日 <span class="text-danger">*</span></label>
                 <input type="date" name="start_date" id="ev-start-date" class="form-control form-control-sm px-1" required
-                       style="width:100px;" oninput="syncEvEndDate(this)">
+                       style="width:120px;" oninput="syncEvEndDate(this)">
+              </div>
+              <div class="col-auto">
+                <label class="form-label small fw-semibold">終了日 <span class="text-danger">*</span></label>
+                <input type="date" name="end_date" id="ev-end-date" class="form-control form-control-sm px-1" required
+                       style="width:120px;">
               </div>
               <div class="col-auto d-flex align-items-end pb-1">
                 <div class="form-check">
@@ -494,9 +498,20 @@
           </form>
         </div>
       </div>
+      {# ── 絞り込み + 一括削除UI ── #}
       {% if privileged %}
+      <div class="card-body p-2 border-bottom d-flex align-items-center gap-2 flex-wrap small">
+        <label class="form-check-label small" style="cursor:pointer; white-space:nowrap;">
+          <input type="checkbox" id="eventFilterPast" class="form-check-input" style="width:14px;height:14px;">
+          開催日が過ぎたものだけ表示
+        </label>
+        <span class="text-muted ms-2" id="eventFilterCount" style="font-size:0.8rem;"></span>
+        <button type="button" class="btn btn-outline-danger btn-sm ms-auto py-0 px-2" id="eventBulkDeleteBtn"
+                style="font-size:0.8rem;" title="表示中のイベントを一括削除">🗑 表示中を一括削除</button>
+      </div>
       <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkEventForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="from_tab" value="events">
       {% endif %}
       <div class="card-body p-0">
         <table class="table table-sm table-hover mb-0" id="eventTable">
@@ -504,7 +519,8 @@
             <tr>
               <th style="width:28%">イベント名</th>
               <th style="width:15%">関係者</th>
-              <th style="width:8%">開催日</th>
+              <th style="width:8%">開始日</th>
+              <th style="width:8%">終了日</th>
               <th style="width:4%" class="text-center">MS</th>
               <th style="width:8%">開始時刻</th>
               <th style="width:8%">終了時刻</th>
@@ -513,7 +529,9 @@
           </thead>
           <tbody>
             {% for t in events %}
-            <tr{% if t.is_milestone %} class="table-warning"{% endif %}>
+            <tr class="event-row{% if t.is_milestone %} table-warning{% endif %}"
+                data-task-id="{{ t.id }}"
+                data-event-end="{{ t.end_date or t.start_date or '' }}">
               {% if privileged %}
               <input type="hidden" form="bulkEventForm" name="task_id" value="{{ t.id }}">
               <input type="hidden" form="bulkEventForm" name="category_id_{{ t.id }}" value="{{ t.category_id or '' }}">
@@ -524,7 +542,6 @@
               <input type="hidden" form="bulkEventForm" name="delay_days_{{ t.id }}" value="{{ t.delay_days or 0 }}">
               <input type="hidden" form="bulkEventForm" name="progress_{{ t.id }}" value="{{ t.progress }}">
               <input type="hidden" form="bulkEventForm" name="is_event_{{ t.id }}" value="1">
-              <input type="hidden" form="bulkEventForm" name="end_date_{{ t.id }}" id="ev-end-{{ t.id }}" value="{{ t.end_date }}">
               <td><input type="text" form="bulkEventForm" name="task_name_{{ t.id }}" value="{{ t.task_name }}" class="form-control form-control-sm"></td>
               <td>
                 <select form="bulkEventForm" name="assigned_to_{{ t.id }}" class="form-select form-select-sm">
@@ -538,6 +555,11 @@
                          class="form-control form-control-sm px-1 ev-date-input" data-tid="{{ t.id }}"
                          style="width:100px;"
                          oninput="syncEvEndDateEdit(this)"></td>
+              <td><input type="date" form="bulkEventForm" name="end_date_{{ t.id }}" id="ev-end-{{ t.id }}"
+                         value="{{ t.end_date or t.start_date }}"
+                         class="form-control form-control-sm px-1 ev-end-input" data-tid="{{ t.id }}"
+                         style="width:100px;"
+                         onchange="syncEventRowEnd(this, '{{ t.id }}')"></td>
               <td class="text-center">
                 <input type="checkbox" form="bulkEventForm" name="is_milestone_{{ t.id }}"
                        class="form-check-input ev-ms-check" value="1"
@@ -569,6 +591,7 @@
               <td class="small">{{ t.task_name }}{% if t.is_milestone %} <span class="badge bg-warning text-dark">MS</span>{% endif %}</td>
               <td class="small">{{ t.assigned_name or '' }}</td>
               <td class="small">{{ t.start_date }}</td>
+              <td class="small">{{ t.end_date or t.start_date }}</td>
               <td class="text-center small">{% if t.is_milestone %}◆{% endif %}</td>
               <td class="small">{{ t.event_start_time or ('--') }}</td>
               <td class="small">{{ t.event_end_time or ('--') }}</td>
@@ -582,7 +605,7 @@
               {% endif %}
             </tr>
             {% else %}
-            <tr><td colspan="{{ 8 if privileged else 7 }}" class="text-center text-muted py-2">イベントが登録されていません</td></tr>
+            <tr><td colspan="{{ 9 if privileged else 8 }}" class="text-center text-muted py-2">イベントが登録されていません</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -782,17 +805,26 @@
   var tab = params.get('tab');
   var addOpen = params.get('add_open') === '1';
 
-  // タブ切替（tab=routine → 定例タブ）
+  // タブ切替（tab=routine → 定例 / tab=events → イベント）
   if (tab === 'routine') {
     var routineTabBtn = document.getElementById('tab-routine-btn');
     if (routineTabBtn) {
       var tabInst = new bootstrap.Tab(routineTabBtn);
       tabInst.show();
     }
+  } else if (tab === 'events') {
+    var eventsTabBtn = document.getElementById('tab-events-btn');
+    if (eventsTabBtn) {
+      var tabInst2 = new bootstrap.Tab(eventsTabBtn);
+      tabInst2.show();
+    }
   }
 
   if (addOpen) {
-    var targetFormId = (tab === 'routine') ? 'addRoutineForm' : 'addTaskForm';
+    var targetFormId;
+    if (tab === 'routine') targetFormId = 'addRoutineForm';
+    else if (tab === 'events') targetFormId = 'addEventForm';
+    else targetFormId = 'addTaskForm';
     var form = document.getElementById(targetFormId);
     if (form) {
       var bsCollapse = new bootstrap.Collapse(form, { show: true });
@@ -998,7 +1030,11 @@ document.addEventListener('DOMContentLoaded', function () {
 /* ── イベント追加フォーム: 開催日→終了日同期 ── */
 function syncEvEndDate(dateInput) {
   var evEnd = document.getElementById('ev-end-date');
-  if (evEnd) evEnd.value = dateInput.value;
+  if (!evEnd) return;
+  // 終了日が未入力、または開始日より前の場合のみ自動セット（手動指定を尊重）
+  if (!evEnd.value || evEnd.value < dateInput.value) {
+    evEnd.value = dateInput.value;
+  }
 }
 
 /* ── イベント追加フォーム: 関係者→assigned_to同期 ── */
@@ -1076,9 +1112,83 @@ function roundToQuarter(input) {
 /* ── イベント一覧: 開催日→終了日同期 ── */
 function syncEvEndDateEdit(dateInput) {
   var tid = dateInput.dataset.tid;
-  var endHidden = document.getElementById('ev-end-' + tid);
-  if (endHidden) endHidden.value = dateInput.value;
+  var endInput = document.getElementById('ev-end-' + tid);
+  if (!endInput) return;
+  // 終了日が未入力、または開始日より前の場合のみ自動セット（手動指定を尊重）
+  if (!endInput.value || endInput.value < dateInput.value) {
+    endInput.value = dateInput.value;
+    // 行の data-event-end も更新（絞り込み用）
+    var row = dateInput.closest('tr.event-row');
+    if (row) row.dataset.eventEnd = endInput.value;
+  }
 }
+
+function syncEventRowEnd(endInput, tid) {
+  // 終了日が手動変更された時に行の data-event-end を更新
+  var row = endInput.closest('tr.event-row');
+  if (row) row.dataset.eventEnd = endInput.value;
+}
+
+/* ── イベント一覧の絞り込み + 一括削除 ── */
+(function() {
+  var filterPast = document.getElementById('eventFilterPast');
+  var bulkDelBtn = document.getElementById('eventBulkDeleteBtn');
+  var countEl = document.getElementById('eventFilterCount');
+  if (!filterPast || !bulkDelBtn) return;
+
+  var todayStr = new Date().toISOString().slice(0, 10);
+
+  function applyEventFilter() {
+    var rows = document.querySelectorAll('#eventTable tbody tr.event-row');
+    var shown = 0;
+    rows.forEach(function(r) {
+      var endDate = r.dataset.eventEnd || '';
+      var hide = false;
+      // 「開催日が過ぎたもの」= 終了日 < 今日 のもののみ表示
+      if (filterPast.checked) {
+        if (!endDate || endDate >= todayStr) hide = true;
+      }
+      r.style.display = hide ? 'none' : '';
+      if (!hide) shown++;
+    });
+    if (countEl) {
+      countEl.textContent = filterPast.checked
+        ? '表示中: ' + shown + ' 件（過去イベント）'
+        : '';
+    }
+  }
+  filterPast.addEventListener('change', applyEventFilter);
+
+  bulkDelBtn.addEventListener('click', function() {
+    var visibleRows = Array.from(document.querySelectorAll('#eventTable tbody tr.event-row'))
+      .filter(function(r) { return r.style.display !== 'none'; });
+    if (visibleRows.length === 0) {
+      alert('削除対象のイベントがありません。\n「開催日が過ぎたものだけ表示」にチェックを入れて、過去イベントを絞り込んでから実行してください。');
+      return;
+    }
+    var msg = '表示中のイベント ' + visibleRows.length + ' 件を一括削除します。\n'
+      + 'この操作は取り消せません。よろしいですか？';
+    if (!confirm(msg)) return;
+
+    var form = document.getElementById('bulkEventForm');
+    if (!form) return;
+    // 各行の delete_X チェックボックスを ON にして送信
+    visibleRows.forEach(function(r) {
+      var tid = r.dataset.taskId;
+      var cb = form.querySelector('input[name="delete_' + tid + '"]');
+      if (cb) {
+        cb.checked = true;
+      } else {
+        var h = document.createElement('input');
+        h.type = 'hidden';
+        h.name = 'delete_' + tid;
+        h.value = '1';
+        form.appendChild(h);
+      }
+    });
+    form.submit();
+  });
+})();
 
 /* ── イベント一覧: 開始/終了時刻→工数自動計算 ── */
 function calcEvHoursEdit(tid) {
