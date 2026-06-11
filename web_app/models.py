@@ -175,6 +175,21 @@ def save_user_manager(user_id: int, manager_id: int | None) -> None:
     db.commit()
 
 
+def save_user_dept(user_id: int, dept: str) -> None:
+    """ユーザーの所属部署を設定する。
+
+    Args:
+        user_id: 対象ユーザーのID。
+        dept: 部署名（空文字なら未設定扱い）。
+    """
+    db = get_db()
+    db.execute(
+        "UPDATE users SET dept = ? WHERE id = ?",
+        (dept or "", user_id),
+    )
+    db.commit()
+
+
 def set_user_password(user_id: int, password: str) -> bool:
     """ユーザーのパスワードハッシュを設定する。
 

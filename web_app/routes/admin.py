@@ -44,6 +44,7 @@ from ..models import (
     get_mail_setting,
     get_operation_logs,
     get_user_by_id,
+    save_user_dept,
     save_user_manager,
     set_user_password,
     update_dept,
@@ -152,9 +153,13 @@ def dashboard() -> str:
     manager_candidates: list[dict] = [
         u for u in all_users if is_privileged(u.get("role", ""))
     ]
+    # 担当メンバー設定対象 = 自部署のユーザー + 部署未設定のユーザー
+    # （まだ所属部署が決まっていないメンバーにも部署をここで設定できるようにする）
+    all_users_any = get_all_users()
     assignable_users: list[dict] = [
-        u for u in all_users
-        if u.get("role") == "ユーザー" and u.get("dept") == login_dept
+        u for u in all_users_any
+        if u.get("role") == "ユーザー"
+        and ((u.get("dept") or "") == login_dept or not (u.get("dept") or ""))
     ]
 
     # 会社休日（当年＋翌年分を表示）
@@ -464,14 +469,35 @@ def save_assignments() -> str:
     login_id: int = int(session.get("user_id", 0))
     login_dept: str = session.get("user_dept", "")
 
-    # 更新可能なユーザーIDセット（スコープ制限: マスタ・管理職ともに自部署のみ）
-    all_u = get_all_users(dept_filter=login_dept if login_dept else None)
+    # 更新可能なユーザーIDセット：自部署のユーザー + 部署未設定のユーザー
+    all_u = get_all_users()
     allowed_ids: set[int] = {
         u["id"] for u in all_u
-        if u.get("role") == "ユーザー" and u.get("dept") == login_dept
+        if u.get("role") == "ユーザー"
+        and ((u.get("dept") or "") == login_dept or not (u.get("dept") or ""))
     }
 
+    # 部署マスタ（有効な部署名のセット。未設定="" は常に許可）
+    valid_depts: set[str] = {d["dept_name"] for d in get_all_depts()}
+
     updated = 0
+    # 部署更新（manager より先に処理：部署を変えてからその上長を設定する想定）
+    for key, val in request.form.items():
+        if not key.startswith("dept_"):
+            continue
+        try:
+            target_uid = int(key[len("dept_"):])
+        except ValueError:
+            continue
+        if target_uid not in allowed_ids:
+            continue
+        new_dept = val.strip()
+        # 部署名の妥当性チェック（空 or マスタに存在する部署のみ許可）
+        if new_dept and new_dept not in valid_depts:
+            continue
+        save_user_dept(target_uid, new_dept)
+        updated += 1
+    # 上長更新
     for key, val in request.form.items():
         if not key.startswith("manager_"):
             continue

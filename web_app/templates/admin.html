@@ -160,7 +160,14 @@
             {% for u in assignable_users %}
             <tr>
               <td class="fw-semibold">{{ u.name }}</td>
-              <td>{{ u.dept or '-' }}</td>
+              <td>
+                <select name="dept_{{ u.id }}" class="form-select form-select-sm">
+                  <option value="" {% if not u.dept %}selected{% endif %}>（未設定）</option>
+                  {% for d in all_depts %}
+                  <option value="{{ d.dept_name }}" {% if u.dept == d.dept_name %}selected{% endif %}>{{ d.dept_name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
               <td>{{ u.role }}</td>
               <td>
                 <select name="manager_{{ u.id }}" class="form-select form-select-sm">
