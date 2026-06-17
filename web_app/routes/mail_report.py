@@ -277,6 +277,34 @@ def _build_master_subject(dept: str, target_date: date) -> str:
     return f"【{dept}】日次業務報告{yyyy}/{mm}/{dd}（{dow}）"
 
 
+def _resolve_master_dept(login_user: dict, members: list[dict]) -> str:
+    """マスタ用件名に表示する部署名を決定する。
+
+    ログイン中マスタ自身の所属部署を最優先で使う。未設定の場合は、
+    報告対象メンバーの中で最も多い部署名で補完し、件名の【】が
+    空になるのを防ぐ。
+
+    Args:
+        login_user: ログインユーザー情報。
+        members: 報告対象メンバーのリスト。
+
+    Returns:
+        str: 件名に表示する部署名（最終的に不明なら空文字）。
+    """
+    dept = (login_user.get("dept") or "").strip()
+    if dept:
+        return dept
+    # フォールバック: メンバーの中で最も多い部署名を採用
+    counts: dict[str, int] = {}
+    for m in members:
+        d = (m.get("dept") or "").strip()
+        if d:
+            counts[d] = counts.get(d, 0) + 1
+    if counts:
+        return max(counts, key=lambda k: counts[k])
+    return ""
+
+
 def _build_master_body(
     login_user: dict, target_date: date, members: list[dict], greeting: str,
     friday_report: str = "",
@@ -802,7 +830,7 @@ def download_eml():
         setting = get_mail_setting("マスタ")
         dept = login_user.get("dept", "")
         members = get_accessible_users(login_user["id"], login_user["role"], dept)
-        subject = _build_master_subject(dept, target_date)
+        subject = _build_master_subject(_resolve_master_dept(login_user, members), target_date)
         greeting = setting.get("body_template", "")
         body = _build_master_body(login_user, target_date, members, greeting, _get_friday_report(login_user, target_date))
     else:
@@ -853,7 +881,7 @@ def preview():
     # マスタ用: 動的生成（件名は曜日で自動判定、本文は大区分・中区分グループ化）
     dept = login_user.get("dept", "")
     members = get_accessible_users(login_user["id"], login_user["role"], dept)
-    master_subject = _build_master_subject(dept, target_date)
+    master_subject = _build_master_subject(_resolve_master_dept(login_user, members), target_date)
     master_greeting = master_setting.get("body_template", "")
     master_body = _build_master_body(login_user, target_date, members, master_greeting, _get_friday_report(login_user, target_date))
     master_mailto = _build_mailto(master_setting, master_subject)
@@ -911,7 +939,7 @@ def print_master() -> object:
 
     dept = login_user.get("dept", "")
     members = get_accessible_users(login_user["id"], login_user["role"], dept)
-    master_subject = _build_master_subject(dept, target_date)
+    master_subject = _build_master_subject(_resolve_master_dept(login_user, members), target_date)
     master_greeting = get_mail_setting("マスタ").get("body_template", "")
     master_body = _build_master_body(login_user, target_date, members, master_greeting, _get_friday_report(login_user, target_date))
 

@@ -162,10 +162,11 @@
           <canvas id="ganttCanvas"></canvas>
           {# ── インライン編集用オーバーレイ（コンテナ内に配置） ── #}
           <div id="editOverlay" style="display:none; position:absolute; z-index:100;">
-            <select id="editStatus" class="form-select form-select-sm" style="display:none; font-size:11px; padding:1px 4px; height:26px; width:70px;">
-              {% for s in ['未着手','着手','順調','遅れ','完了','停止'] %}
-              <option value="{{ s }}">{{ s }}</option>
-              {% endfor %}
+            {# 状態は進捗・日程から自動判定するため、手動指定は「自動判定／完了／停止」のみ #}
+            <select id="editStatus" class="form-select form-select-sm" style="display:none; font-size:11px; padding:1px 4px; height:26px; width:84px;">
+              <option value="__auto__">自動判定</option>
+              <option value="完了">完了</option>
+              <option value="停止">停止</option>
             </select>
             <input id="editNumber" type="number" class="form-control form-control-sm" style="display:none; font-size:11px; padding:1px 4px; height:26px; width:56px; text-align:center;" min="0">
           </div>
@@ -203,6 +204,50 @@
     '未着手': '#9ca3af', '着手': '#60a5fa', '順調': '#34d399',
     '遅れ': '#f87171', '完了': '#10b981', '停止': '#d1d5db'
   };
+
+  /* 進捗の自動算出（予定どおり自動進行）。
+     本日(today)と日程(start/end)から「今日あるべき予定進捗%」を返す。
+     これを実進捗として表示するため、時間の経過に応じてバーが自動で進む。
+     - 「停止」は中断状態として実進捗(task.progress)を保持
+     - 「完了」は100%
+     - 開始日前は0%、終了後は100%でクランプ
+     マイルストーンには適用しない（呼び出し側で判定）。 */
+  function autoProgress(task) {
+    if (task.status === '停止') return task.progress || 0;
+    if (task.status === '完了') return 100;
+    var tStart = parseDate(task.start);
+    var tEnd = parseDate(task.end);
+    if (!tStart || !tEnd) return task.progress || 0;
+    var totalDays = Math.max(1, Math.round((tEnd - tStart) / 86400000));
+    var elapsed = Math.round((today - tStart) / 86400000);
+    if (elapsed <= 0) return 0;
+    return Math.max(0, Math.min(100, Math.round(elapsed / totalDays * 100)));
+  }
+
+  /* 状態の自動判定。
+     有効進捗(p)と日程(start/end)・本日(today)から「未着手／順調／遅れ／完了」を
+     算出する。遅延日セルと同じ計算式を用いるため、状態と遅延が必ず整合する。
+     進捗を予定どおり自動進行させる運用では p＝予定進捗となり、常に「順調」
+     （未着手・完了を除く）かつ遅延0になる。
+     - 進捗100%以上 → 完了
+     - 手動で「停止」「完了」が設定済みの場合は尊重する
+     - 開始日前（elapsed<=0） → 未着手
+     - それ以外は 予定進捗との差(diffDays) が負なら「遅れ」、0以上なら「順調」
+     マイルストーンには適用しない（呼び出し側で判定）。 */
+  function autoStatus(task, p) {
+    if (task.status === '停止') return '停止';
+    if (p >= 100) return '完了';
+    if (task.status === '完了') return '完了';
+    var tStart = parseDate(task.start);
+    var tEnd = parseDate(task.end);
+    if (!tStart || !tEnd) return task.status;
+    var totalDays = Math.max(1, Math.round((tEnd - tStart) / 86400000));
+    var elapsed = Math.round((today - tStart) / 86400000);
+    if (elapsed <= 0) return '未着手';
+    var expectedProg = Math.max(0, Math.min(100, elapsed / totalDays * 100));
+    var diffDays = Math.round((p - expectedProg) / 100 * totalDays);
+    return diffDays < 0 ? '遅れ' : '順調';
+  }
 
   /* ── フィルタ（中区分・期間） ── */
   var subcatFilter = '{{ initial_subcat }}';
@@ -645,7 +690,9 @@
     overlay.style.display = 'block';
 
     if (cell.field === 'status') {
-      editSelect.value = cell.task.status;
+      /* 完了・停止は手動指定として保持。それ以外は「自動判定」を選択状態にする */
+      editSelect.value = (cell.task.status === '完了' || cell.task.status === '停止')
+        ? cell.task.status : '__auto__';
       editSelect.style.display = 'block';
       editSelect.style.width = cell.w + 'px';
       editSelect.style.height = cell.h + 'px';
@@ -687,7 +734,11 @@
 
   editSelect.addEventListener('change', function () {
     if (!activeEdit) return;
-    saveField(activeEdit.task, 'status', editSelect.value);
+    /* 「自動判定」選択時は、その時点の自動判定結果を保存値とする
+       （DBには有効な状態値を残しつつ、表示は常に自動判定で再計算される） */
+    var v = editSelect.value === '__auto__'
+      ? autoStatus(activeEdit.task, autoProgress(activeEdit.task)) : editSelect.value;
+    saveField(activeEdit.task, 'status', v);
     hideEditor();
   });
   editSelect.addEventListener('blur', function () { setTimeout(hideEditor, 150); });
@@ -988,7 +1039,7 @@
 
         /* ── 子タスク描画 ── */
         taskList.forEach(function (task, ti) {
-        if (!showCompleted && task.status === '完了') return;
+        if (!showCompleted && (task.is_milestone ? task.status : autoStatus(task, autoProgress(task))) === '完了') return;
         var ty = currentY;
         var midY = ty + rowHeight / 2;
 
@@ -1072,9 +1123,11 @@
           ctx.fillText(assignLabel, nameColW + 6, midY + 4);
         }
 
-        /* ── 状態セル ── */
+        /* ── 状態セル（進捗を予定どおり自動進行させ、状態も自動判定。マイルストーンは手動値） ── */
         var statusX = colBaseX;
-        var statusColor = STATUS_COLORS[task.status] || '#9ca3af';
+        var effProgress = task.is_milestone ? (task.progress || 0) : autoProgress(task);
+        var effStatus = task.is_milestone ? task.status : autoStatus(task, effProgress);
+        var statusColor = STATUS_COLORS[effStatus] || '#9ca3af';
         /* 背景色（薄く） */
         ctx.fillStyle = statusColor + '22';
         ctx.fillRect(statusX + 1, ty + 1, statusColW - 2, rowHeight - 2);
@@ -1082,11 +1135,11 @@
         ctx.fillStyle = statusColor;
         ctx.font = 'bold 9px "游ゴシック", "Yu Gothic", sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(task.status, statusX + statusColW / 2, midY + 3);
+        ctx.fillText(effStatus, statusX + statusColW / 2, midY + 3);
 
-        /* ── 遅延日セル（自動計算: 進捗と日程から算出） ── */
+        /* ── 遅延日セル（自動計算: 有効進捗と日程から算出） ── */
         var delayX = colBaseX + statusColW;
-        var progVal = task.progress || 0;
+        var progVal = effProgress;
         var tStart = parseDate(task.start);
         var tEnd = parseDate(task.end);
         var totalDays = Math.max(1, Math.round((tEnd - tStart) / 86400000));
@@ -1095,9 +1148,9 @@
         var diffDays = Math.round((progVal - expectedProg) / 100 * totalDays);
         var delayLabel = '-';
         var delayColor = '#94a3b8';
-        if (task.status === '完了') {
+        if (effStatus === '完了') {
           delayLabel = '-'; delayColor = '#94a3b8';
-        } else if (task.status === '未着手' && elapsed <= 0) {
+        } else if (effStatus === '未着手' && elapsed <= 0) {
           delayLabel = '-'; delayColor = '#94a3b8';
         } else if (diffDays < 0) {
           delayLabel = diffDays + '日';
@@ -1164,9 +1217,9 @@
         ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 2;
 
         /* 予定バー */
-        if (task.status === '停止') {
+        if (effStatus === '停止') {
           ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#e5e7eb', '#d1d5db');
-        } else if (task.status === '完了') {
+        } else if (effStatus === '完了') {
           ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#6ee7b7', '#10b981');
         } else {
           ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#bfdbfe', '#60a5fa');
@@ -1176,17 +1229,17 @@
         ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
         /* 予定バー枠線 */
-        if (task.status === '停止') { ctx.strokeStyle = '#9ca3af'; }
-        else if (task.status === '完了') { ctx.strokeStyle = '#059669'; }
+        if (effStatus === '停止') { ctx.strokeStyle = '#9ca3af'; }
+        else if (effStatus === '完了') { ctx.strokeStyle = '#059669'; }
         else { ctx.strokeStyle = '#3b82f6'; }
         ctx.lineWidth = 0.8;
         roundRect(ctx, barX, barY, barW, barH, barR); ctx.stroke();
 
         /* 進捗バー */
-        if (task.progress > 0 && task.status !== '停止' && task.status !== '完了') {
-          var progW = barW * Math.min(task.progress, 100) / 100;
+        if (effProgress > 0 && effStatus !== '停止' && effStatus !== '完了') {
+          var progW = barW * Math.min(effProgress, 100) / 100;
           if (progW > 3) {
-            if (task.status === '遅れ') {
+            if (effStatus === '遅れ') {
               ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#fca5a5', '#ef4444');
               ctx.strokeStyle = '#dc2626';
             } else {
@@ -1219,7 +1272,7 @@
           ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 1;
           ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
           ctx.font = 'bold 9px "游ゴシック", "Yu Gothic", sans-serif';
-          ctx.fillText(task.progress + '%', barX + barW / 2, barY + barH / 2 + 3);
+          ctx.fillText(effProgress + '%', barX + barW / 2, barY + barH / 2 + 3);
           ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
           ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
         }
