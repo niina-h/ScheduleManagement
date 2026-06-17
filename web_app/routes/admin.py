@@ -161,6 +161,15 @@ def dashboard() -> str:
         if u.get("role") == "ユーザー"
         and ((u.get("dept") or "") == login_dept or not (u.get("dept") or ""))
     ]
+    # ログイン中のマスタ／管理職自身も部署設定対象に含める。
+    # マスタ自身の所属部署が未設定だと日報メール件名の【】が空になるため、
+    # 自分の所属部署をこの画面から設定できるようにする。
+    if login_id and not any(u.get("id") == login_id for u in assignable_users):
+        self_user = next(
+            (u for u in all_users_any if u.get("id") == login_id), None
+        )
+        if self_user is not None:
+            assignable_users.insert(0, self_user)
 
     # 会社休日（当年＋翌年分を表示）
     current_year = date.today().year
@@ -476,6 +485,9 @@ def save_assignments() -> str:
         if u.get("role") == "ユーザー"
         and ((u.get("dept") or "") == login_dept or not (u.get("dept") or ""))
     }
+    # ログイン中のマスタ／管理職自身も自分の所属部署を更新できるようにする
+    if login_id:
+        allowed_ids.add(login_id)
 
     # 部署マスタ（有効な部署名のセット。未設定="" は常に許可）
     valid_depts: set[str] = {d["dept_name"] for d in get_all_depts()}

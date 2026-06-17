@@ -159,7 +159,10 @@
           <tbody>
             {% for u in assignable_users %}
             <tr>
-              <td class="fw-semibold">{{ u.name }}</td>
+              <td class="fw-semibold">
+                {{ u.name }}
+                {% if u.id == login_id %}<span class="badge bg-info text-dark ms-1">自分</span>{% endif %}
+              </td>
               <td>
                 <select name="dept_{{ u.id }}" class="form-select form-select-sm">
                   <option value="" {% if not u.dept %}selected{% endif %}>（未設定）</option>
@@ -170,6 +173,9 @@
               </td>
               <td>{{ u.role }}</td>
               <td>
+                {% if u.id == login_id %}
+                <span class="text-muted">—</span>
+                {% else %}
                 <select name="manager_{{ u.id }}" class="form-select form-select-sm">
                   <option value="">（未設定）</option>
                   {% for m in manager_candidates %}
@@ -180,6 +186,7 @@
                   {% endif %}
                   {% endfor %}
                 </select>
+                {% endif %}
               </td>
             </tr>
             {% endfor %}
