@@ -414,17 +414,7 @@ def _build_master_body(
         """時間を整数 or 小数1桁で表示する。"""
         return str(int(h)) if h == int(h) else f"{h:.1f}"
 
-    # 業務内容セクション（project_task の登録タスクを表示、実績があれば○）
-    # 全メンバーの当日実績タスク名を収集
-    today_worked_tasks: set[str] = set()
-    for md in member_data:
-        for slot in ("am", "pm"):
-            for item in md["result"].get(slot, []):
-                task = item.get("task_name", "").strip()
-                hours = float(item.get("hours", 0.0))
-                if task and hours > 0:
-                    today_worked_tasks.add(task)
-
+    # 業務内容セクション（project_task の登録タスクを表示）
     # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ、イベント除外）。
     # 当日以前に完了したタスクは過去の業務報告で既に表示済みなので本文から除外する。
     member_ids = [m["id"] for m in members]
@@ -507,7 +497,7 @@ def _build_master_body(
     if max_sub_width < 10:
         max_sub_width = 10
 
-    content_lines: list[str] = ["業務内容\t対応内容\t達成"]
+    content_lines: list[str] = ["業務内容\t対応内容"]
     for cat_name in cat_order:
         subcats = cat_subcats_ordered.get(cat_name, [])
         has_tasks = any(pt_by_subcat.get((cat_name, sn)) for sn in subcats)
@@ -520,13 +510,11 @@ def _build_master_body(
             task_items = pt_by_subcat.get((cat_name, sub_name), [])
             if not task_items:
                 continue
-            task_names = [t["name"] for t in task_items]
-            achieved = "○" if any(t in today_worked_tasks for t in task_names) else ""
             padded_sub = _pad(sub_name, max_sub_width)
             task_str = _format_task_list(task_items)
             # 改行がある場合はインデントを揃える
             task_str = task_str.replace("\n" + "　　　　　", "\n" + indent)
-            content_lines.append(f"　　{padded_sub} {task_str}\t{achieved}")
+            content_lines.append(f"　　{padded_sub} {task_str}")
 
     # メンバー AM/PM サマリ
     # 除外条件: 定例作業（大区分「定例」or 中区分「定例作業」）、AM1行目(idx=0)、PM最終行(idx=4)
@@ -601,9 +589,11 @@ def _build_master_body(
 
     master_comment = get_daily_comment(login_id, date_str)
     reflection = _wrap_text(master_comment.get("reflection", "").strip() or "（未入力）")
-    # ＜開発状況＞: AI開発関連タスク（同一人物・同一タスクは時間を合算）
-    ai_totals: dict[tuple[str, str], float] = {}  # (name, task) -> hours
-    ai_order: list[tuple[str, str]] = []
+    # ＜開発状況＞: 大区分「開発」に紐づく作業を、中区分・タスク別に
+    # 「誰が何時間したか」で表示する。
+    #   形式: 「  中区分　タスク名　（氏名：時間h、…）」
+    dev_contrib: dict[tuple[str, str], dict[str, float]] = {}  # (中区分, task) -> {氏名: 時間}
+    dev_order: list[tuple[str, str]] = []
     for md in member_data:
         name = md["member"]["name"]
         for slot in ("am", "pm"):
@@ -613,18 +603,22 @@ def _build_master_body(
                 if not task or hours == 0.0:
                     continue
                 cat_info = md["task_cat_map"].get(task, {})
-                cat = cat_info.get("category_name", "")
-                subcat = cat_info.get("subcategory_name", "")
-                if "AI" in cat or "AI" in subcat or "AI" in task:
-                    key = (name, task)
-                    if key not in ai_totals:
-                        ai_order.append(key)
-                    ai_totals[key] = ai_totals.get(key, 0.0) + hours
-    ai_lines: list[str] = [
-        f"  {name}：{task}　{ai_totals[(name, task)]}h"
-        for name, task in ai_order
-    ]
-    ai_section = "\n".join(ai_lines) if ai_lines else "  （AI開発作業なし）"
+                if cat_info.get("category_name", "") != "開発":
+                    continue
+                # ラベルは中区分（例:「AI開発」）。未設定時は大区分名で代替
+                label = cat_info.get("subcategory_name", "").strip() or "開発"
+                key = (label, task)
+                if key not in dev_contrib:
+                    dev_contrib[key] = {}
+                    dev_order.append(key)
+                dev_contrib[key][name] = dev_contrib[key].get(name, 0.0) + hours
+    ai_lines: list[str] = []
+    for label, task in dev_order:
+        contribs = "、".join(
+            f"{n}：{_fmt_h(h)}h" for n, h in dev_contrib[(label, task)].items()
+        )
+        ai_lines.append(f"  {label}　{task}　（{contribs}）")
+    ai_section = "\n".join(ai_lines) if ai_lines else "  （開発作業なし）"
 
     # ＜次回予定＞: マスタ自身の翌営業日予定（定例作業は除外）
     # 土日・会社休日・本人の休暇設定をスキップして、実際に出勤する日の予定を表示する

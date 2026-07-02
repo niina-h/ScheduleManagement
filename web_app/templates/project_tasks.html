@@ -64,8 +64,8 @@
             <input type="hidden" name="is_event" value="0">
             <div class="row g-2">
               <div class="col-auto" style="width:90px;">
-                <label class="form-label small fw-semibold">大区分</label>
-                <select name="category_id" class="form-select form-select-sm" id="add-cat" style="font-size:0.75rem;">
+                <label class="form-label small fw-semibold">大区分 <span class="text-danger">*</span></label>
+                <select name="category_id" class="form-select form-select-sm" id="add-cat" style="font-size:0.75rem;" required>
                   <option value="">--</option>
                   {% for c in categories %}
                   <option value="{{ c.id }}">{{ c.name }}</option>
@@ -73,9 +73,9 @@
                 </select>
               </div>
               <div class="col-auto" style="width:90px;">
-                <label class="form-label small fw-semibold">中区分</label>
-                <select name="subcategory_id" class="form-select form-select-sm" id="add-subcat" style="font-size:0.75rem;">
-                  <option value="">--</option>
+                <label class="form-label small fw-semibold">中区分 <span class="text-danger">*</span></label>
+                <select name="subcategory_id" class="form-select form-select-sm" id="add-subcat" style="font-size:0.75rem;" required disabled>
+                  <option value="">大区分を先に選択</option>
                   {% for s in subcategories %}
                   <option value="{{ s.id }}" data-cat="{{ s.category_id }}">{{ s.name }}</option>
                   {% endfor %}
@@ -924,15 +924,26 @@ document.addEventListener('DOMContentLoaded', function () {
   var subcatSelect = document.getElementById('add-subcat');
   if (catSelect && subcatSelect) {
     var allOptions = Array.from(subcatSelect.querySelectorAll('option[data-cat]'));
-    catSelect.addEventListener('change', function () {
+    // 大区分に応じて中区分を絞り込む。大区分未選択時は中区分を無効化。
+    function refillSubcat(keepValue) {
       var catId = catSelect.value;
-      subcatSelect.innerHTML = '<option value="">（なし）</option>';
+      var prev = keepValue ? subcatSelect.value : '';
+      if (!catId) {
+        subcatSelect.innerHTML = '<option value="">大区分を先に選択</option>';
+        subcatSelect.disabled = true;
+        return;
+      }
+      subcatSelect.disabled = false;
+      subcatSelect.innerHTML = '<option value="">--</option>';
       allOptions.forEach(function (opt) {
-        if (!catId || opt.dataset.cat === catId) {
+        if (opt.dataset.cat === catId) {
           subcatSelect.appendChild(opt.cloneNode(true));
         }
       });
-    });
+      if (prev) subcatSelect.value = prev;
+    }
+    catSelect.addEventListener('change', function () { refillSubcat(false); });
+    refillSubcat(true);  // 初期化（復元された値があれば維持）
   }
 
   /* 状態→進捗率の自動マッピング */

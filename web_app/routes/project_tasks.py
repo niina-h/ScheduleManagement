@@ -32,6 +32,7 @@ from ..models import (
     get_all_users,
     get_project_task_by_id,
     get_routine_schedules,
+    get_subcategory_category_id,
     get_task_master,
     get_task_overview_summary,
     get_task_progress_summary,
@@ -41,6 +42,28 @@ from ..models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_category(cat_id: str, subcat_id: str) -> tuple[int | None, int | None]:
+    """フォームの大区分/中区分IDから、保存用の (大区分ID, 中区分ID) を決定する。
+
+    中区分が選択されている場合は、その親を大区分として優先採用する
+    （中区分は必ず大区分に属するため、大区分の登録漏れ・不整合を防ぐ）。
+
+    Args:
+        cat_id: フォームの category_id 文字列。
+        subcat_id: フォームの subcategory_id 文字列。
+
+    Returns:
+        tuple[int | None, int | None]: (大区分ID, 中区分ID)。
+    """
+    category_id = int(cat_id) if cat_id else None
+    subcategory_id = int(subcat_id) if subcat_id else None
+    if subcategory_id:
+        parent = get_subcategory_category_id(subcategory_id)
+        if parent is not None:
+            category_id = parent
+    return category_id, subcategory_id
 
 project_tasks_bp = Blueprint(
     "project_tasks_bp", __name__, url_prefix="/project-tasks",
@@ -246,9 +269,10 @@ def add_task() -> object:
             else:
                 assigned_to_2 = None
 
+    category_id_val, subcategory_id_val = _resolve_category(cat_id, subcat_id)
     add_project_task(
-        category_id=int(cat_id) if cat_id else None,
-        subcategory_id=int(subcat_id) if subcat_id else None,
+        category_id=category_id_val,
+        subcategory_id=subcategory_id_val,
         task_name=task_name,
         description=description,
         start_date=start_date,
@@ -365,10 +389,11 @@ def update_task(task_id: int) -> object:
     import_to_schedule_1 = 1 if request.form.get("import_to_schedule_1") == "1" else 0
     import_to_schedule_2 = 1 if request.form.get("import_to_schedule_2") == "1" else 0
 
+    category_id_val, subcategory_id_val = _resolve_category(cat_id, subcat_id)
     update_project_task(
         task_id=task_id,
-        category_id=int(cat_id) if cat_id else None,
-        subcategory_id=int(subcat_id) if subcat_id else None,
+        category_id=category_id_val,
+        subcategory_id=subcategory_id_val,
         task_name=task_name,
         description=description,
         start_date=start_date,
@@ -500,10 +525,11 @@ def bulk_update_tasks() -> object:
                 else:
                     assigned_to_2 = None
 
+        category_id_val, subcategory_id_val = _resolve_category(cat_id, subcat_id)
         update_project_task(
             task_id=task_id,
-            category_id=int(cat_id) if cat_id else None,
-            subcategory_id=int(subcat_id) if subcat_id else None,
+            category_id=category_id_val,
+            subcategory_id=subcategory_id_val,
             task_name=task_name,
             description=description,
             start_date=start_date,

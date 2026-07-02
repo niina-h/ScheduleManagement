@@ -67,8 +67,8 @@
             <div class="modal-body">
               <div class="row g-2">
                 <div class="col-md-3">
-                  <label class="form-label small fw-semibold">大区分</label>
-                  <select name="category_id" class="form-select form-select-sm" id="gantt-add-cat">
+                  <label class="form-label small fw-semibold">大区分 <span class="text-danger">*</span></label>
+                  <select name="category_id" class="form-select form-select-sm" id="gantt-add-cat" required>
                     <option value="">--</option>
                     {% for c in add_categories %}
                     <option value="{{ c.id }}">{{ c.name }}</option>
@@ -76,9 +76,9 @@
                   </select>
                 </div>
                 <div class="col-md-3">
-                  <label class="form-label small fw-semibold">中区分</label>
-                  <select name="subcategory_id" class="form-select form-select-sm" id="gantt-add-subcat">
-                    <option value="">--</option>
+                  <label class="form-label small fw-semibold">中区分 <span class="text-danger">*</span></label>
+                  <select name="subcategory_id" class="form-select form-select-sm" id="gantt-add-subcat" required disabled>
+                    <option value="">大区分を先に選択</option>
                     {% for s in add_subcategories %}
                     <option value="{{ s.id }}" data-cat="{{ s.category_id }}">{{ s.name }}</option>
                     {% endfor %}
@@ -205,48 +205,49 @@
     '遅れ': '#f87171', '完了': '#10b981', '停止': '#d1d5db'
   };
 
+  /* タスクが「実完了」かを判定する。
+     完了は手動で状態を「完了」にしたか、実進捗を100%にした場合のみ。
+     時間経過（期限超過）では完了にしない＝未完了タスクは消えない。 */
+  function isDone(task) {
+    return task.status === '完了' || (task.progress || 0) >= 100;
+  }
+
   /* 進捗の自動算出（予定どおり自動進行）。
-     本日(today)と日程(start/end)から「今日あるべき予定進捗%」を返す。
-     これを実進捗として表示するため、時間の経過に応じてバーが自動で進む。
-     - 「停止」は中断状態として実進捗(task.progress)を保持
-     - 「完了」は100%
-     - 開始日前は0%、終了後は100%でクランプ
+     本日(today)と日程(start/end)から「今日あるべき予定進捗%」を返し、
+     時間の経過に応じてバーが自動で進む。
+     - 実完了は100%、「停止」は実進捗を保持
+     - 開始日前は0%
+     - 未完了タスクは最大99%でクランプ（100%＝完了は実完了のみ）。
+       これにより期限超過の未完了タスクが自動完了→非表示になるのを防ぐ。
      マイルストーンには適用しない（呼び出し側で判定）。 */
   function autoProgress(task) {
+    if (isDone(task)) return 100;
     if (task.status === '停止') return task.progress || 0;
-    if (task.status === '完了') return 100;
     var tStart = parseDate(task.start);
     var tEnd = parseDate(task.end);
     if (!tStart || !tEnd) return task.progress || 0;
     var totalDays = Math.max(1, Math.round((tEnd - tStart) / 86400000));
     var elapsed = Math.round((today - tStart) / 86400000);
     if (elapsed <= 0) return 0;
-    return Math.max(0, Math.min(100, Math.round(elapsed / totalDays * 100)));
+    return Math.max(0, Math.min(99, Math.round(elapsed / totalDays * 100)));
   }
 
   /* 状態の自動判定。
-     有効進捗(p)と日程(start/end)・本日(today)から「未着手／順調／遅れ／完了」を
-     算出する。遅延日セルと同じ計算式を用いるため、状態と遅延が必ず整合する。
-     進捗を予定どおり自動進行させる運用では p＝予定進捗となり、常に「順調」
-     （未着手・完了を除く）かつ遅延0になる。
-     - 進捗100%以上 → 完了
-     - 手動で「停止」「完了」が設定済みの場合は尊重する
+     - 「停止」「実完了」はそのまま尊重
      - 開始日前（elapsed<=0） → 未着手
-     - それ以外は 予定進捗との差(diffDays) が負なら「遅れ」、0以上なら「順調」
+     - 終了日超過かつ未完了 → 遅れ（期限超過。非表示にはしない）
+     - 期間内 → 予定どおり進行中なので 順調
      マイルストーンには適用しない（呼び出し側で判定）。 */
-  function autoStatus(task, p) {
+  function autoStatus(task) {
     if (task.status === '停止') return '停止';
-    if (p >= 100) return '完了';
-    if (task.status === '完了') return '完了';
+    if (isDone(task)) return '完了';
     var tStart = parseDate(task.start);
     var tEnd = parseDate(task.end);
     if (!tStart || !tEnd) return task.status;
-    var totalDays = Math.max(1, Math.round((tEnd - tStart) / 86400000));
     var elapsed = Math.round((today - tStart) / 86400000);
     if (elapsed <= 0) return '未着手';
-    var expectedProg = Math.max(0, Math.min(100, elapsed / totalDays * 100));
-    var diffDays = Math.round((p - expectedProg) / 100 * totalDays);
-    return diffDays < 0 ? '遅れ' : '順調';
+    if (Math.round((today - tEnd) / 86400000) > 0) return '遅れ';
+    return '順調';
   }
 
   /* ── フィルタ（中区分・期間） ── */
@@ -351,15 +352,24 @@
     var gSub = document.getElementById('gantt-add-subcat');
     if (!gCat || !gSub) return;
     var allOpts = Array.from(gSub.querySelectorAll('option[data-cat]'));
-    gCat.addEventListener('change', function() {
+    // 大区分未選択時は中区分を無効化。選択後にその大区分の中区分のみ表示。
+    function gRefill() {
       var catId = gCat.value;
+      if (!catId) {
+        gSub.innerHTML = '<option value="">大区分を先に選択</option>';
+        gSub.disabled = true;
+        return;
+      }
+      gSub.disabled = false;
       gSub.innerHTML = '<option value="">--</option>';
       allOpts.forEach(function(opt) {
-        if (!catId || opt.dataset.cat === catId) {
+        if (opt.dataset.cat === catId) {
           gSub.appendChild(opt.cloneNode(true));
         }
       });
-    });
+    }
+    gCat.addEventListener('change', gRefill);
+    gRefill();
   })();
   if (periodStartEl) {
     periodStartEl.addEventListener('change', function () {
@@ -737,7 +747,7 @@
     /* 「自動判定」選択時は、その時点の自動判定結果を保存値とする
        （DBには有効な状態値を残しつつ、表示は常に自動判定で再計算される） */
     var v = editSelect.value === '__auto__'
-      ? autoStatus(activeEdit.task, autoProgress(activeEdit.task)) : editSelect.value;
+      ? autoStatus(activeEdit.task) : editSelect.value;
     saveField(activeEdit.task, 'status', v);
     hideEditor();
   });
@@ -812,9 +822,18 @@
     var leftMargin = nameColW + assignColW + extraColsW;
     var rowHeight = 32, catRowHeight = 32, subcatRowHeight = 26;
     var baseHeaderHeight = 50;
-    /* イベント行の高さ（マイルストーン数に応じて動的） */
+    /* イベント行の高さ（表示範囲内に実際に描画されるイベント数に応じて最小化）。
+       範囲外のイベントは描画されないため件数に含めず、無駄な余白を作らない。 */
     var eventRowHeight = 0;
-    if (milestoneOnlyTasks.length > 0) eventRowHeight = Math.max(24, milestoneOnlyTasks.length * 18 + 8);
+    var _evRangeStart = new Date(startDate); _evRangeStart.setHours(0, 0, 0, 0);
+    var visibleEventCount = 0;
+    milestoneOnlyTasks.forEach(function (t) {
+      var ts = parseDate(t.start);
+      if (!ts) return;
+      var off = Math.floor((ts - _evRangeStart) / 86400000);
+      if (off >= 0 && off < DISPLAY_DAYS) visibleEventCount++;
+    });
+    if (visibleEventCount > 0) eventRowHeight = visibleEventCount * 18 + 8;
     var headerHeight = baseHeaderHeight + eventRowHeight;
     var containerWidth = canvas.parentElement.clientWidth - 20;
     var dayWidth = Math.max(22, Math.floor((containerWidth - leftMargin) / DISPLAY_DAYS));
@@ -1039,7 +1058,7 @@
 
         /* ── 子タスク描画 ── */
         taskList.forEach(function (task, ti) {
-        if (!showCompleted && (task.is_milestone ? task.status : autoStatus(task, autoProgress(task))) === '完了') return;
+        if (!showCompleted && (task.is_milestone ? task.status : autoStatus(task)) === '完了') return;
         var ty = currentY;
         var midY = ty + rowHeight / 2;
 
@@ -1126,7 +1145,7 @@
         /* ── 状態セル（進捗を予定どおり自動進行させ、状態も自動判定。マイルストーンは手動値） ── */
         var statusX = colBaseX;
         var effProgress = task.is_milestone ? (task.progress || 0) : autoProgress(task);
-        var effStatus = task.is_milestone ? task.status : autoStatus(task, effProgress);
+        var effStatus = task.is_milestone ? task.status : autoStatus(task);
         var statusColor = STATUS_COLORS[effStatus] || '#9ca3af';
         /* 背景色（薄く） */
         ctx.fillStyle = statusColor + '22';
@@ -1137,31 +1156,20 @@
         ctx.textAlign = 'center';
         ctx.fillText(effStatus, statusX + statusColW / 2, midY + 3);
 
-        /* ── 遅延日セル（自動計算: 有効進捗と日程から算出） ── */
+        /* ── 遅延日セル（状態と整合: 遅れ＝終了日からの超過日数） ── */
         var delayX = colBaseX + statusColW;
         var progVal = effProgress;
-        var tStart = parseDate(task.start);
-        var tEnd = parseDate(task.end);
-        var totalDays = Math.max(1, Math.round((tEnd - tStart) / 86400000));
-        var elapsed = Math.round((today - tStart) / 86400000);
-        var expectedProg = Math.max(0, Math.min(100, elapsed / totalDays * 100));
-        var diffDays = Math.round((progVal - expectedProg) / 100 * totalDays);
         var delayLabel = '-';
         var delayColor = '#94a3b8';
-        if (effStatus === '完了') {
-          delayLabel = '-'; delayColor = '#94a3b8';
-        } else if (effStatus === '未着手' && elapsed <= 0) {
-          delayLabel = '-'; delayColor = '#94a3b8';
-        } else if (diffDays < 0) {
-          delayLabel = diffDays + '日';
-          delayColor = '#ef4444';
-          ctx.fillStyle = '#fef2f2';
-          ctx.fillRect(delayX + 1, ty + 1, delayColW - 2, rowHeight - 2);
-        } else if (diffDays > 0) {
-          delayLabel = '+' + diffDays + '日';
-          delayColor = '#10b981';
-          ctx.fillStyle = '#f0fdf4';
-          ctx.fillRect(delayX + 1, ty + 1, delayColW - 2, rowHeight - 2);
+        if (effStatus === '遅れ') {
+          var tEndD = parseDate(task.end);
+          var overdueDays = tEndD ? Math.round((today - tEndD) / 86400000) : 0;
+          if (overdueDays > 0) {
+            delayLabel = '-' + overdueDays + '日';
+            delayColor = '#ef4444';
+            ctx.fillStyle = '#fef2f2';
+            ctx.fillRect(delayX + 1, ty + 1, delayColW - 2, rowHeight - 2);
+          }
         }
         ctx.fillStyle = delayColor;
         ctx.font = 'bold 9px "游ゴシック", "Yu Gothic", sans-serif';

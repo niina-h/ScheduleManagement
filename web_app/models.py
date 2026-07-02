@@ -1706,6 +1706,26 @@ def get_all_subcategories() -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def get_subcategory_category_id(subcategory_id: int) -> int | None:
+    """中区分IDから、その親（大区分）IDを取得する。
+
+    中区分は必ず1つの大区分に属するため、中区分が決まれば大区分は一意に定まる。
+    タスク保存時に大区分を中区分から補完し、大区分の登録漏れを防ぐために使う。
+
+    Args:
+        subcategory_id: 中区分ID。
+
+    Returns:
+        int | None: 親の大区分ID。該当なしの場合はNone。
+    """
+    db = get_db()
+    row = db.execute(
+        "SELECT category_id FROM task_subcategory WHERE id = ?",
+        (subcategory_id,),
+    ).fetchone()
+    return row["category_id"] if row else None
+
+
 def add_category(name: str) -> bool:
     """大区分を追加する。重複時はFalseを返す。
 
