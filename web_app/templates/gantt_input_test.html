@@ -1,0 +1,904 @@
+{% extends "base.html" %}
+{% block title %}ガントチャート{% endblock %}
+{% block content %}
+<style>
+  :root { --dayw: 30px; --namew: 340px; --rowh: 32px; --headh: 40px; }
+  /* 縦横スクロール可能なコンテナ。縦スクロール時も日付ヘッダー(.g-head)を
+     コンテナ上端に固定表示するため、max-height と overflow-y を持たせる。 */
+  .gantt-scroll { overflow: auto; max-height: calc(100vh - 220px); border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
+  .gantt { position: relative; }
+  .g-bg { position: absolute; top: var(--headh); left: var(--namew); bottom: 0; z-index: 0; }
+  .g-col { position: absolute; top: 0; bottom: 0; width: var(--dayw); }
+  /* 土日・祝日は薄ピンク背景（全行に連続表示） */
+  .g-col.weekend, .g-col.holiday { background: #fdeef2; }
+  /* 当日は薄い青（土日祝の薄ピンクと区別する） */
+  .g-col.today { background: #dbeafe; box-shadow: inset 0 0 0 1px rgba(59,130,246,.45); }
+  .g-dcell.today { background: #dbeafe; }
+  .g-col .line { position: absolute; top: 0; bottom: 0; right: 0; border-right: 1px solid #eef2f7; }
+  .g-head { display: flex; height: var(--headh); position: sticky; top: 0; z-index: 5; background: #eef2ff; }
+  .g-name-head { width: var(--namew); flex: 0 0 var(--namew); font-weight: 700; font-size: .78rem;
+    display: flex; align-items: center; padding: 0 8px; border-right: 1px solid #cbd5e1; position: sticky; left: 0; background: #eef2ff; z-index: 6; }
+  /* タスク名列の幅をドラッグで変更するハンドル（ヘッダー右端） */
+  .col-resizer { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize;
+    z-index: 7; background: transparent; }
+  .col-resizer:hover, .col-resizer.dragging { background: #4338ca33; }
+  .g-timehead { position: relative; }
+  .g-dcell { position: absolute; top: 0; width: var(--dayw); height: var(--headh); text-align: center;
+    font-size: .6rem; line-height: 1.1; color: #475569; padding-top: 3px; }
+  .g-dcell.holiday { background: #fdeef2; }
+  .g-dcell .wd-sat { color: #2563eb; } .g-dcell .wd-sun, .g-dcell .wd-hol { color: #dc2626; } .g-dcell .mon { font-weight: 700; color: #1e293b; }
+  /* 行本体は背景を持たせず（トラックを透過させ土日祝の帯を全行に見せる） */
+  .g-row { display: flex; height: var(--rowh); border-bottom: 1px solid #f1f5f9; position: relative; z-index: 1; }
+  .g-name { width: var(--namew); flex: 0 0 var(--namew); display: flex; align-items: center; gap: 2px;
+    border-right: 1px solid #cbd5e1; font-size: .76rem; position: sticky; left: 0; background: #fff; z-index: 2; overflow: hidden; }
+  .g-row.lv0 .g-name { background: #eef4ff; }
+  .g-row.dragging { opacity: .45; }
+  /* 読取専用行（一般ユーザーが編集できない親など）：操作ボタンを詰めて隠す（親の見た目はマスタと同じ） */
+  .g-row.ro .drag-h, .g-row.ro .ctl { display: none; }
+  .g-row.ro .asgn-btn, .g-row.ro .g-meta { pointer-events: none; opacity: .7; }
+  .g-row.ro .g-track { cursor: default; }
+  /* 折りたたみトグル（子を持つ親に表示） */
+  .g-name .cx { flex: 0 0 auto; width: 14px; text-align: center; cursor: pointer; color: #475569; font-size: .7rem; user-select: none; }
+  .g-name .cx:hover { color: #4338ca; }
+  /* ドラッグ用つまみ（上下移動＝ドラッグ&ドロップ） */
+  .g-name .drag-h { flex: 0 0 auto; width: 16px; text-align: center; cursor: grab; color: #94a3b8; font-size: .8rem; user-select: none; }
+  .g-name .drag-h:hover { color: #4338ca; }
+  /* 親子（インデント）ボタン群 */
+  .g-name .ctl { display: flex; gap: 2px; flex: 0 0 auto; }
+  .g-name .ctl button { border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; min-width: 20px; height: 19px; border-radius: 3px; font-size: .64rem; line-height: 1; cursor: pointer; padding: 0 2px; }
+  .g-name .ctl button:hover { background: #c7d2fe; }
+  .g-name .ctl button:disabled { opacity: .35; cursor: default; }
+  .g-name .del { flex: 0 0 auto; border: 1px solid #fecaca; background: #fef2f2; color: #dc2626; min-width: 18px; height: 19px; border-radius: 3px; font-size: .7rem; line-height: 1; cursor: pointer; padding: 0; }
+  .g-name .del:hover { background: #fecaca; }
+  /* ツリー連結線（親子を視覚化） */
+  .g-name .tree { flex: 0 0 auto; color: #a855f7; font-size: .72rem; width: 12px; text-align: center; }
+  .g-name .nm-txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; }
+  .g-name .nm-txt.parent { font-weight: 700; }
+  /* 旧ガントの大区分バッジ（親子化の手動グルーピングの目安） */
+  .g-name .cat-badge { flex: 0 0 auto; font-size: .6rem; color: #7a4fb0; background: #efe8f7;
+    border-radius: 4px; padding: 0 4px; margin-right: 3px; max-width: 72px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .g-name input.nm { font-size: .76rem; padding: 1px 4px; border: 1px solid #a5b4fc; border-radius: 4px; flex: 1 1 auto; min-width: 0; }
+  /* 担当者選択ボタン（人マーク＋人数、ホバーで氏名） */
+  .asgn-btn { flex: 0 0 auto; border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; border-radius: 4px;
+    font-size: .72rem; line-height: 1; padding: 2px 4px; cursor: pointer; white-space: nowrap; }
+  .asgn-btn.none { color: #94a3b8; border-color: #e2e8f0; background: #f8fafc; }
+  .asgn-btn .cnt { font-size: .62rem; font-weight: 700; }
+  /* 状態＋進捗率メタ（クリックで編集） */
+  .g-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 3px; font-size: .6rem; min-width: 52px; justify-content: flex-end; cursor: pointer; padding: 0 2px; border-radius: 3px; }
+  .g-meta:hover { background: #eef2ff; }
+  .g-meta .st { font-weight: 700; }
+  .g-meta .pct { color: #64748b; }
+  .g-track { position: relative; flex: 0 0 auto; cursor: crosshair; }
+  /* バー：項目名は入れず、計画（枠）に対する進捗（塗り）で表現 */
+  .g-bar { position: absolute; top: 5px; height: calc(var(--rowh) - 10px); border-radius: 5px; overflow: hidden;
+    border: 1px solid; cursor: grab; box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+  .g-bar.plan { background: linear-gradient(180deg,#bfdbfe,#60a5fa); border-color: #3b82f6; }
+  .g-bar.done { background: linear-gradient(180deg,#6ee7b7,#10b981); border-color: #059669; }
+  .g-bar.stop { background: linear-gradient(180deg,#e5e7eb,#d1d5db); border-color: #9ca3af; }
+  .g-bar.unsaved { outline: 2px solid #f59e0b; }
+  .g-bar .g-prog { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1;
+    background: linear-gradient(180deg,#6ee7b7,#10b981); }
+  .g-bar .g-prog.late { background: linear-gradient(180deg,#fca5a5,#ef4444); }
+  /* 進捗（実績）バーの右端ハンドル：ドラッグで進捗％を伸縮 */
+  .g-bar .g-prog-h { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; z-index: 4; cursor: ew-resize; }
+  .g-bar .g-pct { position: absolute; left: 0; right: 0; z-index: 1; text-align: center;
+    font-size: .62rem; line-height: calc(var(--rowh) - 12px); color: #fff; font-weight: 700;
+    text-shadow: 0 1px 1px rgba(0,0,0,.5); pointer-events: none; }
+  .g-bar .h { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 3; }
+  .g-bar .h.l { left: 0; } .g-bar .h.r { right: 0; }
+  .g-drawtip { position: absolute; top: 5px; height: calc(var(--rowh) - 10px); border-radius: 5px; background: rgba(16,185,129,.35); border: 1px dashed #059669; pointer-events: none; }
+  /* 行ドラッグ時の挿入位置インジケータ */
+  #dropInd { position: absolute; height: 0; border-top: 2px solid #4338ca; z-index: 50; pointer-events: none; display: none; }
+  #dropInd::before { content: ''; position: absolute; left: -4px; top: -4px; width: 6px; height: 6px; border-radius: 50%; background: #4338ca; }
+  /* 担当者選択ポップオーバー */
+  #asgnPop { position: absolute; z-index: 3000; display: none; background: #fff; border: 1px solid #cbd5e1;
+    border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.18); padding: 6px; max-height: 260px; overflow-y: auto; width: 210px; }
+  #asgnPop .hd { font-size: .68rem; color: #64748b; padding: 2px 4px 4px; border-bottom: 1px solid #eef2f7; margin-bottom: 4px; }
+  #asgnPop label { display: block; font-size: .78rem; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
+  #asgnPop label:hover { background: #f1f5f9; }
+  #asgnPop input { margin-right: 6px; }
+  /* タスク詳細・編集モーダル */
+  .pl-modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 4000; display: none; align-items: center; justify-content: center; }
+  .pl-modal-box { background: #fff; border-radius: 8px; width: 360px; max-width: 92vw; box-shadow: 0 10px 40px rgba(0,0,0,.3); overflow: hidden; }
+  .pl-modal-hd { background: #eef2ff; padding: 8px 12px; font-weight: 700; font-size: .9rem; }
+  .pl-modal-bd { padding: 12px; }
+  .pl-modal-bd .fld { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: .8rem; }
+  .pl-modal-bd .fld label { flex: 0 0 84px; color: #475569; }
+  .pl-modal-bd input, .pl-modal-bd select { flex: 1 1 auto; min-width: 0; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: .8rem; }
+  .pl-modal-bd input:disabled { background: #f1f5f9; color: #94a3b8; }
+  .pl-modal-bd .dt-name { font-weight: 700; }
+  .pl-modal-bd .note { font-size: .68rem; color: #94a3b8; }
+  .pl-modal-ft { padding: 8px 12px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #eef2f7; }
+</style>
+
+<div class="alert alert-warning py-2 d-flex align-items-center gap-2">
+  <span class="badge bg-danger">TEST</span>
+  <span class="small mb-0">ガント入力（試作・ツリー型）。現行の「タスク管理／ガントチャート」には影響しません。保存すると<strong>タスク管理のタスク</strong>として登録されます。</span>
+</div>
+
+<details class="mb-2">
+  <summary class="small text-primary" style="cursor:pointer">▶ 使い方</summary>
+  <ol class="small text-muted mb-0 mt-1">
+    <li>一番下の空欄に<b>タスク名を入力</b>して <b>Enter</b>（その行の直後に新しい行が挿入されます）。</li>
+    <li>行左の <b>⠿</b> を<b>上下にドラッグ</b>すると順番を入れ替えできます（子タスクも一緒に移動）。</li>
+    <li><b>＞</b> で<b>1つ上の行の子タスク</b>に、<b>＜</b> で<b>親レベルに戻す</b>（字下げ／字上げ／最大2世代）。<b>×</b> で行を削除。</li>
+    <li><b>👤</b> ボタン：<b>親＝メンバー（関係ユーザー・複数）</b>、<b>子＝担当者（最大2名）</b>を設定。ホバーで氏名を表示。</li>
+    <li><b>親タスクの作成・編集は管理職／マスタのみ</b>。一般ユーザーは<b>子タスクの追加</b>のみ可能です。</li>
+    <li>表示範囲：マスタ＝全件／管理職＝自分がメンバーの親／一般＝自分が担当の子。</li>
+    <li>右のタイムラインを<b>左→右にドラッグ</b>してバーを描く（期間）。<b>中央で移動 / 端で伸縮</b>。</li>
+    <li>バーは項目名を出さず、<b>計画（枠）に対する進捗（塗り）</b>と<b>進捗率・状態</b>で表示します（現行ガントと同じ）。</li>
+    <li><b>💾保存</b>で反映。未保存の変更があるまま画面を離れると警告が出ます。</li>
+  </ol>
+</details>
+
+<div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+  <h5 class="mb-0">🌳 ガントチャート</h5>
+  {% if show_selector %}
+  <select id="userSelect" class="form-select form-select-sm" style="width:auto;" title="表示する担当者">
+    {% for p in people %}<option value="{{ p.id }}" {% if p.id == selected_user_id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+  </select>
+  {% else %}<span class="badge bg-light text-dark border">{{ view_name }}</span>{% endif %}
+  <div class="btn-group btn-group-sm ms-1">
+    <a class="btn btn-outline-secondary" href="{{ url_for('planner_bp.planner', start=prev_start, user_id=selected_user_id) }}">◀ 前週</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('planner_bp.planner', start=this_start, user_id=selected_user_id) }}">今日基準</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('planner_bp.planner', start=next_start, user_id=selected_user_id) }}">次週 ▶</a>
+  </div>
+  {# 親タスクの一括開閉。折りたたみ状態は次回も引き継ぐ（localStorage）。 #}
+  <div class="btn-group btn-group-sm ms-1">
+    <button type="button" id="expandAllBtn" class="btn btn-outline-primary" title="すべての親を開く">▾ 全部開く</button>
+    <button type="button" id="collapseAllBtn" class="btn btn-outline-primary" title="すべての親を閉じる">▸ 全部閉じる</button>
+  </div>
+  <span class="ms-auto"></span>
+  <a class="btn btn-success btn-sm"
+     href="{{ url_for('planner_bp.export', start=range_start, user_id=(selected_user_id if selected_user_id else None)) }}">📥 Excel出力</a>
+  <a class="btn btn-danger btn-sm"
+     href="{{ url_for('planner_bp.export_pdf', start=range_start, user_id=(selected_user_id if selected_user_id else None)) }}">📄 PDF出力</a>
+  <button id="saveBtn" class="btn btn-primary btn-sm">💾 保存</button>
+  <span id="saveMsg" class="small"></span>
+</div>
+
+<div class="gantt-scroll">
+  <div class="gantt" id="gantt">
+    <div class="g-bg" id="gbg"></div>
+    <div class="g-head">
+      <div class="g-name-head">タスク（親子ツリー） / 担当<span class="col-resizer" id="colResizer" title="ドラッグで列幅を変更"></span></div>
+      <div class="g-timehead" id="gtimehead"></div>
+    </div>
+    <div id="rows"></div>
+  </div>
+</div>
+
+<div id="asgnPop"><div class="hd">担当者（最大2名）</div><div class="body"></div></div>
+<div id="detailModal" class="pl-modal">
+  <div class="pl-modal-box">
+    <div class="pl-modal-hd">タスクの詳細・編集</div>
+    <div class="pl-modal-bd">
+      <div class="fld"><label>タスク名</label><div class="dt-name"></div></div>
+      <div class="fld"><label>担当/メンバー</label><div class="dt-people"></div></div>
+      <div class="fld"><label>開始日</label><input type="date" class="dt-start"></div>
+      <div class="fld"><label>終了日</label><input type="date" class="dt-end"></div>
+      <div class="fld"><label>状態</label>
+        <select class="dt-status">
+          <option value="未着手">未着手</option><option value="着手">着手</option>
+          <option value="順調">順調</option><option value="遅れ">遅れ</option>
+          <option value="完了">完了</option><option value="停止">停止</option>
+        </select>
+      </div>
+      <div class="fld dt-delay-row"><label>遅延</label><input type="number" class="dt-delay" min="0" step="1"><span>日</span></div>
+      <div class="fld"><label>進捗</label><input type="number" class="dt-prog" min="0" max="100" step="1"><span>%</span></div>
+      <div class="note dt-note"></div>
+    </div>
+    <div class="pl-modal-ft">
+      <button type="button" class="btn btn-sm btn-secondary dt-cancel">閉じる</button>
+      <button type="button" class="btn btn-sm btn-primary dt-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var CSRF = {{ csrf_token | tojson }};
+  var SELECTED_USER_ID = {{ selected_user_id | tojson }};   // 0=全員
+  var DEFAULT_ASSIGNEE = {{ default_assignee | tojson }};    // 新規子タスクの既定担当者
+  var LOGIN_USER = {{ login_user | tojson }};                // 新規親タスクの既定メンバー
+  var CAN_PARENT = {{ can_parent | tojson }};                // 親タスク作成・編集可（管理職/マスタ）
+  var MIN_LEVEL = CAN_PARENT ? 0 : 1;                        // 一般は最上位（親）不可
+  var RANGE_START = {{ range_start | tojson }};
+  var DAYS = {{ days | length }};
+  var DAY_META = {{ days | tojson }};
+  var TASKS = {{ tasks | tojson }};
+  var ASSIGN_USERS = {{ assign_users | tojson }};
+  var DAYW = 30, INDENT = 18;
+
+  var STATUS_COLORS = {
+    '未着手': '#9ca3af', '着手': '#60a5fa', '順調': '#34d399',
+    '遅れ': '#f87171', '完了': '#10b981', '停止': '#9ca3af'
+  };
+
+  var gantt = document.getElementById('gantt'), timehead = document.getElementById('gtimehead');
+  var gbg = document.getElementById('gbg'), rowsEl = document.getElementById('rows');
+  var timelineW = DAYS * DAYW;
+  gantt.style.width = 'calc(var(--namew) + ' + timelineW + 'px)';
+  timehead.style.width = timelineW + 'px'; gbg.style.width = timelineW + 'px';
+  var tmpSeq = 0;
+  var initializing = true;          // 初期描画中は変更フラグを立てない
+  var pageDirty = false;
+  var deletedIds = [];              // 削除された既存タスクID（保存時に送信）
+  function markDirty() { if (!initializing) pageDirty = true; }
+
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+
+  function toDate(iso) { var p = iso.split('-'); return new Date(+p[0], +p[1]-1, +p[2]); }
+  function todayIso() { return today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0'); }
+  function addDaysIso(iso, n) { var d = toDate(iso); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+  function dayIndexOf(iso) { return Math.round((toDate(iso) - toDate(RANGE_START)) / 86400000); }
+  function clampIdx(i) { return Math.max(0, Math.min(DAYS-1, i)); }
+  function inRange(iso) { var i = dayIndexOf(iso); return i >= 0 && i < DAYS; }
+
+  var STATUSES = ['未着手', '着手', '順調', '遅れ', '完了', '停止'];
+  /* 順調＝経過日数からの自動進捗率（%） */
+  function autoProgressByDate(start, end) {
+    if (!start || !end) return 0;
+    var s = toDate(start), e = toDate(end);
+    var total = Math.max(1, Math.round((e - s) / 86400000));
+    var elapsed = Math.round((today - s) / 86400000);
+    if (elapsed <= 0) return 0;
+    return Math.max(0, Math.min(99, Math.round(elapsed / total * 100)));
+  }
+  /* 行の実効状態・進捗率を算出（状態は手動選択を尊重）。
+     - 未着手=0 / 完了=100 / 停止=入力値保持
+     - 順調＝経過日数から自動
+     - 遅れ＝(経過日数−遅延日数)/期間 で自動計算（遅延日数を入力）
+     - 着手＝入力値 */
+  function effOf(row) {
+    var st = row.dataset.statusRaw || '未着手';
+    var p = parseInt(row.dataset.progressRaw || '0') || 0;
+    var delay = parseInt(row.dataset.delayRaw || '0') || 0;
+    var start = row.dataset.start, end = row.dataset.end, prog;
+    if (st === '完了') prog = 100;
+    else if (st === '未着手') prog = 0;
+    else if (!start || !end) prog = p;
+    else if (st === '順調') prog = autoProgressByDate(start, end);
+    else if (st === '遅れ') {
+      var s = toDate(start), e = toDate(end);
+      var total = Math.max(1, Math.round((e - s) / 86400000));
+      var elapsed = Math.round((today - s) / 86400000);
+      prog = Math.max(0, Math.min(99, Math.round((elapsed - delay) / total * 100)));
+    } else prog = p;  // 着手・停止＝入力値
+    return { status: st, progress: prog };
+  }
+
+  // 背景・ヘッダー
+  DAY_META.forEach(function (dm) {
+    var col = document.createElement('div');
+    col.className = 'g-col' + (dm.weekend ? ' weekend' : '') + (dm.holiday ? ' holiday' : '') + (dm.is_today ? ' today' : '');
+    col.style.left = (dm.index * DAYW) + 'px'; col.innerHTML = '<span class="line"></span>'; gbg.appendChild(col);
+    var cell = document.createElement('div'); cell.className = 'g-dcell' + (dm.holiday ? ' holiday' : '') + (dm.is_today ? ' today' : ''); cell.style.left = (dm.index * DAYW) + 'px';
+    var wc = dm.holiday ? 'wd-hol' : (dm.wd === '土' ? 'wd-sat' : (dm.wd === '日' ? 'wd-sun' : ''));
+    cell.innerHTML = ((dm.is_month_start || dm.index === 0) ? '<div class="mon">' + dm.m + '月</div>' : '<div>&nbsp;</div>') + '<div>' + dm.d + '</div><div class="' + wc + '">' + dm.wd + '</div>';
+    timehead.appendChild(cell);
+  });
+
+  function prevRowOf(row) {
+    var p = row.previousElementSibling;
+    while (p && !p.classList.contains('g-row')) p = p.previousElementSibling;
+    return p;
+  }
+  var MAX_LEVEL = 2;   // 子は2世代まで（親=0／子=1／孫=2）
+  /* レベル（インデント）を見た目に反映するだけ（変更フラグは立てない） */
+  function applyLevel(row, lv) {
+    var prev = prevRowOf(row);
+    var maxLv = Math.min(prev ? (parseInt(prev.dataset.level) + 1) : MIN_LEVEL, MAX_LEVEL);
+    maxLv = Math.max(maxLv, MIN_LEVEL);
+    lv = Math.max(MIN_LEVEL, Math.min(lv, maxLv));
+    row.dataset.level = lv;
+    row.classList.toggle('lv0', lv === 0);
+    row.querySelector('.g-name').style.paddingLeft = (4 + lv * INDENT) + 'px';
+    var txt = row.querySelector('.nm-txt'); if (txt) txt.classList.toggle('parent', lv === 0);
+    var tree = row.querySelector('.tree'); if (tree) tree.textContent = lv > 0 ? '└' : '';
+    var outB = row.querySelector('.tw.out'), inB = row.querySelector('.tw.in');
+    if (outB) outB.disabled = (lv <= MIN_LEVEL);
+    if (inB) inB.disabled = (lv >= maxLv);
+    refreshPeopleBtn(row);  // 親↔子でメンバー/担当の表示を切替
+  }
+  /* ユーザー操作によるレベル変更（変更フラグを立てる） */
+  function setLevel(row, lv) {
+    applyLevel(row, lv);
+    if (row.dataset.id) row.dataset.dirty = '1';
+    markDirty();
+    var bar = row.querySelector('.g-bar'); if (bar) bar.classList.toggle('unsaved', true);
+    recomputeTree();
+  }
+
+  /* ── 行ブロック（自身＋子孫）を取得 ── */
+  function rowBlock(row) {
+    var lv = +row.dataset.level, block = [row], n = row.nextElementSibling;
+    while (n && n.classList.contains('g-row') && +n.dataset.level > lv) { block.push(n); n = n.nextElementSibling; }
+    return block;
+  }
+
+  /* ── 折りたたみ状態の永続化（localStorage・タスクIDごと） ──
+     前回の開閉状態を画面再読込後も引き継ぐ。キーは既存タスクの id を使う。 */
+  var COLLAPSE_KEY = 'gantt_collapsed_ids';
+  function loadCollapsedSet() {
+    try {
+      var raw = localStorage.getItem(COLLAPSE_KEY);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch (e) { return new Set(); }
+  }
+  function saveCollapsedState() {
+    // 現在「折りたたみ中(collapsed=1)」の既存タスクIDを保存する。
+    var ids = [];
+    rowsEl.querySelectorAll('.g-row').forEach(function (r) {
+      if (r.dataset.id && r.dataset.collapsed === '1') ids.push(+r.dataset.id);
+    });
+    try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(ids)); } catch (e) {}
+  }
+
+  /* すべての親を開く／閉じる（子を持つ行の collapsed を一括設定）。 */
+  function setAllCollapsed(collapsed) {
+    var rows = Array.prototype.slice.call(rowsEl.querySelectorAll('.g-row'));
+    for (var i = 0; i < rows.length; i++) {
+      var lv = +rows[i].dataset.level, nxt = rows[i + 1];
+      var hasChildren = nxt && (+nxt.dataset.level > lv);
+      if (hasChildren) rows[i].dataset.collapsed = collapsed ? '1' : '0';
+    }
+    recomputeTree();
+    saveCollapsedState();
+  }
+
+  /* ── 折りたたみトグルと表示/非表示を再計算 ── */
+  function recomputeTree() {
+    var rows = Array.prototype.slice.call(rowsEl.querySelectorAll('.g-row'));
+    var stack = [];  // 折りたたみ中の祖先レベル
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i], lv = +r.dataset.level;
+      var nxt = rows[i + 1];
+      var hasChildren = nxt && (+nxt.dataset.level > lv);
+      var cx = r.querySelector('.cx');
+      if (cx) {
+        cx.textContent = hasChildren ? (r.dataset.collapsed === '1' ? '▸' : '▾') : '';
+        cx.style.cursor = hasChildren ? 'pointer' : 'default';
+      }
+      while (stack.length && stack[stack.length - 1] >= lv) stack.pop();
+      r.style.display = stack.length ? 'none' : '';
+      if (hasChildren && r.dataset.collapsed === '1') stack.push(lv);
+    }
+  }
+  /* ── 上下移動：ドラッグ&ドロップ（子タスクも一緒に移動） ── */
+  rowsEl.style.position = 'relative';
+  var dropInd = null;
+  function ensureInd() {
+    if (!dropInd) { dropInd = document.createElement('div'); dropInd.id = 'dropInd'; rowsEl.appendChild(dropInd); }
+    return dropInd;
+  }
+  var drag = null;
+  function candidateRows() {
+    return Array.prototype.slice.call(rowsEl.querySelectorAll('.g-row')).filter(function (r) { return drag.block.indexOf(r) < 0; });
+  }
+  function startRowDrag(rootRow, e) {
+    var block = rowBlock(rootRow);
+    drag = { block: block, root: rootRow, ref: null,
+             origRef: block[block.length - 1].nextElementSibling };
+    block.forEach(function (el) { el.classList.add('dragging'); });
+    document.body.style.cursor = 'grabbing';
+    document.addEventListener('mousemove', onDragMove);
+    document.addEventListener('mouseup', onDragUp);
+    onDragMove(e);
+  }
+  function onDragMove(e) {
+    var cands = candidateRows(), ref = null;
+    for (var i = 0; i < cands.length; i++) {
+      var rc = cands[i].getBoundingClientRect();
+      if (e.clientY < rc.top + rc.height / 2) { ref = cands[i]; break; }
+    }
+    drag.ref = ref;
+    var idx = ref ? cands.indexOf(ref) : cands.length;
+    var prevCand = idx > 0 ? cands[idx - 1] : null;
+    var maxLv = prevCand ? (+prevCand.dataset.level + 1) : 0;
+    var lv = Math.min(+drag.root.dataset.level, maxLv);
+    var ind = ensureInd();
+    ind.style.top = (ref ? ref.offsetTop : (drag.block[drag.block.length - 1].offsetTop + drag.block[drag.block.length - 1].offsetHeight)) + 'px';
+    ind.style.left = (6 + lv * INDENT) + 'px';
+    ind.style.width = '260px';
+    ind.style.display = 'block';
+  }
+  function onDragUp() {
+    document.removeEventListener('mousemove', onDragMove);
+    document.removeEventListener('mouseup', onDragUp);
+    document.body.style.cursor = '';
+    if (dropInd) dropInd.style.display = 'none';
+    drag.block.forEach(function (el) { el.classList.remove('dragging'); });
+    var changed = drag.ref !== drag.origRef;
+    if (changed) {
+      drag.block.forEach(function (el) { rowsEl.insertBefore(el, drag.ref); });
+      if (dropInd) rowsEl.appendChild(dropInd);  // インジケータは常に末尾へ
+      drag.block.forEach(function (el) {
+        applyLevel(el, +el.dataset.level);
+        if (el.dataset.id) el.dataset.dirty = '1';
+      });
+      markDirty();
+      recomputeTree();
+    }
+    drag = null;
+  }
+
+  /* ── 人物マーク／ボタン（親＝メンバー、子＝担当者） ── */
+  function refreshPeopleBtn(row) {
+    var ab = row.querySelector('.asgn-btn'); if (!ab) return;
+    var a = row._people || [];
+    var isParent = +row.dataset.level === 0;
+    var label = isParent ? 'メンバー' : '担当';
+    ab.classList.toggle('none', a.length === 0);
+    ab.innerHTML = '👤<span class="cnt">' + a.length + '</span>';
+    ab.title = a.length ? (label + ': ' + a.map(function (x) { return x.name; }).join('、'))
+                        : (isParent ? 'メンバーを選択' : '担当者を選択');
+  }
+
+  function makeRow(opts) {
+    var row = document.createElement('div');
+    row.className = 'g-row';
+    row.dataset.tmp = 'c' + (++tmpSeq);
+    row.dataset.level = opts.level || 0;
+    if (opts.id) row.dataset.id = opts.id;
+    if (opts.isNew) row.dataset.new = '1';
+    row.dataset.statusRaw = opts.isNew ? '未着手' : (opts.status || '未着手');
+    row.dataset.progressRaw = opts.isNew ? '0' : String(opts.progress || 0);
+    row.dataset.delayRaw = opts.isNew ? '0' : String(opts.delay || 0);
+    var editable = opts.editable !== false;   // 既存の読取専用行（一般ユーザーの親など）
+    row.dataset.editable = editable ? '1' : '0';
+    if (!editable) row.classList.add('ro');
+
+    var name = document.createElement('div'); name.className = 'g-name';
+    name.innerHTML =
+      '<span class="drag-h" title="ドラッグで上下に移動">⠿</span>' +
+      '<span class="ctl">' +
+        '<button class="tw out" title="親レベルに戻す（字上げ）">＜</button>' +
+        '<button class="tw in" title="1つ上の行の子タスクにする（字下げ）">＞</button>' +
+        '<button class="del" title="この行を削除">×</button>' +
+      '</span>' +
+      '<span class="tree"></span>' +
+      '<span class="cx" title="子タスクの開閉"></span>';
+
+    if (opts.isNew) {
+      var inp = document.createElement('input'); inp.type = 'text'; inp.className = 'nm'; inp.placeholder = 'タスク名を入力'; inp.value = opts.name || '';
+      name.appendChild(inp);
+      // 新規：親なら既定メンバー＝操作者、子なら既定担当者。
+      var def = (opts.level || 0) === 0
+        ? (LOGIN_USER && LOGIN_USER.id ? [{ id: LOGIN_USER.id, name: LOGIN_USER.name }] : [])
+        : (DEFAULT_ASSIGNEE && DEFAULT_ASSIGNEE.id ? [{ id: DEFAULT_ASSIGNEE.id, name: DEFAULT_ASSIGNEE.name }] : []);
+      row._people = opts.people ? opts.people.slice() : def;
+    } else {
+      // 旧ガントの大区分を補助バッジ表示（親子化の手動グルーピングの目安）。
+      if (opts.category) {
+        var catb = document.createElement('span');
+        catb.className = 'cat-badge';
+        catb.textContent = opts.category;
+        catb.title = '大区分: ' + opts.category;
+        name.appendChild(catb);
+      }
+      var sp = document.createElement('span'); sp.className = 'nm-txt'; sp.textContent = opts.name || ''; sp.title = opts.name || '';
+      name.appendChild(sp);
+      row._people = opts.people ? opts.people.slice() : [];
+    }
+    var ab = document.createElement('button'); ab.type = 'button'; ab.className = 'asgn-btn'; name.appendChild(ab);
+    var meta = document.createElement('span'); meta.className = 'g-meta'; meta.title = 'クリックで状態・進捗を編集';
+    meta.innerHTML = '<span class="st"></span><span class="pct"></span>'; name.appendChild(meta);
+    if (editable) meta.addEventListener('click', function (e) { e.stopPropagation(); openDetail(row); });
+    row.appendChild(name);
+
+    var track = document.createElement('div'); track.className = 'g-track'; track.style.width = timelineW + 'px'; row.appendChild(track);
+
+    if (editable) {
+      name.querySelector('.tw.in').addEventListener('click', function () { setLevel(row, +row.dataset.level + 1); });
+      name.querySelector('.tw.out').addEventListener('click', function () { setLevel(row, +row.dataset.level - 1); });
+      name.querySelector('.del').addEventListener('click', function () { deleteRow(row); });
+      name.querySelector('.drag-h').addEventListener('mousedown', function (e) { e.preventDefault(); startRowDrag(row, e); });
+      ab.addEventListener('click', function (e) { e.stopPropagation(); openPeoplePicker(row, ab); });
+    }
+    // 折りたたみは読取専用行（親）でも操作可能。状態は localStorage に保存して次回引き継ぐ。
+    name.querySelector('.cx').addEventListener('click', function () {
+      row.dataset.collapsed = row.dataset.collapsed === '1' ? '0' : '1';
+      recomputeTree();
+      saveCollapsedState();
+    });
+
+    if (opts.start && opts.end && (inRange(opts.start) || inRange(opts.end))) {
+      addBar(track, row, clampIdx(dayIndexOf(opts.start)), clampIdx(dayIndexOf(opts.end)));
+    } else if (opts.start && opts.end) {
+      row.dataset.start = opts.start; row.dataset.end = opts.end;  // 範囲外：バー非表示だが日付は保持
+    }
+    if (editable) setupDraw(track, row);
+    rowsEl.appendChild(row);
+    applyLevel(row, +row.dataset.level);
+    refreshPeopleBtn(row);
+    updateMeta(row);
+    return row;
+  }
+
+  /* バーの見た目（計画枠＋進捗塗り＋進捗率）を状態から算出して反映 */
+  function styleBar(bar, row) {
+    var eff = effOf(row), st = eff.status, prog = bar.querySelector('.g-prog'), pct = bar.querySelector('.g-pct');
+    bar.classList.remove('plan', 'done', 'stop');
+    if (st === '完了') { bar.classList.add('done'); prog.style.width = '0'; }
+    else if (st === '停止') { bar.classList.add('stop'); prog.style.width = '0'; }
+    else {
+      bar.classList.add('plan');
+      prog.style.width = Math.min(eff.progress, 100) + '%';
+      prog.classList.toggle('late', st === '遅れ');
+    }
+    pct.textContent = eff.progress + '%';
+    bar.classList.toggle('unsaved', row.dataset.new === '1' || row.dataset.dirty === '1');
+    updateMeta(row);
+  }
+
+  /* 名前列の状態・進捗率メタ表示 */
+  function updateMeta(row) {
+    var meta = row.querySelector('.g-meta'); if (!meta) return;
+    var eff = effOf(row);
+    var stEl = meta.querySelector('.st'), pctEl = meta.querySelector('.pct');
+    stEl.textContent = eff.status || ''; stEl.style.color = STATUS_COLORS[eff.status] || '#64748b';
+    pctEl.textContent = (row.dataset.start && row.dataset.end) ? (' ' + eff.progress + '%') : '';
+  }
+
+  function addBar(track, row, si, ei) {
+    var old = track.querySelector('.g-bar'); if (old) old.remove();
+    if (ei < si) { var t = si; si = ei; ei = t; }
+    var bar = document.createElement('div');
+    bar.className = 'g-bar plan';
+    bar.style.left = (si*DAYW)+'px'; bar.style.width = ((ei-si+1)*DAYW)+'px';
+    bar.innerHTML = '<span class="g-prog"><span class="g-prog-h" title="ドラッグで進捗を調整"></span></span><span class="g-pct"></span><span class="h l"></span><span class="h r"></span>';
+    row.dataset.start = addDaysIso(RANGE_START, si); row.dataset.end = addDaysIso(RANGE_START, ei);
+    track.appendChild(bar); setupBarDrag(bar, track, row); setupProgDrag(bar, row); styleBar(bar, row); return bar;
+  }
+
+  /* 進捗（実績）バーの右端をドラッグして進捗％を直接調整する。
+     順調/遅れ等の自動計算中にドラッグした場合は、手動入力状態の「着手」に切り替える。 */
+  function setupProgDrag(bar, row) {
+    if (row.dataset.editable === '0') return;   // 読取専用行はドラッグ不可
+    var handle = bar.querySelector('.g-prog-h');
+    handle.addEventListener('mousedown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      var rect = bar.getBoundingClientRect();
+      function mv(ev) {
+        var pct = Math.max(0, Math.min(100, Math.round((ev.clientX - rect.left) / rect.width * 100)));
+        if (row.dataset.statusRaw !== '停止') row.dataset.statusRaw = '着手';  // 手動進捗として扱う
+        row.dataset.progressRaw = String(pct);
+        styleBar(bar, row);
+      }
+      function up() {
+        document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
+        if (row.dataset.id) row.dataset.dirty = '1';
+        markDirty();
+      }
+      document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+    });
+  }
+
+  function setupDraw(track, row) {
+    track.addEventListener('mousedown', function (e) {
+      if (e.target.closest('.g-bar')) return;
+      if (track.querySelector('.g-bar')) return;
+      e.preventDefault();
+      var rect = track.getBoundingClientRect();
+      var s0 = clampIdx(Math.floor((e.clientX - rect.left)/DAYW));
+      var tip = document.createElement('div'); tip.className = 'g-drawtip'; track.appendChild(tip);
+      function mv(ev){ var c=clampIdx(Math.floor((ev.clientX-rect.left)/DAYW)); var a=Math.min(s0,c),b=Math.max(s0,c); tip.style.left=(a*DAYW)+'px'; tip.style.width=((b-a+1)*DAYW)+'px'; }
+      function up(ev){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); var c=clampIdx(Math.floor((ev.clientX-rect.left)/DAYW)); tip.remove();
+        var bar=addBar(track,row,Math.min(s0,c),Math.max(s0,c));
+        markDirty();
+        if(row.dataset.id) { row.dataset.dirty='1'; } styleBar(bar, row); }
+      document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+    });
+  }
+
+  function setupBarDrag(bar, track, row) {
+    if (row.dataset.editable === '0') return;   // 読取専用行はバー操作不可
+    bar.addEventListener('mousedown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      var rect = track.getBoundingClientRect(), mode='move';
+      if (e.target.classList.contains('h')&&e.target.classList.contains('l')) mode='l';
+      else if (e.target.classList.contains('h')&&e.target.classList.contains('r')) mode='r';
+      var si0=clampIdx(dayIndexOf(row.dataset.start)), ei0=clampIdx(dayIndexOf(row.dataset.end));
+      var grab=Math.floor((e.clientX-rect.left)/DAYW);
+      function mv(ev){ var c=clampIdx(Math.floor((ev.clientX-rect.left)/DAYW)); var d=c-grab, si=si0, ei=ei0;
+        if(mode==='move'){ si=clampIdx(si0+d); ei=clampIdx(ei0+d); if(ei-si!==ei0-si0) return; }
+        else if(mode==='l'){ si=Math.min(c,ei0); } else if(mode==='r'){ ei=Math.max(c,si0); }
+        bar.style.left=(si*DAYW)+'px'; bar.style.width=((ei-si+1)*DAYW)+'px';
+        row.dataset.start=addDaysIso(RANGE_START,si); row.dataset.end=addDaysIso(RANGE_START,ei);
+        styleBar(bar, row); }
+      function up(){ document.removeEventListener('mousemove',mv); document.removeEventListener('mouseup',up); markDirty(); if(row.dataset.id){ row.dataset.dirty='1'; } styleBar(bar, row); }
+      document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);
+    });
+  }
+
+  /* ポップオーバーを画面内に収まる位置へ配置（下に入らなければ上に開く） */
+  function placePopover(popEl, r) {
+    popEl.style.display = 'block';
+    var h = popEl.offsetHeight, w = popEl.offsetWidth;
+    var top = r.bottom + 4;
+    if (r.bottom + h + 4 > window.innerHeight && r.top - h - 4 > 0) top = r.top - h - 4;
+    var left = r.left;
+    if (left + w + 8 > window.innerWidth) left = window.innerWidth - w - 8;
+    popEl.style.left = (window.scrollX + Math.max(4, left)) + 'px';
+    popEl.style.top = (window.scrollY + top) + 'px';
+  }
+
+  /* ── 人物選択ポップオーバー（親＝メンバー無制限／子＝担当最大2名・追加削除） ── */
+  var pop = document.getElementById('asgnPop');
+  var popBody = pop.querySelector('.body');
+  var popHd = pop.querySelector('.hd');
+  function openPeoplePicker(row, btn) {
+    var isParent = +row.dataset.level === 0;
+    var max = isParent ? Infinity : 2;
+    popHd.textContent = isParent ? 'メンバー（関係ユーザー）' : '担当者（最大2名）';
+    var sel = (row._people || []).map(function (x) { return x.id; });
+    popBody.innerHTML = '';
+    ASSIGN_USERS.forEach(function (u) {
+      var lbl = document.createElement('label');
+      var ck = document.createElement('input'); ck.type = 'checkbox'; ck.value = u.id;
+      ck.checked = sel.indexOf(u.id) >= 0;
+      ck.addEventListener('change', function () {
+        var chosen = Array.prototype.slice.call(popBody.querySelectorAll('input:checked'));
+        if (chosen.length > max) { ck.checked = false; return; }
+        row._people = chosen.map(function (c) {
+          var uu = ASSIGN_USERS.filter(function (x) { return String(x.id) === c.value; })[0];
+          return { id: uu.id, name: uu.name };
+        });
+        refreshPeopleBtn(row);
+        if (row.dataset.id) row.dataset.dirty = '1';
+        markDirty();
+      });
+      lbl.appendChild(ck); lbl.appendChild(document.createTextNode(u.name));
+      popBody.appendChild(lbl);
+    });
+    placePopover(pop, btn.getBoundingClientRect());
+  }
+  document.addEventListener('mousedown', function (e) {
+    // ボタン内の子要素（👤や件数span）クリックでも閉じないよう closest で判定する。
+    if (pop.style.display === 'block' && !pop.contains(e.target) && !(e.target.closest && e.target.closest('.asgn-btn'))) {
+      pop.style.display = 'none';
+    }
+  });
+
+  // 入力：名前変更で dirty、Enterで直下に行を挿入、Tabでインデント
+  rowsEl.addEventListener('input', function (e) {
+    if (e.target.classList.contains('nm')) markDirty();
+  });
+  rowsEl.addEventListener('keydown', function (e) {
+    if (!e.target.classList.contains('nm')) return;
+    var row = e.target.closest('.g-row');
+    if (e.key === 'Tab') { e.preventDefault(); setLevel(row, +row.dataset.level + (e.shiftKey ? -1 : 1)); }
+    else if (e.key === 'Enter') { e.preventDefault(); insertAfter(row); }
+  });
+
+  /* 行（＋子孫）を削除する。既存タスクは保存時にDB削除、新規はDOM除去のみ。 */
+  function deleteRow(row) {
+    if (row.dataset.editable === '0') return;   // 読取専用行は削除不可
+    var block = rowBlock(row);
+    var hasContent = block.some(function (el) {
+      var i = el.querySelector('input.nm');
+      return el.dataset.id || el.dataset.start || (i && i.value.trim());
+    });
+    if (hasContent) {
+      var msg = block.length > 1 ? 'このタスクと子タスクを削除しますか？' : 'このタスクを削除しますか？';
+      if (!confirm(msg)) return;
+    }
+    block.forEach(function (el) {
+      if (el.dataset.id) deletedIds.push(+el.dataset.id);
+      el.remove();
+    });
+    if (hasContent) markDirty();
+    ensureTrailing(false);
+    recomputeTree();
+  }
+
+  /* 指定行の直後（子孫の後）に新規行を挿入する */
+  function insertAfter(refRow) {
+    var lv = +refRow.dataset.level;
+    var block = rowBlock(refRow), after = block[block.length - 1];
+    var r = makeRow({ isNew: true, level: lv });     // 末尾に生成
+    rowsEl.insertBefore(r, after.nextElementSibling); // 直後へ移動
+    applyLevel(r, lv);
+    markDirty();
+    r.querySelector('input.nm').focus();
+    ensureTrailing(false);
+    recomputeTree();
+    return r;
+  }
+
+  // 末尾に常に空の入力行を保つ
+  function ensureTrailing(focus) {
+    var last = rowsEl.lastElementChild;
+    if (!last || !last.dataset.new || last.dataset.start || (last.querySelector('input.nm') && last.querySelector('input.nm').value.trim())) {
+      var lv = last ? parseInt(last.dataset.level) : 0;
+      var r = makeRow({ isNew: true, level: lv });
+      if (focus) r.querySelector('input.nm').focus();
+    } else if (focus) { last.querySelector('input.nm').focus(); }
+  }
+
+  document.getElementById('userSelect') && document.getElementById('userSelect').addEventListener('change', function () {
+    var u = new URL(window.location); u.searchParams.set('user_id', this.value); window.location = u;
+  });
+
+  /* ── タスク詳細・編集モーダル（日付・状態・進捗を専用画面で編集） ── */
+  var detModal = document.getElementById('detailModal');
+  var detRow = null;
+  function q(sel) { return detModal.querySelector(sel); }
+  function detRefresh() {
+    var st = q('.dt-status').value;
+    q('.dt-delay-row').style.display = (st === '遅れ') ? 'flex' : 'none';
+    q('.dt-prog').disabled = !(st === '着手' || st === '停止');
+    q('.dt-note').textContent =
+      st === '順調' ? '進捗は経過日数から自動計算されます' :
+      st === '遅れ' ? '遅延日数から進捗を自動計算します' :
+      st === '完了' ? '進捗は100%固定' :
+      st === '未着手' ? '進捗は0%固定' : '進捗（%）を入力してください';
+  }
+  function openDetail(row) {
+    detRow = row;
+    var inp = row.querySelector('input.nm');
+    q('.dt-name').textContent = inp ? (inp.value.trim() || '（新規タスク）')
+      : (row.querySelector('.nm-txt') ? row.querySelector('.nm-txt').textContent : '');
+    q('.dt-people').textContent = (row._people || []).map(function (x) { return x.name; }).join('、') || '—';
+    q('.dt-start').value = row.dataset.start || '';
+    q('.dt-end').value = row.dataset.end || '';
+    q('.dt-status').value = row.dataset.statusRaw || '未着手';
+    q('.dt-delay').value = parseInt(row.dataset.delayRaw || '0') || 0;
+    q('.dt-prog').value = effOf(row).progress;
+    detRefresh();
+    detModal.style.display = 'flex';
+  }
+  function detApply() {
+    if (!detRow) return false;
+    var s = q('.dt-start').value, e = q('.dt-end').value;
+    if (s && e && e < s) { var t = s; s = e; e = t; }
+    detRow.dataset.statusRaw = q('.dt-status').value;
+    detRow.dataset.delayRaw = String(Math.max(0, parseInt(q('.dt-delay').value) || 0));
+    if (!q('.dt-prog').disabled) detRow.dataset.progressRaw = String(Math.max(0, Math.min(100, parseInt(q('.dt-prog').value) || 0)));
+    if (s && e) {
+      var track = detRow.querySelector('.g-track');
+      var old = track.querySelector('.g-bar'); if (old) old.remove();  // 範囲外変更時に旧バーを残さない
+      if (inRange(s) || inRange(e)) {
+        addBar(track, detRow, clampIdx(dayIndexOf(s)), clampIdx(dayIndexOf(e)));
+      }
+      // addBar はクランプ後の日付を dataset に書くため、真の入力日付で上書きし直す
+      detRow.dataset.start = s; detRow.dataset.end = e;
+    }
+    if (detRow.dataset.id) detRow.dataset.dirty = '1';
+    markDirty();
+    var bar = detRow.querySelector('.g-bar');
+    if (bar) styleBar(bar, detRow); else updateMeta(detRow);
+    return true;
+  }
+  q('.dt-status').addEventListener('change', detRefresh);
+  q('.dt-cancel').addEventListener('click', function () { detModal.style.display = 'none'; detRow = null; });
+  q('.dt-save').addEventListener('click', function () { if (detApply()) { detModal.style.display = 'none'; saveAll(); } });
+  detModal.addEventListener('mousedown', function (e) { if (e.target === detModal) { detModal.style.display = 'none'; detRow = null; } });
+
+  // 保存
+  document.getElementById('saveBtn').addEventListener('click', saveAll);
+  function saveAll() {
+    if (!pageDirty) { setMsg('変更はありません', 'muted'); return; }
+    var rowEls = Array.prototype.slice.call(rowsEl.querySelectorAll('.g-row'));
+    var items = rowEls.map(function (row) {
+      var inp = row.querySelector('input.nm');
+      var name = inp ? inp.value.trim() : (row.querySelector('.nm-txt') ? row.querySelector('.nm-txt').textContent.trim() : '');
+      var eff = effOf(row);
+      return { row: row, tmp: row.dataset.tmp, id: row.dataset.id || null, name: name,
+               level: parseInt(row.dataset.level), start: row.dataset.start || null, end: row.dataset.end || null,
+               dirty: row.dataset.dirty === '1',
+               status: row.dataset.statusRaw || '未着手', progress: eff.progress,
+               delay: parseInt(row.dataset.delayRaw || '0') || 0,
+               people: (row._people || []).map(function (a) { return a.id; }) };
+    });
+    // 親にバーが無ければ子の期間で補完
+    items.forEach(function (it, idx) {
+      if (it.start && it.end) return;
+      var cs = null, ce = null;
+      for (var j = idx + 1; j < items.length; j++) {
+        if (items[j].level <= it.level) break;
+        if (items[j].start && items[j].end) { if (!cs || items[j].start < cs) cs = items[j].start; if (!ce || items[j].end > ce) ce = items[j].end; }
+      }
+      if (cs && ce) { it.start = cs; it.end = ce; }
+    });
+    var rows = [];
+    var invalid = false;
+    items.forEach(function (it, idx) {
+      var isEmptyTrailing = !it.id && !it.name && !it.start;
+      if (isEmptyTrailing) return;
+      var parent_id = null, parent_tmp = null;
+      if (it.level > 0) {
+        for (var j = idx - 1; j >= 0; j--) {
+          if (items[j].level === it.level - 1) { if (items[j].id) parent_id = items[j].id; else parent_tmp = items[j].tmp; break; }
+          if (items[j].level < it.level - 1) break;
+        }
+      }
+      if (!it.id) {
+        if (!it.name) { if (it.start) { invalid = true; it.row.querySelector('input.nm') && (it.row.querySelector('input.nm').style.borderColor = '#dc2626'); } return; }
+        // 名前ありでバー未描画（期間なし）の新規行は、本日1日だけの期間を自動付与して保存する。
+        if (!it.start || !it.end) {
+          var ds = todayIso();
+          it.start = ds; it.end = ds;  // 本日1日のみ
+        }
+      }
+      // 既存行は並び順反映のため dirty でなくても送信する
+      rows.push({ tmp: it.tmp, id: it.id, name: it.name, start: it.start, end: it.end,
+                  parent_id: parent_id, parent_tmp: parent_tmp, dirty: it.dirty,
+                  status: it.status, progress: it.progress, delay: it.delay, people: it.people });
+    });
+    if (invalid) { setMsg('バーを描いた行にタスク名を入力してください', 'danger'); return; }
+    if (!rows.length) { setMsg('保存する変更がありません', 'muted'); return; }
+    setMsg('保存中...', 'muted');
+    fetch('{{ url_for("planner_bp.save") }}', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
+      body: JSON.stringify({ user_id: SELECTED_USER_ID, rows: rows, deleted: deletedIds }) })
+      .then(function (r) { return r.json(); }).then(function (d) {
+        if (d && d.ok) { pageDirty = false; setMsg('保存しました。', 'success'); setTimeout(function () { location.reload(); }, 800); }
+        else { setMsg('保存失敗: ' + ((d && d.error) || ''), 'danger'); }
+      }).catch(function () { setMsg('通信エラー', 'danger'); });
+  }
+  function setMsg(t, c) { var m = document.getElementById('saveMsg'); m.className = 'small text-' + c; m.textContent = t; }
+
+  // 未保存の変更があるまま画面を離れると警告
+  window.addEventListener('beforeunload', function (e) {
+    if (pageDirty) { e.preventDefault(); e.returnValue = ''; return ''; }
+  });
+
+  // 初期描画
+  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable, category: t.category }); });
+  ensureTrailing(false);  // 末尾に入力行
+  // 前回の折りたたみ状態を復元（保存済みIDを collapsed=1 に）。
+  var _collapsed = loadCollapsedSet();
+  if (_collapsed.size) {
+    rowsEl.querySelectorAll('.g-row').forEach(function (r) {
+      if (r.dataset.id && _collapsed.has(+r.dataset.id)) r.dataset.collapsed = '1';
+    });
+  }
+  recomputeTree();        // 折りたたみトグルの初期表示
+  // 全開/全閉ボタンの結線
+  var expandBtn = document.getElementById('expandAllBtn');
+  var collapseBtn = document.getElementById('collapseAllBtn');
+  if (expandBtn) expandBtn.addEventListener('click', function () { setAllCollapsed(false); });
+  if (collapseBtn) collapseBtn.addEventListener('click', function () { setAllCollapsed(true); });
+  initializing = false;   // 以降の操作のみ変更として扱う
+
+  // ── タスク名列の幅をドラッグで変更（--namew を更新） ──
+  (function () {
+    var resizer = document.getElementById('colResizer');
+    if (!resizer) return;
+    var startX = 0, startW = 0, dragging = false;
+    function px(v) { return parseInt(v, 10) || 0; }
+    resizer.addEventListener('mousedown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      dragging = true;
+      resizer.classList.add('dragging');
+      startX = e.clientX;
+      startW = px(getComputedStyle(gantt).getPropertyValue('--namew'));
+      document.body.style.cursor = 'col-resize';
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    function onMove(e) {
+      if (!dragging) return;
+      var w = Math.max(160, Math.min(700, startW + (e.clientX - startX)));  // 160〜700pxに制限
+      gantt.style.setProperty('--namew', w + 'px');
+    }
+    function onUp() {
+      dragging = false;
+      resizer.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      // 選んだ幅を記憶して次回も引き継ぐ
+      try { localStorage.setItem('gantt_namew', px(getComputedStyle(gantt).getPropertyValue('--namew'))); } catch (err) {}
+    }
+    // 前回の幅を復元
+    try {
+      var saved = px(localStorage.getItem('gantt_namew'));
+      if (saved >= 160 && saved <= 700) gantt.style.setProperty('--namew', saved + 'px');
+    } catch (err) {}
+  })();
+})();
+</script>
+{% endblock %}

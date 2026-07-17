@@ -34,6 +34,7 @@ from ..models import (
     get_routine_schedules,
     get_subcategory_category_id,
     get_task_master,
+    get_user_by_id,
     get_task_overview_summary,
     get_task_progress_summary,
     import_brabio_excel,
@@ -70,28 +71,56 @@ project_tasks_bp = Blueprint(
 )
 
 
-def _get_routine_task_options(user_id: int) -> list[dict]:
-    """ログインユーザーの作業登録から定例カテゴリの作業を取得する。
+def _parse_member_ids(raw_values: list[str]) -> list[str]:
+    """イベント関係者のフォーム値を整数ID文字列のリスト（重複除去・順序維持）に整形する。
+
+    ``<select multiple>``（各値が個別要素）と、👤ボタン方式のカンマ区切り単一値の
+    どちらの送信形式にも対応するため、各要素をさらにカンマで分割してから検証する。
 
     Args:
+        raw_values: request.form.getlist で取得した生の値リスト。
+
+    Returns:
+        list[str]: 実在チェック前の整数ID文字列（重複除去・入力順維持）。
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+    for raw in raw_values:
+        for part in str(raw or "").split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                sid = str(int(part))
+            except (TypeError, ValueError):
+                continue
+            if sid not in seen:
+                seen.add(sid)
+                result.append(sid)
+    return result
+
+
+def _user_can_edit_event(task: dict, user_id: int) -> bool:
+    """ログインユーザーが当該イベントの関係者（=編集可能）かどうかを判定する。
+
+    event_member_ids（カンマ区切り）または assigned_to / assigned_to_2 に
+    ユーザーIDが含まれていれば編集可能とみなす。
+
+    Args:
+        task: project_task の辞書。
         user_id: ログインユーザーID。
 
     Returns:
-        list[dict]: 定例作業のリスト（task_name, subcategory_name, default_hours）
+        bool: 編集可能なら True。
     """
-    from ..database import get_db
-    db = get_db()
-    rows = db.execute(
-        "SELECT tm.task_name, ts.name AS subcategory_name, tm.default_hours"
-        " FROM task_master tm"
-        " LEFT JOIN task_category tc ON tm.category_id = tc.id"
-        " LEFT JOIN task_subcategory ts ON tm.subcategory_id = ts.id"
-        " WHERE tm.user_id = ?"
-        "   AND (tc.name IN ('定例', '定例作業') OR ts.name IN ('定例', '定例作業'))"
-        " ORDER BY tm.task_name",
-        (user_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    members = {
+        s.strip() for s in (task.get("event_member_ids") or "").split(",") if s.strip()
+    }
+    return (
+        str(user_id) in members
+        or task.get("assigned_to") == user_id
+        or task.get("assigned_to_2") == user_id
+    )
 
 
 @project_tasks_bp.before_request
@@ -112,15 +141,92 @@ def task_list() -> str:
     Returns:
         str: レンダリング済みHTML
     """
+    return _render_task_page(None)
+
+
+@project_tasks_bp.route("/routine")
+def routine_page() -> str:
+    """定例作業の専用設定画面を表示する（上部ナビの「定例作業」）。"""
+    return _render_task_page("routine")
+
+
+@project_tasks_bp.route("/events")
+def events_page() -> str:
+    """イベントの専用設定画面を表示する（上部ナビの「イベント」）。"""
+    return _render_task_page("events")
+
+
+def _render_task_page(only_tab: str | None) -> str:
+    """タスク管理／定例作業／イベントの各画面を描画する共通処理。
+
+    Args:
+        only_tab: None=タスク一覧, 'routine'=定例作業, 'events'=イベント。
+    """
     login_role = session.get("user_role", "")
     login_id = int(session["user_id"])
     login_dept = session.get("user_dept", "")
+    # 記憶トークンで自動ログインした古いセッションは user_dept が空の場合があるため、
+    # 空ならDBから補完してセッションにも保存する（関係者候補の部署絞りが機能しなくなるのを防ぐ）。
+    if not login_dept:
+        _u = get_user_by_id(login_id)
+        if _u:
+            login_dept = _u.get("dept", "") or ""
+            session["user_dept"] = login_dept
     privileged = is_privileged(login_role)
+    is_events = only_tab == "events"
+    # 実効所属：システム管理者が所属切替中なら active_dept、通常は自分の所属。
+    # これにより「所属を切り替えるとその所属のメンバーで表示される」を実現する。
+    from ..auth_helpers import (
+        get_active_scope_dept, get_effective_depts, is_dept_head, is_system_admin,
+    )
+    from ..models import get_user_affiliations, get_all_users_by_depts
+    scope_dept = get_active_scope_dept(
+        login_role, login_dept, session.get("active_dept")
+    )
+
+    def _scoped_users() -> list[dict]:
+        """実効所属に属するユーザー一覧を返す（役職別の絞り込みを一元化）。
+
+        - システム管理者: scope_dept があればその所属、無ければ全ユーザー。
+        - 所属長: 担当所属（active_dept で1所属に絞られる場合あり）に属するユーザー。
+          担当所属が無ければ空（他所属を覗かせない）。
+        - 管理職・一般: 自分の主所属のみ。
+        """
+        if is_dept_head(login_role):
+            depts = get_effective_depts(
+                {"role": login_role, "dept": login_dept},
+                affiliations=get_user_affiliations(login_id),
+                active_dept=session.get("active_dept"),
+            )
+            return get_all_users_by_depts(depts or [])
+        if is_system_admin(login_role) and not scope_dept:
+            return get_all_users()  # 全所属表示
+        return get_all_users(dept_filter=scope_dept)
 
     # マスタ権限: ユーザー切替対応（デフォルトは全員）
     target_user_id: int = login_id
     selectable_users: list[dict] = []
-    if is_master(login_role):
+    if is_events:
+        # イベント画面は実効所属のメンバーを切り替えて閲覧できる。
+        # 切替先が自分と無関係なイベントは閲覧のみ（編集はサーバー/画面で can_edit 制御）。
+        selectable_users = _scoped_users()
+        allowed_ids = {u["id"] for u in selectable_users} | {login_id}
+        req_uid = request.args.get("user_id", "").strip()
+        if req_uid:
+            try:
+                cand = int(req_uid)
+            except ValueError:
+                cand = login_id
+            # 権限外ユーザーのタスクを URL 直打ちで覗けないよう、許可範囲に照合する。
+            target_user_id = cand if (cand in allowed_ids or cand == 0) else login_id
+        else:
+            target_user_id = login_id  # 既定は自分の関係イベント
+        if target_user_id == 0:
+            member_ids = [u["id"] for u in selectable_users]
+            tasks = get_all_project_tasks(user_ids=member_ids)
+        else:
+            tasks = get_all_project_tasks(assigned_to=target_user_id)
+    elif is_master(login_role):
         selectable_users = get_accessible_users(login_id, login_role, login_dept)
         req_uid = request.args.get("user_id", "").strip()
         if req_uid is not None and req_uid != "":
@@ -145,13 +251,33 @@ def task_list() -> str:
     categories = get_all_categories()
     subcategories = get_all_subcategories()
 
-    # 関係者選択用のユーザーリスト
+    # 関係者選択用のユーザーリスト（users=全員: 既存関係者の名前表示に使用）
     users = get_all_users()
+    # イベント関係者の「選択候補」は実効所属に限定する（所属長は担当所属のみ・他所属を出さない）。
+    assign_users = _scoped_users()
 
-    # 定例スケジュール
+    # JS の人物選択ポップ用に安全な形へ整形（tojson で一括出力し、手書きループの構文事故を防ぐ）。
+    def _disp(u: dict) -> str:
+        return (u.get("last_name") or u.get("name") or "").strip()
+    assign_users_js = [{"id": u["id"], "name": _disp(u)} for u in assign_users]
+    all_name_js = {str(u["id"]): _disp(u) for u in users}
+
+    # イベント画面: 各イベントに can_edit（ログインユーザーが関係者かどうか）を付与する。
+    # 自分が関係者（event_member_ids / assigned_to / assigned_to_2）に含まれるイベントのみ編集可。
+    if is_events:
+        for t in tasks:
+            member_ids = {
+                s.strip() for s in (t.get("event_member_ids") or "").split(",") if s.strip()
+            }
+            related = (
+                str(login_id) in member_ids
+                or t.get("assigned_to") == login_id
+                or t.get("assigned_to_2") == login_id
+            )
+            t["can_edit"] = related
+
+    # 定例スケジュール（作業名は自由入力のため、作業マスタからの候補取得は不要）
     routine_schedules = get_routine_schedules(login_id)
-    # 作業登録から「定例作業」カテゴリの作業を取得（全ユーザーから検索）
-    routine_task_options = _get_routine_task_options(login_id)
     used_rows = {r["row_number"] for r in routine_schedules}
 
     return render_template(
@@ -162,12 +288,15 @@ def task_list() -> str:
         statuses=PROJECT_TASK_STATUSES,
         privileged=True,
         users=users,
+        assign_users=assign_users,
+        assign_users_js=assign_users_js,
+        all_name_js=all_name_js,
         routine_schedules=routine_schedules,
-        routine_task_options=routine_task_options,
         used_rows=used_rows,
         selectable_users=selectable_users,
         target_user_id=target_user_id,
         is_master=is_master(login_role),
+        only_tab=only_tab,
     )
 
 
@@ -241,20 +370,7 @@ def add_task() -> object:
     # 先頭2人は assigned_to / assigned_to_2 にも反映して既存機能との互換を保つ。
     event_member_ids: str = ""
     if is_event_add:
-        ids_raw = request.form.getlist("event_members")
-        valid_ids: list[str] = []
-        for raw in ids_raw:
-            try:
-                valid_ids.append(str(int(raw)))
-            except (TypeError, ValueError):
-                continue
-        # 重複除外（順序維持）
-        seen: set[str] = set()
-        unique_ids: list[str] = []
-        for s in valid_ids:
-            if s not in seen:
-                seen.add(s)
-                unique_ids.append(s)
+        unique_ids = _parse_member_ids(request.form.getlist("event_members"))
         event_member_ids = ",".join(unique_ids)
         if unique_ids:
             try:
@@ -316,9 +432,9 @@ def add_task() -> object:
             redir += "?" + "&".join(params)
         return redirect(redir)
 
-    # イベント追加時はイベントタブを開いた状態で戻る
+    # イベント追加時はイベント専用画面へ戻る
     if is_event == 1:
-        return redirect(url_for("project_tasks_bp.task_list") + "?tab=events&add_open=1")
+        return redirect(url_for("project_tasks_bp.events_page") + "?add_open=1&tab=events")
 
     return redirect(url_for("project_tasks_bp.task_list") + "?add_open=1")
 
@@ -426,6 +542,7 @@ def bulk_update_tasks() -> object:
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
+    login_id = int(session["user_id"])
     task_ids_raw = request.form.getlist("task_id")
     updated_count = 0
     deleted_count = 0
@@ -438,6 +555,11 @@ def bulk_update_tasks() -> object:
 
         existing = get_project_task_by_id(task_id)
         if not existing:
+            continue
+
+        # イベントは関係者（編集可能）以外による更新・削除を拒否する。
+        # 画面上は閲覧のみ行としてフォームに含めないが、直接POSTへの防御も行う。
+        if existing.get("is_event") and not _user_can_edit_event(existing, login_id):
             continue
 
         # 削除チェックボックスが ON の場合は削除して次へ
@@ -497,19 +619,7 @@ def bulk_update_tasks() -> object:
         # イベントの場合は参加者を複数受け取り、event_member_ids に保存
         event_member_ids: str = ""
         if is_event == 1:
-            ids_raw = request.form.getlist(f"event_members{sfx}")
-            valid_ids: list[str] = []
-            for raw in ids_raw:
-                try:
-                    valid_ids.append(str(int(raw)))
-                except (TypeError, ValueError):
-                    continue
-            seen: set[str] = set()
-            unique_ids: list[str] = []
-            for s in valid_ids:
-                if s not in seen:
-                    seen.add(s)
-                    unique_ids.append(s)
+            unique_ids = _parse_member_ids(request.form.getlist(f"event_members{sfx}"))
             event_member_ids = ",".join(unique_ids)
             # 先頭2人を assigned_to / assigned_to_2 にも反映（互換性保持）
             if unique_ids:
@@ -559,14 +669,13 @@ def bulk_update_tasks() -> object:
     flash("、".join(msgs) + "しました。" if msgs else "変更はありませんでした。", "success")
     subcat_f = request.form.get("subcat_filter", "")
     from_tab = request.form.get("from_tab", "").strip()
-    redir = url_for("project_tasks_bp.task_list")
-    params: list[str] = []
+    # イベント一括更新はイベント専用画面へ戻る
     if from_tab == "events":
-        params.append("tab=events")
-    if subcat_f:
-        params.append(f"subcat_filter={subcat_f}")
-    if params:
-        redir += "?" + "&".join(params)
+        redir = url_for("project_tasks_bp.events_page")
+    else:
+        redir = url_for("project_tasks_bp.task_list")
+        if subcat_f:
+            redir += f"?subcat_filter={subcat_f}"
     return redirect(redir)
 
 
@@ -663,20 +772,25 @@ def save_routine() -> object:
     user_id = int(session["user_id"])
     task_name = request.form.get("task_name", "").strip()
     subcategory_name = request.form.get("subcategory_name", "").strip()
-    row_number_str = request.form.get("row_number", "0").strip()
+    period = request.form.get("period", "").strip().upper()
     default_hours_str = request.form.get("default_hours", "0").strip()
 
-    redirect_url = url_for("project_tasks_bp.task_list") + "?tab=routine&add_open=1"
+    redirect_url = url_for("project_tasks_bp.routine_page") + "?add_open=1&tab=routine"
 
     if not task_name:
         flash("作業名を選択してください。", "warning")
         return redirect(redirect_url)
-    try:
-        row_number = int(row_number_str)
-        if not 1 <= row_number <= 10:
-            raise ValueError
-    except ValueError:
-        flash("行番号は1〜10で指定してください。", "warning")
+
+    # 区分（AM=1〜3 / PM=6〜8）から空いている行番号を自動割当する。各区分最大3件。
+    if period not in ("AM", "PM"):
+        flash("区分（午前／午後）を選択してください。", "warning")
+        return redirect(redirect_url)
+    used = {r["row_number"] for r in get_routine_schedules(user_id)}
+    candidates = [1, 2, 3] if period == "AM" else [6, 7, 8]
+    row_number = next((n for n in candidates if n not in used), None)
+    if row_number is None:
+        label = "午前" if period == "AM" else "午後"
+        flash(f"{label}の定例は最大3件までです。既存を削除してから追加してください。", "warning")
         return redirect(redirect_url)
     try:
         default_hours = max(0.0, float(default_hours_str))
@@ -710,8 +824,8 @@ def delete_routine(routine_id: int) -> object:
     user_id = int(session["user_id"])
     delete_routine_task(routine_id, user_id)
     flash("定例スケジュールを削除しました。", "success")
-    # 削除後は定例タブをそのまま維持する
-    return redirect(url_for("project_tasks_bp.task_list") + "?tab=routine")
+    # 削除後は定例作業画面をそのまま維持する
+    return redirect(url_for("project_tasks_bp.routine_page"))
 
 
 # -- ステータス→色マッピング（ダッシュボード用） --
@@ -1691,6 +1805,429 @@ def _build_gantt_excel(
     ws.oddHeader.right.size = 9
 
     return wb
+
+
+def _build_gantt_excel_by_tree(
+    visible_roots: list[dict],
+    children: dict[int, list[dict]],
+    start_date: date,
+    display_days: int,
+) -> "openpyxl.Workbook":
+    """親子ツリー（ガントチャート／親=大項目・子=タスク）のExcelを生成する。
+
+    大区分/中区分ではなく、ガントチャート画面と同じ親タスク（大項目）に
+    紐づく子タスクの構造でグルーピングして出力する。
+
+    Args:
+        visible_roots: 表示対象のルート（親）タスク一覧。
+        children: 親タスクID → 子タスク一覧のマップ。
+        start_date: 表示開始日。
+        display_days: 表示日数。
+
+    Returns:
+        openpyxl.Workbook: 生成済みワークブック。
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ガントチャート"
+
+    thin_border = Border(
+        left=Side(style="thin", color="CCCCCC"), right=Side(style="thin", color="CCCCCC"),
+        top=Side(style="thin", color="CCCCCC"), bottom=Side(style="thin", color="CCCCCC"),
+    )
+    header_fill = PatternFill("solid", fgColor="334155")
+    header_font = Font(bold=True, color="FFFFFF", size=9, name="游ゴシック")
+    cat_fill = PatternFill("solid", fgColor="E2E8F0")
+    cat_font = Font(bold=True, size=10, name="游ゴシック")
+    body_font = Font(size=9, name="游ゴシック")
+    center_align = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center")
+    sun_fill = PatternFill("solid", fgColor="FEF2F2")
+    sat_fill = PatternFill("solid", fgColor="EFF6FF")
+    today_fill_body = PatternFill("solid", fgColor="FEF2F2")
+    today_fill_header = PatternFill("solid", fgColor="FEE2E2")
+    completed_fill = PatternFill("solid", fgColor="F0F0F0")
+    completed_font = Font(size=9, name="游ゴシック", color="999999")
+
+    fixed_cols = 5
+    col_widths = {"A": 18, "B": 26, "C": 10, "D": 8, "E": 7}
+    headers = ["大項目", "タスク名", "担当", "状態", "進捗%"]
+    weekday_ja = ["月", "火", "水", "木", "金", "土", "日"]
+    today_d = date.today()
+    today_side = Side(style="medium", color="EF4444")
+    today_border_top = Border(left=today_side, right=today_side, top=today_side,
+                              bottom=Side(style="thin", color="CCCCCC"))
+    today_border_mid = Border(left=today_side, right=today_side,
+                              top=Side(style="thin", color="CCCCCC"),
+                              bottom=Side(style="thin", color="CCCCCC"))
+    today_border_bot = Border(left=today_side, right=today_side,
+                              top=Side(style="thin", color="CCCCCC"), bottom=today_side)
+    today_col_idx = -1
+
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(1, ci, h)
+        cell.fill = header_fill; cell.font = header_font
+        cell.alignment = center_align; cell.border = thin_border
+        ws.cell(2, ci, "").fill = header_fill
+        ws.cell(2, ci).border = thin_border
+
+    for di in range(display_days):
+        dt = start_date + timedelta(days=di)
+        col = fixed_cols + di + 1
+        ws.column_dimensions[get_column_letter(col)].width = 3.5
+        is_today = (dt == today_d)
+        c1 = ws.cell(1, col, f"{dt.month}/{dt.day}")
+        c1.font = Font(size=7, name="游ゴシック", bold=True,
+                       color="EF4444" if dt.weekday() == 6 else "3B82F6" if dt.weekday() == 5 else "FFFFFF")
+        c1.fill = today_fill_header if is_today else header_fill
+        c1.alignment = center_align
+        c1.border = today_border_top if is_today else thin_border
+        if is_today:
+            today_col_idx = col
+        c2 = ws.cell(2, col, weekday_ja[dt.weekday()])
+        c2.font = Font(size=7, name="游ゴシック",
+                       color="EF4444" if dt.weekday() == 6 else "3B82F6" if dt.weekday() == 5 else "333333")
+        c2.fill = today_fill_header if is_today else PatternFill("solid", fgColor="F1F5F9")
+        c2.alignment = center_align
+        c2.border = today_border_mid if is_today else thin_border
+
+    for letter, w in col_widths.items():
+        ws.column_dimensions[letter].width = w
+
+    def _sortkey(t: dict) -> tuple:
+        return (t.get("display_order") or 0, (t.get("start_date") or "9999-99-99"), t["id"])
+
+    def _assigned_names(t: dict) -> str:
+        names = []
+        ln1 = t.get("assigned_last_name") or t.get("assigned_name") or ""
+        ln2 = t.get("assigned_last_name_2") or t.get("assigned_name_2") or ""
+        if ln1:
+            names.append(ln1)
+        if ln2:
+            names.append(ln2)
+        return "・".join(names)
+
+    row = 3
+
+    def _write_task_row(t: dict, root_name: str, indent: int) -> None:
+        nonlocal row
+        status = t.get("status", "")
+        progress = t.get("progress", 0) or 0
+        is_completed = (status == "完了")
+        row_font = completed_font if is_completed else body_font
+        row_fill = completed_fill if is_completed else None
+
+        ws.cell(row, 1, root_name).font = row_font
+        ws.cell(row, 1).alignment = left_align
+        ws.cell(row, 1).border = thin_border
+        if row_fill: ws.cell(row, 1).fill = row_fill
+
+        name_cell = ws.cell(row, 2, "　" * indent + t.get("task_name", ""))
+        name_cell.font = row_font; name_cell.alignment = left_align; name_cell.border = thin_border
+        if row_fill: name_cell.fill = row_fill
+
+        ws.cell(row, 3, _assigned_names(t)).font = row_font
+        ws.cell(row, 3).alignment = center_align
+        ws.cell(row, 3).border = thin_border
+        if row_fill: ws.cell(row, 3).fill = row_fill
+
+        ws.cell(row, 4, status).font = row_font
+        ws.cell(row, 4).alignment = center_align
+        ws.cell(row, 4).border = thin_border
+        if row_fill: ws.cell(row, 4).fill = row_fill
+
+        ws.cell(row, 5, f"{progress}%").font = row_font
+        ws.cell(row, 5).alignment = center_align
+        ws.cell(row, 5).border = thin_border
+        if row_fill: ws.cell(row, 5).fill = row_fill
+
+        try:
+            t_start = date.fromisoformat(t["start_date"])
+            t_end = date.fromisoformat(t["end_date"])
+        except (ValueError, TypeError, KeyError):
+            row += 1
+            return
+
+        for di in range(display_days):
+            dt = start_date + timedelta(days=di)
+            col = fixed_cols + di + 1
+            cell = ws.cell(row, col)
+            is_today = (dt == today_d)
+            cell.border = today_border_mid if is_today else thin_border
+            if dt.weekday() == 5:
+                cell.fill = sat_fill
+            elif dt.weekday() == 6:
+                cell.fill = sun_fill
+            if is_today:
+                cell.fill = today_fill_body
+            if t_start <= dt <= t_end:
+                if status == "完了":
+                    cell.fill = PatternFill("solid", fgColor="1E40AF")
+                elif status == "停止":
+                    cell.fill = PatternFill("solid", fgColor="E5E7EB")
+                else:
+                    total_days = (t_end - t_start).days + 1
+                    day_idx = (dt - t_start).days
+                    prog_days = round(total_days * progress / 100)
+                    if day_idx < prog_days:
+                        fill_color = _PROGRESS_FILL.get(status, _PROGRESS_FILL["_default"])
+                        cell.fill = PatternFill("solid", fgColor=fill_color)
+                    else:
+                        cell.fill = PatternFill("solid", fgColor="93C5FD")
+        row += 1
+
+    def _count_descendants(t: dict) -> int:
+        total = 0
+        for c in children.get(t["id"], []):
+            total += 1 + _count_descendants(c)
+        return total
+
+    def _write_descendants(t: dict, root_name: str, indent: int) -> None:
+        for c in sorted(children.get(t["id"], []), key=_sortkey):
+            _write_task_row(c, root_name, indent)
+            _write_descendants(c, root_name, indent + 1)
+
+    for r in sorted(visible_roots, key=_sortkey):
+        desc_count = _count_descendants(r)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=fixed_cols + display_days)
+        cell = ws.cell(row, 1, f"▼ {r.get('task_name', '')}（{desc_count}件）")
+        cell.fill = cat_fill; cell.font = cat_font; cell.alignment = left_align; cell.border = thin_border
+        row += 1
+        if desc_count == 0:
+            # 子がない場合は親タスク自身を1行として出力する（期間データを失わないため）。
+            _write_task_row(r, r.get("task_name", ""), 0)
+        else:
+            _write_descendants(r, r.get("task_name", ""), 0)
+
+    if today_col_idx > 0:
+        last_data_row = row - 1
+        ws.cell(last_data_row, today_col_idx).border = today_border_bot
+
+    ws.freeze_panes = "F3"
+
+    row += 1
+    legend_font = Font(size=8, name="游ゴシック")
+    legend_items = [
+        ("93C5FD", "予定期間"), ("34D399", "進捗（実績）"), ("FCA5A5", "遅延"),
+        ("1E40AF", "完了"), ("E5E7EB", "停止"),
+    ]
+    ws.cell(row, 1, "【凡例】").font = Font(size=8, name="游ゴシック", bold=True)
+    ws.cell(row, 1).border = thin_border
+    items_per_row = 3
+    for li, (color, label) in enumerate(legend_items):
+        r_offset = li // items_per_row
+        c_offset = li % items_per_row
+        c = fixed_cols + c_offset * 3 + 1
+        r = row + r_offset
+        ws.cell(r, c).fill = PatternFill("solid", fgColor=color)
+        ws.cell(r, c).border = thin_border
+        lbl = ws.cell(r, c + 1, label)
+        lbl.font = legend_font; lbl.border = thin_border
+
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.oddHeader.left.text = "商品開発室業務進捗"
+    ws.oddHeader.left.size = 10
+    ws.oddHeader.right.text = f"出力日：{today_d.strftime('%Y/%m/%d')}"
+    ws.oddHeader.right.size = 9
+
+    return wb
+
+
+def _build_gantt_pdf_by_tree(
+    visible_roots: list[dict],
+    children: dict[int, list[dict]],
+    start_date: date,
+    display_days: int,
+) -> "io.BytesIO":
+    """親子ツリーのガントチャートをPDF（A4横）で生成する。
+
+    _build_gantt_excel_by_tree と同じ構成（固定列＝大項目/タスク名/担当/状態/進捗% ＋
+    日付グリッド＋進捗バー）を reportlab で描画する。Excelをそのまま紙にした見た目。
+
+    Args:
+        visible_roots: 表示対象のルート（親）タスク一覧。
+        children: 親タスクID → 子タスク一覧のマップ。
+        start_date: 表示開始日。
+        display_days: 表示日数。
+
+    Returns:
+        io.BytesIO: 生成済みPDFのバイナリ。
+    """
+    import io as _io
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.pdfgen import canvas as _canvas
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+    # 日本語CIDフォント（追加ファイル不要）
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
+        jp_font = "HeiseiKakuGo-W5"
+    except Exception:
+        jp_font = "Helvetica"
+
+    def _rgb(hexcode: str):
+        return (int(hexcode[0:2], 16) / 255, int(hexcode[2:4], 16) / 255, int(hexcode[4:6], 16) / 255)
+
+    page_w, page_h = landscape(A4)
+    margin = 14
+    today_d = date.today()
+    weekday_ja = ["月", "火", "水", "木", "金", "土", "日"]
+
+    # 列幅（pt）。固定列＋日付列。Excelの相対幅に合わせる。
+    fixed = [("大項目", 78), ("タスク名", 150), ("担当", 54), ("状態", 40), ("進捗%", 32)]
+    fixed_w = sum(w for _, w in fixed)
+    grid_w = page_w - margin * 2 - fixed_w
+    day_w = grid_w / display_days
+    row_h = 15
+    header_h = 26
+
+    # 行データを平坦化（親カテゴリ行＋タスク行）
+    def _sortkey(t: dict) -> tuple:
+        return (t.get("display_order") or 0, (t.get("start_date") or "9999-99-99"), t["id"])
+
+    def _assigned(t: dict) -> str:
+        n = []
+        a1 = t.get("assigned_last_name") or t.get("assigned_name") or ""
+        a2 = t.get("assigned_last_name_2") or t.get("assigned_name_2") or ""
+        if a1: n.append(a1)
+        if a2: n.append(a2)
+        return "・".join(n)
+
+    def _count_desc(t: dict) -> int:
+        return sum(1 + _count_desc(c) for c in children.get(t["id"], []))
+
+    rows: list[dict] = []  # {type:'cat'|'task', ...}
+    def _emit_desc(t: dict, root_name: str, indent: int) -> None:
+        for c in sorted(children.get(t["id"], []), key=_sortkey):
+            rows.append({"type": "task", "t": c, "root": root_name, "indent": indent})
+            _emit_desc(c, root_name, indent + 1)
+    for r in sorted(visible_roots, key=_sortkey):
+        dc = _count_desc(r)
+        rows.append({"type": "cat", "name": f"▼ {r.get('task_name','')}（{dc}件）"})
+        if dc == 0:
+            rows.append({"type": "task", "t": r, "root": r.get("task_name", ""), "indent": 0})
+        else:
+            _emit_desc(r, r.get("task_name", ""), 0)
+
+    buf = _io.BytesIO()
+    c = _canvas.Canvas(buf, pagesize=landscape(A4))
+    rows_per_page = int((page_h - margin * 2 - header_h) // row_h)
+
+    def _draw_header(y_top: float) -> None:
+        x = margin
+        c.setFont(jp_font, 7)
+        # 固定列ヘッダー
+        c.setFillColorRGB(*_rgb("334155"))
+        c.rect(margin, y_top - header_h, fixed_w, header_h, fill=1, stroke=0)
+        c.setFillColorRGB(1, 1, 1)
+        for label, w in fixed:
+            c.drawCentredString(x + w / 2, y_top - header_h / 2 - 3, label)
+            x += w
+        # 日付列ヘッダー（月/日＋曜日）
+        for di in range(display_days):
+            dt = start_date + timedelta(days=di)
+            cx = margin + fixed_w + di * day_w
+            is_today = (dt == today_d)
+            c.setFillColorRGB(*(_rgb("FEE2E2") if is_today else _rgb("334155")))
+            c.rect(cx, y_top - header_h, day_w, header_h, fill=1, stroke=0)
+            wd = dt.weekday()
+            col = "EF4444" if wd == 6 else ("3B82F6" if wd == 5 else ("333333" if is_today else "FFFFFF"))
+            c.setFillColorRGB(*_rgb(col))
+            c.setFont(jp_font, 5.5)
+            c.drawCentredString(cx + day_w / 2, y_top - 10, f"{dt.month}/{dt.day}")
+            c.drawCentredString(cx + day_w / 2, y_top - 20, weekday_ja[wd])
+        # 枠線
+        c.setStrokeColorRGB(*_rgb("CCCCCC")); c.setLineWidth(0.4)
+        c.rect(margin, y_top - header_h, page_w - margin * 2, header_h, fill=0, stroke=1)
+
+    def _draw_row(item: dict, y: float) -> None:
+        if item["type"] == "cat":
+            c.setFillColorRGB(*_rgb("E2E8F0"))
+            c.rect(margin, y, page_w - margin * 2, row_h, fill=1, stroke=0)
+            c.setFillColorRGB(0.1, 0.13, 0.2); c.setFont(jp_font, 8)
+            c.drawString(margin + 3, y + 4, item["name"][:60])
+            c.setStrokeColorRGB(*_rgb("CCCCCC")); c.setLineWidth(0.4)
+            c.rect(margin, y, page_w - margin * 2, row_h, fill=0, stroke=1)
+            return
+        t = item["t"]
+        status = t.get("status", ""); progress = t.get("progress", 0) or 0
+        completed = (status == "完了")
+        # 固定列テキスト
+        c.setFont(jp_font, 7)
+        c.setFillColorRGB(*(_rgb("999999") if completed else (0.1, 0.13, 0.2)))
+        vals = [item["root"], "  " * item["indent"] + t.get("task_name", ""),
+                _assigned(t), status, f"{progress}%"]
+        x = margin
+        for (label, w), v in zip(fixed, vals):
+            if label in ("担当", "状態", "進捗%"):
+                c.drawCentredString(x + w / 2, y + 4, str(v)[:10])
+            else:
+                c.drawString(x + 2, y + 4, str(v)[:24])
+            x += w
+        # 日付セル（土日・当日・バー）
+        try:
+            ts = date.fromisoformat(t["start_date"]); te = date.fromisoformat(t["end_date"])
+        except (ValueError, TypeError, KeyError):
+            ts = te = None
+        for di in range(display_days):
+            dt = start_date + timedelta(days=di)
+            cx = margin + fixed_w + di * day_w
+            wd = dt.weekday()
+            bg = None
+            if wd == 5: bg = "EFF6FF"
+            elif wd == 6: bg = "FEF2F2"
+            if dt == today_d: bg = "FEF2F2"
+            if bg:
+                c.setFillColorRGB(*_rgb(bg)); c.rect(cx, y, day_w, row_h, fill=1, stroke=0)
+            if ts and te and ts <= dt <= te:
+                if status == "完了":
+                    fill = "1E40AF"
+                elif status == "停止":
+                    fill = "E5E7EB"
+                else:
+                    total = (te - ts).days + 1
+                    idx = (dt - ts).days
+                    prog_days = round(total * progress / 100)
+                    fill = _PROGRESS_FILL.get(status, _PROGRESS_FILL["_default"]) if idx < prog_days else "93C5FD"
+                c.setFillColorRGB(*_rgb(fill))
+                c.rect(cx + 0.5, y + 2, day_w - 1, row_h - 4, fill=1, stroke=0)
+        # 罫線（行下）
+        c.setStrokeColorRGB(*_rgb("E5E7EB")); c.setLineWidth(0.3)
+        c.line(margin, y, page_w - margin * 2 + margin, y)
+
+    idx = 0
+    while idx < len(rows) or idx == 0:
+        y_top = page_h - margin
+        # ヘッダー（左：タイトル、右：出力日）
+        c.setFont(jp_font, 9); c.setFillColorRGB(0.2, 0.2, 0.2)
+        c.drawString(margin, y_top - 2, "商品開発室業務進捗")
+        c.drawRightString(page_w - margin, y_top - 2, f"出力日：{today_d.strftime('%Y/%m/%d')}")
+        y_top -= 12
+        _draw_header(y_top)
+        y = y_top - header_h - row_h
+        drawn = 0
+        while idx < len(rows) and drawn < rows_per_page:
+            _draw_row(rows[idx], y)
+            y -= row_h; idx += 1; drawn += 1
+        # 縦の列区切り線（固定列境界）
+        c.setStrokeColorRGB(*_rgb("CCCCCC")); c.setLineWidth(0.4)
+        gx = margin
+        for _, w in fixed:
+            c.line(gx, y_top - header_h, gx, y + row_h)
+            gx += w
+        c.line(margin + fixed_w, y_top - header_h, margin + fixed_w, y + row_h)
+        c.showPage()
+        if idx >= len(rows):
+            break
+
+    c.save()
+    buf.seek(0)
+    return buf
 
 
 @project_tasks_bp.route("/gantt/export")

@@ -19,18 +19,55 @@
       <span class="badge bg-warning text-dark fs-6 ms-2">DEV - 開発環境</span>
       {% endif %}
       {% if session.user_name %}
-      <div class="d-flex align-items-center gap-3 ms-auto">
-        <span class="text-white">{{ session.user_name }}（{{ session.user_role }}）</span>
-        <a class="btn btn-outline-warning btn-sm" href="{{ url_for('daily_bp.daily_today') }}">本日実績</a>
+      <div class="d-flex align-items-center gap-2 ms-auto">
+        {# 機能ナビ: 週間予定 → 実績 → ガントチャート → 進捗 → イベント → 定例 #}
         <a class="btn btn-outline-light btn-sm" href="{{ url_for('schedule.weekly') }}">週間予定</a>
-        <a class="btn btn-outline-light btn-sm" href="{{ url_for('tasks.task_list') }}">作業登録</a>
-        <a class="btn btn-outline-info btn-sm" href="{{ url_for('project_tasks_bp.task_list') }}">タスク管理</a>
+        <a class="btn btn-outline-warning btn-sm" href="{{ url_for('daily_bp.daily_today') }}">実績</a>
+        <a class="btn btn-outline-warning btn-sm" href="{{ url_for('planner_bp.planner') }}">ガントチャート</a>
         <a class="btn btn-outline-info btn-sm" href="{{ url_for('project_tasks_bp.progress_dashboard') }}">進捗</a>
-        {% if session.user_role == '管理職' or session.user_role == 'マスタ' %}
-        <a class="btn btn-warning btn-sm" href="{{ url_for('admin_bp.dashboard') }}">管理</a>
-        {% endif %}
-        <a class="btn btn-outline-light btn-sm" href="{{ url_for('help_bp.help_page') }}">❓ ヘルプ</a>
-        <a class="btn btn-outline-light btn-sm" href="{{ url_for('auth.logout') }}">ログアウト</a>
+        <a class="btn btn-outline-info btn-sm" href="{{ url_for('project_tasks_bp.events_page') }}">イベント</a>
+        <a class="btn btn-outline-info btn-sm" href="{{ url_for('project_tasks_bp.routine_page') }}">定例</a>
+
+        {# ── ユーザー名メニュー（クリックでドロップダウン。役職別に内容を出し分け） ──
+           見た目は他の機能ボタンと揃える（btn-outline-light btn-sm）。 #}
+        <div class="dropdown">
+          <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button"
+                  data-bs-toggle="dropdown" aria-expanded="false">
+            👤 {{ session.user_name }}
+            <span class="opacity-75">（{{ current_role }}{% if session.active_dept %} / {{ session.active_dept }}{% endif %}）</span>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+            {# システム管理者: 所属切替（登録部署へ切替） #}
+            {% if role_is_system_admin %}
+            <li><h6 class="dropdown-header">所属を切り替え</h6></li>
+            {% for d in (switchable_depts if switchable_depts is defined else []) %}
+            <li>
+              <a class="dropdown-item {% if session.active_dept == d %}active{% endif %}"
+                 href="{{ url_for('auth.switch_dept', dept=d) }}">
+                {% if session.active_dept == d %}✓ {% endif %}{{ d }}
+              </a>
+            </li>
+            {% else %}
+            <li><span class="dropdown-item-text text-muted small">切替可能な所属がありません</span></li>
+            {% endfor %}
+            {% if session.active_dept %}
+            <li><a class="dropdown-item small text-muted" href="{{ url_for('auth.switch_dept', dept='all') }}">全所属を表示</a></li>
+            {% endif %}
+            <li><hr class="dropdown-divider"></li>
+            {% endif %}
+
+            {# 管理職以上: 振り返りレビュー・管理画面 #}
+            {% if role_is_privileged %}
+            <li><a class="dropdown-item" href="{{ url_for('daily_bp.comments_review') }}">💬 振り返りレビュー</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('admin_bp.dashboard') }}">⚙ 管理画面</a></li>
+            {% endif %}
+
+            {# 全ユーザー共通: ヘルプ・ログアウト #}
+            <li><a class="dropdown-item" href="{{ url_for('help_bp.help_page') }}">❓ ヘルプ</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item text-danger" href="{{ url_for('auth.logout') }}">↩ ログアウト</a></li>
+          </ul>
+        </div>
       </div>
       {% endif %}
     </div>

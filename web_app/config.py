@@ -33,6 +33,11 @@ class Config:
     """Flask設定クラス"""
 
     SECRET_KEY: str = _load_or_generate_secret_key()
-    DATABASE: str = str(_BASE_DIR / "db" / "web_app.db")
+    # DBは環境で分離する。開発（FLASK_ENV_LABEL=DEV）は web_app_dev.db、
+    # 本番はこれまで通り web_app.db を使う。これにより開発中の変更が本番データを壊さない。
+    _DB_FILE: str = "web_app_dev.db" if os.environ.get("FLASK_ENV_LABEL") == "DEV" else "web_app.db"
+    DATABASE: str = str(_BASE_DIR / "db" / _DB_FILE)
     # セッション有効期限: 業務時間相当の8時間
     PERMANENT_SESSION_LIFETIME: timedelta = timedelta(hours=8)
+    # テンプレートの自動リロード（編集を即反映。開発時の再起動不要化）
+    TEMPLATES_AUTO_RELOAD: bool = True
