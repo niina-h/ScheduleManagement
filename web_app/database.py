@@ -290,6 +290,18 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         db.execute("UPDATE users SET role = '管理職' WHERE role = '管理者'")
         logger.info("users.role '管理者' → '管理職' にリネームしました（%d件）。", count)
 
+    # users.role の4段階ロール移行（冪等）: マスタ→システム管理者, ユーザー→一般。
+    # ※ mail_settings.role（'マスタ'/'ユーザー_{uid}' 等のDB主キー値）は役職とは別概念のため
+    #   絶対に変換しない。この UPDATE は必ず users テーブルのみに限定する。
+    cnt_admin = db.execute("SELECT COUNT(*) FROM users WHERE role = 'マスタ'").fetchone()[0]
+    if cnt_admin > 0:
+        db.execute("UPDATE users SET role = 'システム管理者' WHERE role = 'マスタ'")
+        logger.info("users.role 'マスタ' → 'システム管理者' に移行しました（%d件）。", cnt_admin)
+    cnt_general = db.execute("SELECT COUNT(*) FROM users WHERE role = 'ユーザー'").fetchone()[0]
+    if cnt_general > 0:
+        db.execute("UPDATE users SET role = '一般' WHERE role = 'ユーザー'")
+        logger.info("users.role 'ユーザー' → '一般' に移行しました（%d件）。", cnt_general)
+
     # users に display_order を追加（なければ）
     if "display_order" not in user_cols:
         db.execute("ALTER TABLE users ADD COLUMN display_order INTEGER DEFAULT 0")
@@ -414,6 +426,14 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         if "planned_hours" not in pt_cols2:
             db.execute("ALTER TABLE project_task ADD COLUMN planned_hours REAL DEFAULT 0.0")
             logger.info("project_task.planned_hours カラムを追加しました。")
+        # 親タスクID（ツリー階層。NULL=最上位）。既存機能は本列を参照しないため後方互換。
+        if "parent_task_id" not in pt_cols2:
+            db.execute("ALTER TABLE project_task ADD COLUMN parent_task_id INTEGER")
+            logger.info("project_task.parent_task_id カラムを追加しました。")
+        # 親タスクの関係ユーザー（メンバー）。カンマ区切りのユーザーID。ガント入力の権限判定に使用。
+        if "member_ids" not in pt_cols2:
+            db.execute("ALTER TABLE project_task ADD COLUMN member_ids TEXT NOT NULL DEFAULT ''")
+            logger.info("project_task.member_ids カラムを追加しました。")
 
     # weekly_schedule に project_task_id を追加（なければ）
     ws_cols = {row[1] for row in db.execute("PRAGMA table_info(weekly_schedule)").fetchall()}
@@ -435,6 +455,55 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         # 既存ユーザーの name を姓として初期設定
         db.execute("UPDATE users SET last_name = name WHERE last_name = '' OR last_name IS NULL")
         logger.info("users.last_name / first_name カラムを追加しました。")
+
+    # users に login_id を追加（なければ）。ログインID方式（Phase1）で本人特定に使う。
+    # 既存ユーザーには 'user{id}' 形式の初期IDを付与し、管理画面で編集できるようにする。
+    u_cols = {row[1] for row in db.execute("PRAGMA table_info(users)").fetchall()}
+    if "login_id" not in u_cols:
+        db.execute("ALTER TABLE users ADD COLUMN login_id TEXT DEFAULT ''")
+        db.execute(
+            "UPDATE users SET login_id = 'user' || id "
+            "WHERE login_id IS NULL OR login_id = ''"
+        )
+        # login_id の一意性を担保するインデックス（空文字は許容しないため部分インデックス）
+        db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_login_id "
+            "ON users(login_id) WHERE login_id != ''"
+        )
+        logger.info("users.login_id カラムを追加し、初期IDを付与しました。")
+
+    # dept_master が空で users.dept に実値がある場合、そこから部署マスタを補完する（冪等）。
+    # 所属切替の候補や管理画面の部署選択に dept_master を使うため、実データと同期させる。
+    dm_count = db.execute("SELECT COUNT(*) FROM dept_master").fetchone()[0]
+    if dm_count == 0:
+        db.execute("""
+            INSERT OR IGNORE INTO dept_master (dept_name, display_order)
+            SELECT dept, MIN(id) FROM users
+            WHERE dept IS NOT NULL AND dept != ''
+            GROUP BY dept
+        """)
+        added = db.execute("SELECT COUNT(*) FROM dept_master").fetchone()[0]
+        if added:
+            logger.info("dept_master を users.dept から補完しました（%d件）。", added)
+
+    # user_affiliation テーブル（所属長の担当所属集合。複数所属対応）を作成（なければ）。
+    # users.dept（主所属・単一）は温存し、所属長の複数所属をこの中間テーブルで表す。
+    tables = {row[0] for row in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "user_affiliation" not in tables:
+        db.execute("""CREATE TABLE user_affiliation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            dept_name TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(user_id, dept_name),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )""")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_affiliation_user "
+            "ON user_affiliation(user_id)"
+        )
+        logger.info("user_affiliation テーブルを作成しました。")
 
     # デフォルトデータ挿入（なければ）
     db.execute("""

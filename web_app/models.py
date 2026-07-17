@@ -37,13 +37,13 @@ def get_all_users(dept_filter: str | None = None) -> list[dict]:
     db = get_db()
     if dept_filter is not None:
         rows = db.execute(
-            "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id, last_name, first_name "
+            "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id, last_name, first_name, login_id "
             "FROM users WHERE dept = ? ORDER BY display_order ASC, id ASC",
             (dept_filter,),
         ).fetchall()
     else:
         rows = db.execute(
-            "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id, last_name, first_name "
+            "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id, last_name, first_name, login_id "
             "FROM users ORDER BY display_order ASC, id ASC"
         ).fetchall()
     return [dict(row) for row in rows]
@@ -77,7 +77,7 @@ def get_user_by_id(user_id: int) -> dict | None:
     """
     db = get_db()
     row = db.execute(
-        "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id "
+        "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id, login_id "
         "FROM users WHERE id = ?",
         (user_id,),
     ).fetchone()
@@ -103,6 +103,29 @@ def get_user_by_name(name: str) -> dict | None:
     return dict(row) if row else None
 
 
+def get_user_by_login_id(login_id: str) -> dict | None:
+    """ログインID（login_id）でユーザーを取得する。
+
+    ログインID方式の認証（Phase1）で本人特定に使う。大文字小文字は区別しない。
+
+    Args:
+        login_id: ログインID文字列。
+
+    Returns:
+        dict | None: ユーザー情報。存在しない場合は None。
+    """
+    login_id = (login_id or "").strip()
+    if not login_id:
+        return None
+    db = get_db()
+    row = db.execute(
+        "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, manager_id, login_id "
+        "FROM users WHERE login_id = ? COLLATE NOCASE",
+        (login_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def get_direct_reports(manager_id: int) -> list[dict]:
     """直属の部下ユーザー一覧を取得する（manager_id が一致するユーザー）。
 
@@ -122,11 +145,16 @@ def get_direct_reports(manager_id: int) -> list[dict]:
 
 
 def get_accessible_users(login_id: int, login_role: str, login_dept: str) -> list[dict]:
-    """ログインユーザーがアクセスできるユーザーリストを返す。
+    """ログインユーザーがアクセスできるユーザーリストを返す（4段階ロール対応）。
 
-    管理職は直属部下（manager_id=login_id）が設定されていればそれのみ、
-    未設定の場合は同一部署（マスタ除く）を返す。
-    マスタは同一部署のマスタ以外全員を返す。
+    - システム管理者: セッションの active_dept が選択されていればその所属のみ、
+      未選択なら全所属の全ユーザー（自分含む）。
+    - 所属長: 自分の担当所属（user_affiliation、複数可）の全ユーザー。
+      active_dept が担当所属内で選択されていればその1所属に絞る。
+    - 管理職: 直属部下（manager_id=login_id）があればそれのみ、無ければ同一部署。
+    - 一般: 空リスト。
+
+    役職文字列は正規化して判定するため、DB・セッションに旧値が残っていても動作する。
 
     Args:
         login_id: ログインユーザーのID。
@@ -136,27 +164,49 @@ def get_accessible_users(login_id: int, login_role: str, login_dept: str) -> lis
     Returns:
         list[dict]: アクセス可能なユーザーリスト。
     """
-    if login_role == "マスタ":
-        # マスタは同一部署のマスタ以外全員を返す（所属外の部門は除外）
-        dept_users = get_all_users(dept_filter=login_dept if login_dept else None)
-        others = [u for u in dept_users if u.get("role") != "マスタ"]
-        self_user = next((u for u in dept_users if u.get("id") == login_id), None)
-        if self_user and not any(u.get("id") == login_id for u in others):
-            return [self_user] + others
-        return others
-    if login_role == "管理職":
+    from .auth_helpers import (
+        normalize_role, is_system_admin, is_dept_head, is_manager,
+    )
+    from flask import session, has_request_context
+
+    role = normalize_role(login_role)
+    active_dept = session.get("active_dept") if has_request_context() else None
+
+    def _ensure_self(users: list[dict]) -> list[dict]:
+        """自分自身をリスト先頭に含める（未含の場合）。"""
+        self_user = get_user_by_id(login_id)
+        if self_user and not any(u.get("id") == login_id for u in users):
+            return [self_user] + users
+        return users
+
+    if is_system_admin(role):
+        if active_dept:
+            users = get_all_users(dept_filter=active_dept)
+        else:
+            users = get_all_users()  # 全所属
+        # システム管理者自身は一覧に含める（切替先に自分がいなくても操作主体として表示）
+        return _ensure_self(users)
+
+    if is_dept_head(role):
+        depts = get_user_affiliations(login_id)
+        if active_dept and active_dept in depts:
+            depts = [active_dept]
+        users = get_all_users_by_depts(depts)
+        return _ensure_self(users)
+
+    if is_manager(role):
         all_dept = get_all_users(dept_filter=login_dept if login_dept else None)
         self_user = next((u for u in all_dept if u.get("id") == login_id), None)
         direct = get_direct_reports(login_id)
         if direct:
             members = direct
         else:
-            # 直属部下未設定の場合: 同一部署（マスタ除く）
-            members = [u for u in all_dept if u.get("role") != "マスタ"]
-        # 自分自身をリスト先頭に追加（未含の場合）
+            # 直属部下未設定の場合: 同一部署（システム管理者除く）
+            members = [u for u in all_dept if not is_system_admin(u.get("role", ""))]
         if self_user and not any(u.get("id") == login_id for u in members):
             return [self_user] + members
         return members
+
     return []
 
 
@@ -377,6 +427,39 @@ def update_user(
         return True
     except Exception:
         db.rollback()
+        return False
+
+
+def set_user_login_id(user_id: int, login_id: str) -> bool:
+    """ユーザーのログインIDを設定する。
+
+    login_id は全ユーザーで一意。空文字や他ユーザーと重複する場合は False を返す。
+
+    Args:
+        user_id: 対象ユーザーID。
+        login_id: 新しいログインID（英数字想定、前後空白は除去）。
+
+    Returns:
+        bool: 更新成功時 True、空・重複時 False。
+    """
+    login_id = (login_id or "").strip()
+    if not login_id:
+        return False
+    db = get_db()
+    # 大文字小文字を無視した重複チェック（自分自身は除外）
+    dup = db.execute(
+        "SELECT id FROM users WHERE login_id = ? COLLATE NOCASE AND id != ?",
+        (login_id, user_id),
+    ).fetchone()
+    if dup is not None:
+        return False
+    try:
+        db.execute("UPDATE users SET login_id = ? WHERE id = ?", (login_id, user_id))
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        logger.exception("ログインID設定中にエラーが発生しました (user_id=%s)", user_id)
         return False
 
 
@@ -1004,6 +1087,38 @@ def get_daily_comment(user_id: int, date_str: str) -> dict:
     return {"reflection": "", "action": "", "admin_comment": "", "updated_at": "", "updated_by": ""}
 
 
+def get_comments_in_range(
+    user_ids: list[int], start_date: str, end_date: str
+) -> list[dict]:
+    """指定ユーザー群・期間内の日次コメントを新しい日付順で取得する。
+
+    振り返り(reflection)または対策(action)のいずれかが入力されているレコードのみ返す
+    （空の枠は除外）。上長コメント未入力の把握・期間横断レビューに使う。
+
+    Args:
+        user_ids: 対象ユーザーIDのリスト。空なら空リストを返す。
+        start_date: 開始日（'YYYY-MM-DD'、含む）。
+        end_date: 終了日（'YYYY-MM-DD'、含む）。
+
+    Returns:
+        list[dict]: {user_id, date, reflection, action, admin_comment, updated_at} の新しい順リスト。
+    """
+    ids = [int(i) for i in (user_ids or [])]
+    if not ids:
+        return []
+    db = get_db()
+    placeholders = ",".join("?" * len(ids))
+    rows = db.execute(
+        "SELECT user_id, date, reflection, action, admin_comment, updated_at "
+        "FROM daily_comment "
+        f"WHERE user_id IN ({placeholders}) AND date >= ? AND date <= ? "
+        "  AND (COALESCE(reflection,'') != '' OR COALESCE(action,'') != '') "
+        "ORDER BY date DESC, user_id ASC",
+        tuple(ids) + (start_date, end_date),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def save_daily_comment(
     user_id: int,
     date_str: str,
@@ -1413,6 +1528,69 @@ def get_all_depts() -> list[dict]:
     db = get_db()
     rows = db.execute(
         "SELECT id, dept_name, display_order FROM dept_master ORDER BY display_order ASC, id ASC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_user_affiliations(user_id: int) -> list[str]:
+    """所属長ユーザーが担当する所属名のリストを返す（なければ空リスト）。
+
+    Args:
+        user_id: 対象ユーザーID。
+
+    Returns:
+        list[str]: 担当所属名のリスト（dept_master.dept_name と一致）。
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT dept_name FROM user_affiliation WHERE user_id = ? ORDER BY dept_name",
+        (user_id,),
+    ).fetchall()
+    return [row["dept_name"] for row in rows]
+
+
+def set_user_affiliations(user_id: int, dept_names: list[str]) -> None:
+    """所属長の担当所属を洗い替えする（全削除→再登録）。
+
+    Args:
+        user_id: 対象ユーザーID。
+        dept_names: 新しい担当所属名のリスト（空リストで全解除）。
+    """
+    db = get_db()
+    db.execute("DELETE FROM user_affiliation WHERE user_id = ?", (user_id,))
+    seen: set[str] = set()
+    for dept in dept_names:
+        dept = (dept or "").strip()
+        if not dept or dept in seen:
+            continue
+        seen.add(dept)
+        db.execute(
+            "INSERT OR IGNORE INTO user_affiliation (user_id, dept_name) VALUES (?, ?)",
+            (user_id, dept),
+        )
+    db.commit()
+
+
+def get_all_users_by_depts(dept_names: list[str]) -> list[dict]:
+    """指定した複数所属のいずれかに属するユーザーを返す（get_all_users の複数dept版）。
+
+    Args:
+        dept_names: 所属名のリスト。空リストなら空を返す。
+
+    Returns:
+        list[dict]: ユーザー情報のリスト。
+    """
+    depts = [d for d in (dept_names or []) if d]
+    if not depts:
+        return []
+    db = get_db()
+    placeholders = ",".join("?" * len(depts))
+    rows = db.execute(
+        "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, "
+        "manager_id, last_name, first_name, login_id "
+        f"FROM users WHERE dept IN ({placeholders}) "
+        "ORDER BY display_order ASC, id ASC",
+        tuple(depts),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -1970,6 +2148,59 @@ def _normalize_progress(
     return max(0, progress)
 
 
+def get_task_plan_vs_actual(user_id: int) -> dict[int, dict]:
+    """ユーザーのタスクごとに「予定進捗率」と「実績進捗率」を比較して返す。
+
+    - 予定進捗率: 開始日〜終了日から算出した本日時点であるべき進捗（``_calc_progress_by_date``）。
+    - 実績進捗率: そのタスクに紐づく実績時間合計 ÷ 予定工数 × 100。
+    - 差分（実績 − 予定）から 遅れ/予定通り/前倒し を判定する。
+
+    Args:
+        user_id: 対象ユーザーID。
+
+    Returns:
+        dict[int, dict]: {task_id: {"planned": int|None, "actual": int|None,
+                          "diff": int, "state": str}}。
+                          state は 'ahead'（前倒し）/'ontrack'（予定通り）/
+                          'behind'（遅れ）/'none'（判定不可）。
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT project_task_id AS tid, SUM(hours) AS total "
+        "FROM daily_result WHERE user_id = ? AND project_task_id IS NOT NULL "
+        "GROUP BY project_task_id",
+        (user_id,),
+    ).fetchall()
+    actual_hours: dict[int, float] = {
+        int(r["tid"]): float(r["total"] or 0) for r in rows if r["tid"] is not None
+    }
+    result: dict[int, dict] = {}
+    for t in get_all_project_tasks(assigned_to=user_id):
+        # イベント/マイルストーン・完了/停止タスクは進捗比較の対象外。
+        if t.get("is_event") or t.get("is_milestone"):
+            continue
+        if t.get("status") in ("完了", "停止"):
+            continue
+        planned_hours = t.get("planned_hours") or 0
+        start = t.get("start_date")
+        end = t.get("end_date")
+        if not start or not end or planned_hours <= 0:
+            result[t["id"]] = {"planned": None, "actual": None, "diff": 0, "state": "none"}
+            continue
+        planned_pct = _calc_progress_by_date(start, end)
+        actual_pct = min(100, round(actual_hours.get(t["id"], 0.0) / planned_hours * 100))
+        diff = actual_pct - planned_pct
+        if diff <= -5:
+            state = "behind"
+        elif diff >= 5:
+            state = "ahead"
+        else:
+            state = "ontrack"
+        result[t["id"]] = {"planned": planned_pct, "actual": actual_pct,
+                           "diff": diff, "state": state}
+    return result
+
+
 def _calc_progress_by_date(start_date: str, end_date: str) -> int:
     """開始日・終了日・今日の日付から進捗率を自動計算する。
 
@@ -2027,21 +2258,92 @@ def get_all_project_tasks(
         "LEFT JOIN users u1 ON pt.assigned_to = u1.id "
         "LEFT JOIN users u2 ON pt.assigned_to_2 = u2.id "
     )
+    # イベントは event_member_ids（カンマ区切り、3人目以降の関係者）にも該当ユーザーが
+    # 含まれていれば可視対象とする（assigned_to/assigned_to_2 は先頭2名の互換フィールドのため）。
+    event_member_match = (
+        "(pt.is_event = 1 AND ',' || pt.event_member_ids || ',' LIKE '%,' || ? || ',%')"
+    )
     params: tuple = ()
     if assigned_to is not None:
-        query += "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?) "
-        params = (assigned_to, assigned_to)
+        query += f"WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ? OR {event_member_match}) "
+        params = (assigned_to, assigned_to, assigned_to)
     elif user_ids is not None and len(user_ids) > 0:
         placeholders = ",".join("?" * len(user_ids))
+        event_member_conds = " OR ".join([event_member_match] * len(user_ids))
         query += (
             f"WHERE (pt.assigned_to IN ({placeholders})"
             f" OR pt.assigned_to_2 IN ({placeholders})"
+            f" OR ({event_member_conds})"
             f" OR pt.assigned_to IS NULL) "
         )
-        params = tuple(user_ids) * 2
+        params = tuple(user_ids) * 2 + tuple(user_ids)
     query += "ORDER BY tc.display_order, tc.name, ts.display_order, ts.name, pt.display_order, pt.task_name"
     rows = db.execute(query, params).fetchall()
     return [dict(r) for r in rows]
+
+
+def set_project_task_parent(task_id: int, parent_id: int | None) -> None:
+    """タスクの親タスクID（ツリー階層）を設定する。
+
+    Args:
+        task_id: 対象タスクID。
+        parent_id: 親タスクID。最上位にする場合は None。
+    """
+    db = get_db()
+    db.execute(
+        "UPDATE project_task SET parent_task_id = ? WHERE id = ?",
+        (parent_id, task_id),
+    )
+    db.commit()
+
+
+def set_project_task_members(task_id: int, member_ids: str) -> None:
+    """親タスクの関係ユーザー（メンバー）を設定する。
+
+    Args:
+        task_id: 対象タスクID。
+        member_ids: カンマ区切りのユーザーID文字列（空文字で解除）。
+    """
+    db = get_db()
+    db.execute(
+        "UPDATE project_task SET member_ids = ? WHERE id = ?",
+        (member_ids, task_id),
+    )
+    db.commit()
+
+
+def reassign_project_task_order(ids: list[int]) -> int:
+    """指定タスク群の表示順（display_order）を新しい並び順で再割当する。
+
+    対象タスクが持つ既存 display_order 値の集合を、渡された ID 順に再割当することで、
+    対象外タスクとの相対順序を壊さずに並び替えを反映する（ガントチャートと同じ手法）。
+
+    Args:
+        ids: 新しい表示順に並んだタスクIDのリスト。
+
+    Returns:
+        int: 更新した件数。
+    """
+    if len(ids) < 2:
+        return 0
+    db = get_db()
+    placeholders = ",".join("?" * len(ids))
+    rows = db.execute(
+        f"SELECT id, display_order FROM project_task WHERE id IN ({placeholders})",
+        tuple(ids),
+    ).fetchall()
+    order_pool: list[int] = sorted(int(r["display_order"] or 0) for r in rows)
+    updated = 0
+    for idx, task_id in enumerate(ids):
+        if idx >= len(order_pool):
+            break
+        db.execute(
+            "UPDATE project_task SET display_order = ? WHERE id = ?",
+            (order_pool[idx], task_id),
+        )
+        updated += 1
+    db.commit()
+    return updated
 
 
 def get_project_task_by_id(task_id: int) -> dict | None:
@@ -2094,6 +2396,7 @@ def add_project_task(
     import_to_schedule_1: int = 1,
     import_to_schedule_2: int = 1,
     event_member_ids: str = "",
+    member_ids: str = "",
 ) -> int:
     """プロジェクトタスクを追加する。
 
@@ -2132,13 +2435,13 @@ def add_project_task(
         " is_milestone, start_date, end_date, status, delay_days, progress, "
         " display_order, created_by, updated_by, "
         " is_event, event_start_time, event_end_time, planned_hours, "
-        " import_to_schedule_1, import_to_schedule_2, event_member_ids) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " import_to_schedule_1, import_to_schedule_2, event_member_ids, member_ids) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (category_id, subcategory_id, task_name, description, assigned_to, assigned_to_2,
          is_milestone, start_date, end_date, status, delay_days, calc_progress,
          max_order + 1, created_by, updated_by,
          is_event, event_start_time, event_end_time, planned_hours,
-         import_to_schedule_1, import_to_schedule_2, event_member_ids),
+         import_to_schedule_1, import_to_schedule_2, event_member_ids, member_ids),
     )
     db.commit()
     return cur.lastrowid
@@ -2270,11 +2573,12 @@ def get_events_for_user_date(user_id: int, target_date: str) -> list[dict]:
         "FROM project_task pt "
         "LEFT JOIN task_category tc ON pt.category_id = tc.id "
         "LEFT JOIN task_subcategory ts ON pt.subcategory_id = ts.id "
-        "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?) "
+        "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?"
+        "       OR ',' || pt.event_member_ids || ',' LIKE '%,' || ? || ',%') "
         "  AND pt.is_event = 1 "
         "  AND pt.start_date <= ? AND pt.end_date >= ? "
         "ORDER BY pt.event_start_time ASC",
-        (user_id, user_id, target_date, target_date),
+        (user_id, user_id, user_id, target_date, target_date),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -3047,10 +3351,11 @@ def get_accessible_users_for_dashboard(
 ) -> list[dict]:
     """ダッシュボードでログインユーザーが閲覧可能なユーザー一覧を返す。
 
-    役職に応じたアクセス範囲:
-        - 一般ユーザー: 空リスト（自分のみ閲覧のため一覧不要）
+    役職に応じたアクセス範囲（4段階ロール対応・役職は正規化して判定）:
+        - 一般: 空リスト（自分のみ閲覧のため一覧不要）
         - 管理職: manager_id が login_user_id のユーザー＋自分自身
-        - マスタ: 同一部署の全ユーザー（dept_filter=login_dept）
+        - 所属長: 担当所属（active_dept で1所属に絞られる場合あり）の全ユーザー
+        - システム管理者: active_dept があればその所属、無ければ全所属
 
     Args:
         login_user_id: ログインユーザーのID。
@@ -3060,15 +3365,31 @@ def get_accessible_users_for_dashboard(
     Returns:
         list[dict]: 閲覧可能なユーザー一覧。各要素は {id, name, dept} を含む。
     """
-    if login_role == "マスタ":
-        dept_f = login_dept if login_dept else None
-        all_users = get_all_users(dept_filter=dept_f)
-        return [{"id": u["id"], "name": u["name"], "dept": u.get("dept", "")} for u in all_users]
+    from .auth_helpers import (
+        normalize_role, is_system_admin, is_dept_head, is_manager,
+    )
+    from flask import session, has_request_context
 
-    if login_role == "管理職":
+    def _fmt(users: list[dict]) -> list[dict]:
+        return [{"id": u["id"], "name": u["name"], "dept": u.get("dept", "")} for u in users]
+
+    role = normalize_role(login_role)
+    active_dept = session.get("active_dept") if has_request_context() else None
+
+    if is_system_admin(role):
+        if active_dept:
+            return _fmt(get_all_users(dept_filter=active_dept))
+        return _fmt(get_all_users())
+
+    if is_dept_head(role):
+        depts = get_user_affiliations(login_user_id)
+        if active_dept and active_dept in depts:
+            depts = [active_dept]
+        return _fmt(get_all_users_by_depts(depts))
+
+    if is_manager(role):
         direct_reports = get_direct_reports(login_user_id)
         result: list[dict] = []
-        # 自分自身を先頭に追加
         self_user = get_user_by_id(login_user_id)
         if self_user:
             result.append({"id": self_user["id"], "name": self_user["name"], "dept": self_user.get("dept", "")})
