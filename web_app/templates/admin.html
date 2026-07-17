@@ -6,8 +6,7 @@
 <div class="d-flex align-items-center justify-content-between mb-4">
   <h4 class="mb-0 fw-bold">管理者ダッシュボード</h4>
   <div class="d-flex gap-2">
-    <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#importBrabioModal">📥 ブラビオ取込</button>
-    {% if session.user_role == 'マスタ' %}
+    {% if session.user_role == 'システム管理者' %}
     <a href="{{ url_for('export_bp.import_schedule') }}" class="btn btn-outline-success btn-sm">📥 予定インポート</a>
     <a href="{{ url_for('mail_report_bp.settings') }}" class="btn btn-outline-warning btn-sm">⚙ メール設定</a>
     <a href="{{ url_for('admin_bp.db_download') }}" class="btn btn-outline-dark btn-sm"
@@ -78,131 +77,6 @@
   </div>
 </div>
 
-<!-- ===== セクション: 本日の実績入力状況 ===== -->
-<div class="card shadow-sm mb-4">
-  <div class="card-header bg-info text-white fw-semibold d-flex align-items-center justify-content-between">
-    <span>本日の実績入力状況（{{ today_str }}）</span>
-    <span class="badge bg-light text-dark" id="daily-status-timer">自動更新: 30秒</span>
-  </div>
-  <div class="card-body p-0" id="daily-status-body">
-    <div class="table-responsive">
-      <table class="table table-hover align-middle mb-0">
-        <thead class="table-secondary">
-          <tr>
-            <th class="ps-3">名前</th>
-            <th>部署</th>
-            <th class="text-center">入力状況</th>
-            <th class="text-center">入力枠数</th>
-            <th class="text-center">最終更新</th>
-            <th class="text-center">操作</th>
-          </tr>
-        </thead>
-        <tbody id="daily-status-tbody">
-          {% for ds in daily_status %}
-          {% if ds.role != 'マスタ' %}
-          <tr>
-            <td class="ps-3 fw-semibold">{{ ds.name }}</td>
-            <td>{{ ds.dept or '-' }}</td>
-            <td class="text-center">
-              {% if ds.filled_slots > 0 %}
-              <span class="badge bg-success">入力済</span>
-              {% else %}
-              <span class="badge bg-warning text-dark">未入力</span>
-              {% endif %}
-            </td>
-            <td class="text-center">{{ ds.filled_slots }}</td>
-            <td class="text-center text-muted small">
-              {% if ds.updated_at %}
-              {{ ds.updated_at[11:16] if ds.updated_at|length > 16 else ds.updated_at }}
-              {% else %}
-              -
-              {% endif %}
-            </td>
-            <td class="text-center">
-              <a href="{{ url_for('daily_bp.daily_today') }}?user_id={{ ds.id }}"
-                 class="btn btn-outline-primary btn-sm" title="実績を確認・コメント入力">
-                実績確認
-              </a>
-            </td>
-          </tr>
-          {% endif %}
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-<!-- ===== 担当メンバー設定カード ===== -->
-<div class="card shadow-sm mb-4">
-  <div class="card-header bg-secondary text-white fw-semibold">
-    担当メンバー設定
-  </div>
-  <div class="card-body">
-    <p class="text-muted small mb-3">
-      各メンバーの直属の上長を設定します。設定されたメンバーのみ、その上長がスケジュール・実績を閲覧・編集できます。
-      「（未設定）」の場合は同一部署の管理職全員がアクセス可能です。
-    </p>
-    {% if assignable_users %}
-    <form method="post" action="{{ url_for('admin_bp.save_assignments') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="table-responsive">
-        <table class="table table-sm align-middle mb-0">
-          <thead class="table-secondary">
-            <tr>
-              <th>名前</th>
-              <th>部署</th>
-              <th>役職</th>
-              <th style="min-width:180px;">直属の上長</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for u in assignable_users %}
-            <tr>
-              <td class="fw-semibold">
-                {{ u.name }}
-                {% if u.id == login_id %}<span class="badge bg-info text-dark ms-1">自分</span>{% endif %}
-              </td>
-              <td>
-                <select name="dept_{{ u.id }}" class="form-select form-select-sm">
-                  <option value="" {% if not u.dept %}selected{% endif %}>（未設定）</option>
-                  {% for d in all_depts %}
-                  <option value="{{ d.dept_name }}" {% if u.dept == d.dept_name %}selected{% endif %}>{{ d.dept_name }}</option>
-                  {% endfor %}
-                </select>
-              </td>
-              <td>{{ u.role }}</td>
-              <td>
-                {% if u.id == login_id %}
-                <span class="text-muted">—</span>
-                {% else %}
-                <select name="manager_{{ u.id }}" class="form-select form-select-sm">
-                  <option value="">（未設定）</option>
-                  {% for m in manager_candidates %}
-                  {% if m.id != u.id %}
-                  <option value="{{ m.id }}" {% if u.manager_id == m.id %}selected{% endif %}>
-                    {{ m.name }}（{{ m.role }}）
-                  </option>
-                  {% endif %}
-                  {% endfor %}
-                </select>
-                {% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      <div class="mt-3 d-flex justify-content-end">
-        <button type="submit" class="btn btn-primary btn-sm">✅ 担当設定を保存</button>
-      </div>
-    </form>
-    {% else %}
-    <p class="text-muted mb-0">設定対象のメンバーがいません。</p>
-    {% endif %}
-  </div>
-</div>
-
 <!-- ===== セクション2: ユーザー管理（Bootstrap accordion） ===== -->
 <div class="accordion shadow-sm" id="userManagementAccordion">
   <div class="accordion-item">
@@ -230,12 +104,14 @@
             <table class="table table-hover align-middle mb-0">
               <thead class="table-secondary">
                 <tr>
-                  {% if login_role == 'マスタ' %}<th class="text-center" style="width:60px;">並び替え</th>{% endif %}
+                  {% if login_role == 'システム管理者' %}<th class="text-center" style="width:60px;">並び替え</th>{% endif %}
                   <th class="ps-3">姓</th>
                   <th>名</th>
+                  <th style="width:130px;">ログインID</th>
                   <th style="width:110px;">役職</th>
-                  <th>部署</th>
-                  <th class="text-center" style="width:130px;">基本勤務時間(h)</th>
+                  <th style="min-width:130px;">部署</th>
+                  <th style="min-width:180px;">直属の上長</th>
+                  <th class="text-center" style="width:120px;">基本勤務時間(h)</th>
                   <th class="text-center" style="width:60px;">削除</th>
                 </tr>
               </thead>
@@ -243,7 +119,7 @@
                 {% for u in all_users %}
                 <tr data-uid="{{ u.id }}">
                   <input type="hidden" name="uid_{{ loop.index0 }}" value="{{ u.id }}">
-                  {% if login_role == 'マスタ' %}
+                  {% if login_role == 'システム管理者' %}
                   <td class="text-center">
                     <button type="button" class="btn btn-outline-secondary btn-sm p-0 px-1 lh-1"
                             onclick="moveRow(this,-1)" title="上へ">▲</button>
@@ -260,10 +136,18 @@
                            class="form-control form-control-sm" maxlength="25">
                   </td>
                   <td>
+                    <input type="text" name="login_id_{{ loop.index0 }}" value="{{ u.login_id or '' }}"
+                           class="form-control form-control-sm" maxlength="30"
+                           pattern="[A-Za-z0-9_.\-]+" title="英数字・_.- が使えます"
+                           autocomplete="off">
+                  </td>
+                  <td>
+                    {# 役職は4段階。旧値（マスタ/ユーザー）のデータも正しく選択表示するため両対応で判定。 #}
                     <select name="role_{{ loop.index0 }}" class="form-select form-select-sm">
-                      <option value="ユーザー" {% if u.role == 'ユーザー' %}selected{% endif %}>ユーザー</option>
-                      <option value="管理職"   {% if u.role == '管理職'   %}selected{% endif %}>管理職</option>
-                      <option value="マスタ"   {% if u.role == 'マスタ'   %}selected{% endif %}>マスタ</option>
+                      <option value="一般"           {% if u.role in ['一般','ユーザー'] %}selected{% endif %}>一般</option>
+                      <option value="管理職"         {% if u.role == '管理職' %}selected{% endif %}>管理職</option>
+                      <option value="所属長"         {% if u.role == '所属長' %}selected{% endif %}>所属長</option>
+                      <option value="システム管理者" {% if u.role in ['システム管理者','マスタ'] %}selected{% endif %}>システム管理者</option>
                     </select>
                   </td>
                   <td>
@@ -271,6 +155,17 @@
                       <option value="">（なし）</option>
                       {% for dept in all_depts %}
                       <option value="{{ dept.dept_name }}" {% if u.dept == dept.dept_name %}selected{% endif %}>{{ dept.dept_name }}</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                  <td>
+                    {# 直属の上長。設定すると、その上長が本人のスケジュール・実績を閲覧・編集できる。 #}
+                    <select name="manager_{{ loop.index0 }}" class="form-select form-select-sm">
+                      <option value="">（未設定）</option>
+                      {% for m in manager_candidates %}
+                      {% if m.id != u.id %}
+                      <option value="{{ m.id }}" {% if u.manager_id == m.id %}selected{% endif %}>{{ m.name }}</option>
+                      {% endif %}
                       {% endfor %}
                     </select>
                   </td>
@@ -301,7 +196,7 @@
         </form>
 
         <!-- 並び順保存フォーム（マスタのみ） -->
-        {% if login_role == 'マスタ' %}
+        {% if login_role == 'システム管理者' %}
         <form id="reorder-form" method="post" action="{{ url_for('admin_bp.reorder_users') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         </form>
@@ -358,7 +253,7 @@
                 <input type="number"
                        class="form-control form-control-sm"
                        name="std_hours"
-                       value="8.0"
+                       value="7.75"
                        step="0.25"
                        min="0"
                        max="24">
@@ -407,7 +302,7 @@
             </thead>
             <tbody>
               {% for u in all_users %}
-              {% if login_role == 'マスタ' or (login_role == '管理職' and u.role in ('ユーザー', '管理職')) %}
+              {% if login_role == 'システム管理者' or (login_role == '管理職' and u.role in ('一般', '管理職')) %}
               <tr>
                 <td class="fw-semibold">{{ u.name }}</td>
                 <td>{{ u.dept or '-' }}</td>
@@ -464,7 +359,7 @@
 <div class="accordion shadow-sm" id="deptAccordion">
 
   <!-- ===== 部署管理（マスタのみ） ===== -->
-  {% if login_role == 'マスタ' %}
+  {% if login_role == 'システム管理者' %}
   <div class="accordion-item">
     <h2 class="accordion-header" id="headingDepts">
       <button class="accordion-button collapsed fw-semibold"
@@ -557,7 +452,7 @@
 </div><!-- /accordion -->
 
 <!-- ===== 会社休日管理（マスタのみ） ===== -->
-{% if login_role == 'マスタ' %}
+{% if login_role == 'システム管理者' %}
 <div class="card shadow-sm mt-4">
   <div class="card-header bg-warning text-dark fw-semibold d-flex align-items-center justify-content-between"
        style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#collapseHoliday" aria-expanded="false">
@@ -624,7 +519,7 @@
 {% endif %}
 
 <!-- ===== マスタデータ管理（マスタのみ） ===== -->
-{% if login_role == 'マスタ' %}
+{% if login_role == 'システム管理者' %}
 <div class="card shadow-sm mt-4">
   <div class="card-header bg-dark text-white fw-semibold"
        style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#collapseMaster" aria-expanded="false">
@@ -636,9 +531,12 @@
     <h6 class="fw-bold mb-2">エクスポート（CSV ダウンロード）</h6>
     <div class="d-flex flex-wrap gap-2 mb-3">
       <a href="{{ url_for('admin_bp.export_master_csv', table_key='users') }}" class="btn btn-outline-primary btn-sm">ユーザー</a>
+      <a href="{{ url_for('admin_bp.export_master_csv', table_key='user_affiliation') }}" class="btn btn-outline-primary btn-sm">所属長担当所属</a>
       <a href="{{ url_for('admin_bp.export_master_csv', table_key='dept_master') }}" class="btn btn-outline-primary btn-sm">部署</a>
       <a href="{{ url_for('admin_bp.export_master_csv', table_key='task_category') }}" class="btn btn-outline-primary btn-sm">大区分</a>
       <a href="{{ url_for('admin_bp.export_master_csv', table_key='task_subcategory') }}" class="btn btn-outline-primary btn-sm">中区分</a>
+      <a href="{{ url_for('admin_bp.export_master_csv', table_key='task_master') }}" class="btn btn-outline-primary btn-sm">作業マスタ</a>
+      <a href="{{ url_for('admin_bp.export_master_csv', table_key='routine_schedule') }}" class="btn btn-outline-primary btn-sm">定例作業</a>
       <a href="{{ url_for('admin_bp.export_master_csv', table_key='mail_settings') }}" class="btn btn-outline-primary btn-sm">メール設定</a>
       <a href="{{ url_for('admin_bp.export_master_csv', table_key='project_task') }}" class="btn btn-outline-primary btn-sm">プロジェクトタスク</a>
       <a href="{{ url_for('admin_bp.export_all_master_csv') }}" class="btn btn-primary btn-sm">一括エクスポート</a>
@@ -663,6 +561,29 @@
   </div>{# /collapseMaster #}
 </div>
 {% endif %}
+
+<!-- ===== マスタ・タスク管理（※削除予定・折りたたみ） ===== -->
+<div class="accordion shadow-sm mt-4" id="masterTaskAccordion">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingMasterTask">
+      <button class="accordion-button collapsed fw-semibold" type="button"
+              data-bs-toggle="collapse" data-bs-target="#collapseMasterTask"
+              aria-expanded="false" aria-controls="collapseMasterTask">
+        🗂 マスタ・タスク管理
+        <span class="badge bg-warning text-dark ms-2">削除予定</span>
+      </button>
+    </h2>
+    <div id="collapseMasterTask" class="accordion-collapse collapse"
+         aria-labelledby="headingMasterTask" data-bs-parent="#masterTaskAccordion">
+      <div class="accordion-body d-flex flex-wrap gap-2">
+        <a href="{{ url_for('tasks.task_list') }}" class="btn btn-outline-info btn-sm">📝 作業登録（作業マスタ）</a>
+        <a href="{{ url_for('tasks.category_list') }}" class="btn btn-outline-info btn-sm">🏷 区分管理（大区分・中区分）</a>
+        <a href="{{ url_for('project_tasks_bp.task_list') }}" class="btn btn-outline-info btn-sm">📋 タスク管理（一覧・修正）</a>
+        <span class="text-muted small align-self-center">※ タスクの新規登録はガントチャートから行います。</span>
+      </div>
+    </div>
+  </div>
+</div>
 
 {% endblock %}
 
@@ -698,74 +619,7 @@ function saveOrder() {
   form.submit();
 }
 
-/* === 本日の実績入力状況 自動更新 === */
-(function() {
-  const POLL_INTERVAL = 30000; // 30秒
-  const tbody = document.getElementById('daily-status-tbody');
-  const timerBadge = document.getElementById('daily-status-timer');
-  if (!tbody) return;
-
-  let countdown = POLL_INTERVAL / 1000;
-  let countdownTimer = null;
-
-  function startCountdown() {
-    countdown = POLL_INTERVAL / 1000;
-    if (countdownTimer) clearInterval(countdownTimer);
-    countdownTimer = setInterval(function() {
-      countdown--;
-      if (timerBadge) timerBadge.textContent = '自動更新: ' + countdown + '秒';
-    }, 1000);
-  }
-
-  function escapeHtml(text) {
-    var map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
-    return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
-  }
-
-  function formatTime(updatedAt) {
-    if (!updatedAt || updatedAt.length < 16) return '-';
-    return updatedAt.substring(11, 16);
-  }
-
-  function refreshDailyStatus() {
-    fetch('{{ url_for("admin_bp.api_daily_status") }}')
-      .then(function(res) {
-        if (!res.ok) { return Promise.reject('HTTP ' + res.status); }
-        return res.json();
-      })
-      .then(function(data) {
-        var html = '';
-        var items = data.items || [];
-        for (var i = 0; i < items.length; i++) {
-          var ds = items[i];
-          if (ds.role === 'マスタ') continue;
-          html += '<tr>';
-          html += '<td class="ps-3 fw-semibold">' + escapeHtml(ds.name) + '</td>';
-          html += '<td>' + escapeHtml(ds.dept || '-') + '</td>';
-          if (ds.filled_slots > 0) {
-            html += '<td class="text-center"><span class="badge bg-success">入力済</span></td>';
-          } else {
-            html += '<td class="text-center"><span class="badge bg-warning text-dark">未入力</span></td>';
-          }
-          html += '<td class="text-center">' + parseInt(ds.filled_slots) + '</td>';
-          html += '<td class="text-center text-muted small">' + escapeHtml(formatTime(ds.updated_at)) + '</td>';
-          html += '<td class="text-center">';
-          html += '<a href="{{ url_for("daily_bp.daily_today") }}?user_id=' + parseInt(ds.id) + '"';
-          html += ' class="btn btn-outline-primary btn-sm" title="実績を確認・コメント入力">実績確認</a>';
-          html += '</td></tr>';
-        }
-        tbody.innerHTML = html;
-        startCountdown();
-      })
-      .catch(function(err) {
-        console.error('実績状況の更新に失敗:', err);
-        startCountdown();
-      });
-  }
-
-  startCountdown();
-  setInterval(refreshDailyStatus, POLL_INTERVAL);
-})();
+/* 本日の実績入力状況セクションは削除済み（自動更新JSも不要のため撤去） */
 
 function submitDeptUpdate(deptId) {
   const name = document.getElementById('dept-name-' + deptId).value.trim();
@@ -776,35 +630,5 @@ function submitDeptUpdate(deptId) {
   document.getElementById('dept-update-form-' + deptId).submit();
 }
 </script>
-
-{# ── ブラビオ取込モーダル ── #}
-<div class="modal fade" id="importBrabioModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <form method="post" action="{{ url_for('project_tasks_bp.import_brabio') }}" enctype="multipart/form-data">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div class="modal-header">
-          <h6 class="modal-title fw-bold">ブラビオExcel取込</h6>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <p class="small text-muted mb-2">
-            ブラビオからエクスポートしたExcelファイルを取り込みます。<br>
-            同名タスクが既に存在する場合はスキップします。<br>
-            担当者はユーザー名の部分一致で自動マッチングします。
-          </p>
-          <div class="mb-3">
-            <label class="form-label small fw-semibold">Excelファイル（省略時はdata/ブラビオ商品開発業務.xlsx）</label>
-            <input type="file" name="brabio_file" class="form-control form-control-sm" accept=".xlsx">
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">キャンセル</button>
-          <button type="submit" class="btn btn-primary btn-sm">取込実行</button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
 
 {% endblock %}

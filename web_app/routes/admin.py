@@ -39,13 +39,15 @@ from ..models import (
     get_all_subcategories,
     get_all_users,
     get_all_users_daily_status,
+    get_user_affiliations,
     get_all_users_schedule_status,
     get_company_holidays,
     get_mail_setting,
     get_operation_logs,
     get_user_by_id,
-    save_user_dept,
     save_user_manager,
+    set_user_affiliations,
+    set_user_login_id,
     set_user_password,
     update_dept,
     update_user,
@@ -55,7 +57,10 @@ from ..models import (
 )
 from ..database import get_db
 from ..log_service import record_operation, ACTION_USER_ADD, ACTION_USER_DELETE, ACTION_USER_UPDATE
-from ..auth_helpers import is_privileged, is_master, can_access_user, can_set_password_for
+from ..auth_helpers import (
+    is_privileged, is_master, is_system_admin, is_dept_head,
+    normalize_role, can_access_user, can_set_password_for,
+)
 
 admin_bp = Blueprint("admin_bp", __name__, url_prefix="/admin")
 
@@ -158,7 +163,7 @@ def dashboard() -> str:
     all_users_any = get_all_users()
     assignable_users: list[dict] = [
         u for u in all_users_any
-        if u.get("role") == "ユーザー"
+        if normalize_role(u.get("role", "")) == "一般"
         and ((u.get("dept") or "") == login_dept or not (u.get("dept") or ""))
     ]
     # ログイン中のマスタ／管理職自身も部署設定対象に含める。
@@ -177,6 +182,11 @@ def dashboard() -> str:
     company_holidays_next = get_company_holidays(current_year + 1)
     company_holidays = company_holidays_this + company_holidays_next
 
+    # 所属長ユーザーの担当所属（複数）マップ。ユーザー一括編集で表示・設定に使う。
+    user_affiliations_map: dict[int, list[str]] = {
+        u["id"]: get_user_affiliations(u["id"]) for u in all_users
+    }
+
     return render_template(
         "admin.html",
         status_list=status_list,
@@ -194,6 +204,7 @@ def dashboard() -> str:
         assignable_users=assignable_users,
         company_holidays=company_holidays,
         current_year=current_year,
+        user_affiliations_map=user_affiliations_map,
     )
 
 
@@ -348,6 +359,21 @@ def bulk_update_users() -> str:
 
     login_role: str = session.get("user_role", "")
     login_dept: str = session.get("user_dept", "")
+    login_id: int = int(session.get("user_id", 0))
+
+    from ..auth_helpers import (
+        is_dept_head, is_system_admin, normalize_role,
+        ROLE_SYSTEM_ADMIN, ROLE_DEPT_HEAD,
+    )
+
+    # 編集可能な所属集合（None=全所属）。
+    # システム管理者=全所属、所属長=担当所属、管理職=自分の主所属のみ。
+    if is_system_admin(login_role):
+        allowed_depts: set[str] | None = None
+    elif is_dept_head(login_role):
+        allowed_depts = set(get_user_affiliations(login_id))
+    else:
+        allowed_depts = {login_dept} if login_dept else set()
 
     error_ids: list[str] = []
     skipped_count: int = 0
@@ -356,7 +382,7 @@ def bulk_update_users() -> str:
         last_name: str = request.form.get(f"last_name_{i}", "").strip()
         first_name: str = request.form.get(f"first_name_{i}", "").strip()
         name: str = (last_name + " " + first_name).strip() if first_name else last_name
-        role: str = request.form.get(f"role_{i}", "ユーザー").strip()
+        role: str = request.form.get(f"role_{i}", "一般").strip()
         dept: str = request.form.get(f"dept_{i}", "").strip()
         try:
             user_id = int(raw_id)
@@ -367,17 +393,52 @@ def bulk_update_users() -> str:
         if not name:
             continue
 
-        # 管理職は自部署以外のユーザーを更新不可
-        if not is_master(login_role):
+        # 対象ユーザーが編集可能な所属に属するか（システム管理者以外は担当所属に限定）。
+        if allowed_depts is not None:
             target_user = get_user_by_id(user_id)
-            if target_user is None or target_user.get("dept") != login_dept:
+            if target_user is None or (target_user.get("dept") or "") not in allowed_depts:
                 skipped_count += 1
                 continue
+
+        # 役職昇格の禁止: システム管理者以外は「システム管理者」「所属長」を付与できない。
+        new_role = normalize_role(role)
+        if not is_system_admin(login_role) and new_role in (ROLE_SYSTEM_ADMIN, ROLE_DEPT_HEAD):
+            skipped_count += 1
+            continue
 
         success = update_user(user_id, name, role, dept, std_hours,
                               last_name=last_name, first_name=first_name)
         if not success:
             error_ids.append(raw_id)
+
+        # ログインID（入力があり、現行と異なる場合のみ更新。重複時はエラー扱い）
+        new_login_id = request.form.get(f"login_id_{i}", "").strip()
+        if new_login_id:
+            target = get_user_by_id(user_id)
+            if target is None or target.get("login_id") != new_login_id:
+                if not set_user_login_id(user_id, new_login_id):
+                    error_ids.append(f"{raw_id}(ID重複)")
+
+        # 直属の上長（manager_id）。空なら解除。自分自身は上長にできない。
+        manager_raw = request.form.get(f"manager_{i}", "").strip()
+        if manager_raw:
+            try:
+                manager_id = int(manager_raw)
+            except ValueError:
+                manager_id = None
+            if manager_id == user_id:
+                manager_id = None  # 自分自身は不可
+        else:
+            manager_id = None
+        save_user_manager(user_id, manager_id)
+
+        # 所属長の担当所属（複数）はシステム管理者のみ設定できる（自己付与による権限拡大を防ぐ）。
+        if is_system_admin(login_role):
+            if is_dept_head(new_role):
+                affils = request.form.getlist(f"affil_{i}")
+                set_user_affiliations(user_id, affils)
+            else:
+                set_user_affiliations(user_id, [])
 
     if error_ids:
         flash(f"一部のユーザー更新に失敗しました（ID: {', '.join(error_ids)}）", "warning")
@@ -458,72 +519,6 @@ def update_dept_route(dept_id: int) -> str:
         return _redirect_dashboard()
     update_dept(dept_id, dept_name, display_order)
     flash("部署情報を更新しました", "success")
-    return _redirect_dashboard()
-
-
-@admin_bp.route("/assignments/save", methods=["POST"])
-def save_assignments() -> str:
-    """担当メンバーの上長（manager_id）を一括保存する。
-
-    フォームから manager_{user_id} の形式で上長IDを受け取り、
-    各ユーザーの manager_id を更新する。
-
-    Returns:
-        str: 管理者ダッシュボードへのリダイレクトレスポンス。
-    """
-    login_role: str = session.get("user_role", "")
-    if not is_privileged(login_role):
-        abort(403)
-
-    login_id: int = int(session.get("user_id", 0))
-    login_dept: str = session.get("user_dept", "")
-
-    # 更新可能なユーザーIDセット：自部署のユーザー + 部署未設定のユーザー
-    all_u = get_all_users()
-    allowed_ids: set[int] = {
-        u["id"] for u in all_u
-        if u.get("role") == "ユーザー"
-        and ((u.get("dept") or "") == login_dept or not (u.get("dept") or ""))
-    }
-    # ログイン中のマスタ／管理職自身も自分の所属部署を更新できるようにする
-    if login_id:
-        allowed_ids.add(login_id)
-
-    # 部署マスタ（有効な部署名のセット。未設定="" は常に許可）
-    valid_depts: set[str] = {d["dept_name"] for d in get_all_depts()}
-
-    updated = 0
-    # 部署更新（manager より先に処理：部署を変えてからその上長を設定する想定）
-    for key, val in request.form.items():
-        if not key.startswith("dept_"):
-            continue
-        try:
-            target_uid = int(key[len("dept_"):])
-        except ValueError:
-            continue
-        if target_uid not in allowed_ids:
-            continue
-        new_dept = val.strip()
-        # 部署名の妥当性チェック（空 or マスタに存在する部署のみ許可）
-        if new_dept and new_dept not in valid_depts:
-            continue
-        save_user_dept(target_uid, new_dept)
-        updated += 1
-    # 上長更新
-    for key, val in request.form.items():
-        if not key.startswith("manager_"):
-            continue
-        try:
-            target_uid = int(key[len("manager_"):])
-        except ValueError:
-            continue
-        if target_uid not in allowed_ids:
-            continue
-        manager_id: int | None = int(val) if val else None
-        save_user_manager(target_uid, manager_id)
-        updated += 1
-
-    flash(f"担当メンバー設定を保存しました（{updated}件）", "success")
     return _redirect_dashboard()
 
 
@@ -645,8 +640,17 @@ def operation_logs() -> str:
 _EXPORT_TABLES: dict[str, dict] = {
     "users": {
         "label": "ユーザー",
-        "columns": ["id", "name", "role", "dept", "std_hours_am", "std_hours_pm", "std_hours", "display_order", "manager_id"],
-        "sql": "SELECT id, name, role, dept, std_hours_am, std_hours_pm, std_hours, display_order, manager_id FROM users ORDER BY display_order, id",
+        # 現行スキーマ準拠（login_id・姓名を含む。password_hash/remember_token は機密のため除外）
+        "columns": ["id", "login_id", "name", "last_name", "first_name", "role", "dept",
+                     "std_hours_am", "std_hours_pm", "std_hours", "display_order", "manager_id"],
+        "sql": ("SELECT id, login_id, name, last_name, first_name, role, dept,"
+                " std_hours_am, std_hours_pm, std_hours, display_order, manager_id"
+                " FROM users ORDER BY display_order, id"),
+    },
+    "user_affiliation": {
+        "label": "所属長担当所属",
+        "columns": ["id", "user_id", "dept_name"],
+        "sql": "SELECT id, user_id, dept_name FROM user_affiliation ORDER BY user_id, id",
     },
     "dept_master": {
         "label": "部署",
@@ -663,6 +667,18 @@ _EXPORT_TABLES: dict[str, dict] = {
         "columns": ["id", "category_id", "name", "display_order"],
         "sql": "SELECT id, category_id, name, display_order FROM task_subcategory ORDER BY category_id, display_order, id",
     },
+    "task_master": {
+        "label": "作業マスタ",
+        "columns": ["id", "user_id", "task_name", "display_order", "default_hours", "category_id", "subcategory_id"],
+        "sql": ("SELECT id, user_id, task_name, display_order, default_hours, category_id, subcategory_id"
+                " FROM task_master ORDER BY user_id, display_order, id"),
+    },
+    "routine_schedule": {
+        "label": "定例作業",
+        "columns": ["id", "user_id", "task_name", "subcategory_name", "default_hours", "row_number", "days"],
+        "sql": ("SELECT id, user_id, task_name, subcategory_name, default_hours, row_number, days"
+                " FROM routine_schedule ORDER BY user_id, row_number, id"),
+    },
     "mail_settings": {
         "label": "メール設定",
         "columns": ["role", "to_address", "cc_address", "bcc_address", "subject_template", "body_template"],
@@ -670,12 +686,19 @@ _EXPORT_TABLES: dict[str, dict] = {
     },
     "project_task": {
         "label": "プロジェクトタスク",
+        # 現行スキーマ準拠（担当・イベント・工数・親子ツリー等の追加カラムを網羅）
         "columns": ["id", "category_id", "subcategory_id", "task_name", "description",
                      "start_date", "end_date", "status", "delay_days", "progress",
-                     "display_order", "created_by"],
+                     "display_order", "created_by", "assigned_to", "assigned_to_2",
+                     "is_milestone", "is_event", "event_start_time", "event_end_time",
+                     "planned_hours", "import_to_schedule_1", "import_to_schedule_2",
+                     "event_member_ids", "parent_task_id", "member_ids"],
         "sql": ("SELECT id, category_id, subcategory_id, task_name, description,"
                 " start_date, end_date, status, delay_days, progress,"
-                " display_order, created_by"
+                " display_order, created_by, assigned_to, assigned_to_2,"
+                " is_milestone, is_event, event_start_time, event_end_time,"
+                " planned_hours, import_to_schedule_1, import_to_schedule_2,"
+                " event_member_ids, parent_task_id, member_ids"
                 " FROM project_task ORDER BY display_order, id"),
     },
 }
@@ -928,7 +951,7 @@ def add_company_holiday_route() -> object:
     Returns:
         object: 管理者ダッシュボードへのリダイレクト
     """
-    if session.get("user_role") != "マスタ":
+    if not is_system_admin(session.get("user_role", "")):
         abort(403)
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
@@ -965,7 +988,7 @@ def delete_company_holiday_route(holiday_id: int) -> object:
     Returns:
         object: 管理者ダッシュボードへのリダイレクト
     """
-    if session.get("user_role") != "マスタ":
+    if not is_system_admin(session.get("user_role", "")):
         abort(403)
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
