@@ -1,0 +1,272 @@
+<style>
+  :root {
+    --ground: #f7f8fa; --surface: #ffffff; --surface-2: #eef1f5;
+    --ink: #1a2230; --ink-soft: #55617a; --ink-faint: #8b96ab; --line: #dce1ea;
+    --accent: #2563a8; --accent-soft: #e7f0fa;
+    --good: #2e8b6f; --good-bg: #e3f2ec;
+    --warn: #c98a2b; --warn-bg: #f8efdd;
+    --crit: #c0453f; --crit-bg: #f8e3e2;
+    --new: #7a4fb0; --new-bg: #efe8f7;
+    --radius: 10px; --maxw: 1080px;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0f141b; --surface: #171e28; --surface-2: #1f2833;
+      --ink: #e8ecf2; --ink-soft: #a3afc2; --ink-faint: #6b7789; --line: #2a3542;
+      --accent: #5b9bd8; --accent-soft: #17293c;
+      --good: #4bb593; --good-bg: #16302a; --warn: #e0a94d; --warn-bg: #33290f;
+      --crit: #e0655f; --crit-bg: #331917; --new: #a684d6; --new-bg: #241832;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f7f8fa; --surface: #ffffff; --surface-2: #eef1f5;
+    --ink: #1a2230; --ink-soft: #55617a; --ink-faint: #8b96ab; --line: #dce1ea;
+    --accent: #2563a8; --accent-soft: #e7f0fa;
+    --good: #2e8b6f; --good-bg: #e3f2ec; --warn: #c98a2b; --warn-bg: #f8efdd;
+    --crit: #c0453f; --crit-bg: #f8e3e2; --new: #7a4fb0; --new-bg: #efe8f7;
+  }
+  :root[data-theme="dark"] {
+    --ground: #0f141b; --surface: #171e28; --surface-2: #1f2833;
+    --ink: #e8ecf2; --ink-soft: #a3afc2; --ink-faint: #6b7789; --line: #2a3542;
+    --accent: #5b9bd8; --accent-soft: #17293c;
+    --good: #4bb593; --good-bg: #16302a; --warn: #e0a94d; --warn-bg: #33290f;
+    --crit: #e0655f; --crit-bg: #331917; --new: #a684d6; --new-bg: #241832;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans); line-height: 1.7; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px 96px; }
+  header.mast { border-bottom: 1px solid var(--line); background: var(--surface); padding: 40px 0 30px; }
+  .mast .wrap { padding-bottom: 0; }
+  .eyebrow { font-size: .72rem; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin: 0 0 10px; }
+  h1 { font-size: clamp(1.5rem, 3.2vw, 2.2rem); line-height: 1.25; margin: 0 0 12px; text-wrap: balance; letter-spacing: -.01em; }
+  .lede { font-size: 1.02rem; color: var(--ink-soft); max-width: 64ch; margin: 0; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 18px; font-size: .82rem; color: var(--ink-faint); }
+  .meta-row b { color: var(--ink-soft); font-weight: 600; }
+  section { margin-top: 52px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 8px; border-bottom: 2px solid var(--ink); padding-bottom: 8px; }
+  .sec-num { font-family: var(--mono); font-size: .8rem; color: var(--accent); font-weight: 700; }
+  .sec-head h2 { font-size: 1.3rem; margin: 0; letter-spacing: -.005em; }
+  .sec-sub { color: var(--ink-soft); font-size: .92rem; margin: 14px 0 22px; max-width: 70ch; }
+
+  /* バグ警告バナー */
+  .alert-bug { background: var(--crit-bg); border: 1px solid color-mix(in srgb, var(--crit) 40%, transparent); border-left: 5px solid var(--crit); border-radius: var(--radius); padding: 18px 22px; margin-top: 24px; }
+  .alert-bug h3 { margin: 0 0 6px; font-size: 1.05rem; color: var(--crit); display: flex; align-items: center; gap: 8px; }
+  .alert-bug p { margin: 4px 0 0; font-size: .9rem; color: var(--ink); }
+  .alert-bug code { font-family: var(--mono); font-size: .82em; background: var(--surface); padding: 1px 6px; border-radius: 4px; }
+
+  /* カード群 */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 7px; }
+  .card h3 { margin: 0; font-size: .98rem; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card p { margin: 0; font-size: .85rem; color: var(--ink-soft); }
+  .card .path { font-family: var(--mono); font-size: .72rem; color: var(--ink-faint); word-break: break-all; }
+  .card.st-safe { border-left: 4px solid var(--good); }
+  .card.st-check { border-left: 4px solid var(--warn); }
+  .card.st-keep { border-left: 4px solid var(--ink-faint); }
+
+  .chip { font-size: .66rem; font-weight: 700; padding: 2px 9px; border-radius: 20px; letter-spacing: .02em; white-space: nowrap; }
+  .chip.safe { background: var(--good-bg); color: var(--good); }
+  .chip.check { background: var(--warn-bg); color: var(--warn); }
+  .chip.keep { background: var(--surface-2); color: var(--ink-soft); }
+  .chip.bug { background: var(--crit-bg); color: var(--crit); }
+
+  /* 業務改善テーブル */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); margin-top: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: .86rem; min-width: 680px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--surface-2); font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
+  tr:last-child td { border-bottom: none; }
+  td.prop { font-weight: 600; color: var(--ink); }
+  .badge2 { display: inline-block; font-family: var(--mono); font-size: .72rem; font-weight: 700; padding: 1px 7px; border-radius: 5px; }
+  .b-hi { background: var(--good-bg); color: var(--good); }
+  .b-mid { background: var(--warn-bg); color: var(--warn); }
+  .b-lo { background: var(--surface-2); color: var(--ink-soft); }
+  .cost-s { color: var(--good); font-weight: 700; }
+  .cost-m { color: var(--warn); font-weight: 700; }
+  .cost-l { color: var(--crit); font-weight: 700; }
+  .star { color: var(--accent); font-weight: 700; }
+
+  .flow-note { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); border-radius: var(--radius); padding: 15px 20px; font-size: .88rem; margin-top: 20px; }
+  .flow-note b { color: var(--accent); }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 14px 0 4px; font-size: .78rem; color: var(--ink-soft); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line); font-size: .8rem; color: var(--ink-faint); }
+  h4.grp { font-size: .82rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-faint); margin: 26px 0 12px; font-weight: 700; }
+</style>
+
+<header class="mast">
+  <div class="wrap">
+    <p class="eyebrow">予定管理システム — 全体分析（不要機能の整理・業務フロー改善）</p>
+    <h1>使わない機能を削ぎ、毎日の業務動線を短くする</h1>
+    <p class="lede">システム全体をコード横断で精査し、「もう不要な機能・重複・デッドコード」と「基幹フローに沿った使い勝手の改善余地」を洗い出しました。まず放置すると実害のある不具合が1件見つかっています。</p>
+    <div class="meta-row">
+      <span><b>対象</b> web_app 全体（routes / templates / models）</span>
+      <span><b>手法</b> 参照グラフの相互照合（url_for ↔ route）＋各画面の動線精査</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- 実バグ -->
+  <div class="alert-bug">
+    <h3>🐞 先に直すべき不具合：システム管理者が「会社休日」を追加・削除できない</h3>
+    <p>Phase 2 の役職改名（マスタ→システム管理者）の際、会社休日の追加・削除ルートに残った <code>if session["user_role"] != "マスタ"</code> の生比較が、新しい役職名「システム管理者」と一致せず<b>常に 403（拒否）</b>になります。会社休日は予定の自動配分（土日祝スキップ）に効くため、放置すると休日設定ができません。</p>
+    <p style="margin-top:8px;"><code>admin.py:977 / 1014</code> の判定を <code>is_system_admin(...)</code> に置き換えれば解消。同種の空振りが <code>models.py:3335</code>（進捗ダッシュボードのユーザー選択肢が空になる懸念）にもあります。<b>次の作業で最優先で修正します。</b></p>
+  </div>
+
+  <!-- 不要機能の整理 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">PART 1</span><h2>不要機能・重複・デッドコードの整理</h2></div>
+    <p class="sec-sub">最近の変更（認証刷新・役職4段階化・管理画面整理）で使われなくなったコードを、削除の安全度で3段階に分けました。</p>
+
+    <div class="legend">
+      <span><span class="dot" style="background:var(--good)"></span>安全に削除可</span>
+      <span><span class="dot" style="background:var(--warn)"></span>要確認（方針判断が必要）</span>
+      <span><span class="dot" style="background:var(--ink-faint)"></span>現状維持推奨</span>
+    </div>
+
+    <h4 class="grp">安全に削除できる（孤立・未使用）</h4>
+    <div class="cards">
+      <div class="card st-safe">
+        <h3>タスク俯瞰画面 <span class="chip safe">削除可</span></h3>
+        <p>どのボタン・ナビからも辿れない孤立画面。集計関数は進捗ダッシュボードで使うため関数は残し、画面とルートのみ削除。</p>
+        <p class="path">project_tasks.py:934 task_overview ＋ project_tasks_overview.html</p>
+      </div>
+      <div class="card st-safe">
+        <h3>名前でユーザー取得 <span class="chip safe">削除可</span></h3>
+        <p>旧「人を選択」ログインの名残。参照ゼロ。現在はログインIDで引くため不要。</p>
+        <p class="path">models.py:87 get_user_by_name</p>
+      </div>
+      <div class="card st-safe">
+        <h3>ブラビオ取込 <span class="chip check">要確認</span></h3>
+        <p>管理画面のボタンは削除済みで画面から到達不可。外部ツールからの手動取込運用が無ければ、ルートと取込関数・ヘルプ文を削除。</p>
+        <p class="path">project_tasks.py:682 import_brabio ＋ models.py import_brabio_excel</p>
+      </div>
+    </div>
+
+    <h4 class="grp">要確認（方針を決めてから）</h4>
+    <div class="cards">
+      <div class="card st-check">
+        <h3>ガントチャート 新旧併存 <span class="chip check">方針判断</span></h3>
+        <p>上部ナビの「ガントチャート」は<b>新（試作 planner）</b>、タスク管理・進捗内のボタンは<b>旧 gantt</b>を指す。目的が重複。どちらを正式版にするか決めれば、他方一式（約60KB）を削除できる。</p>
+        <p class="path">planner.py（新・試作） vs project_tasks.py:1300 gantt（旧）</p>
+      </div>
+      <div class="card st-check">
+        <h3>ダッシュボード用ユーザー取得の重複 <span class="chip check">統合候補</span></h3>
+        <p>正版 get_accessible_users（4段階ロール・所属長対応）と、旧2ロール前提の dashboard 版が併存。dashboard 版は旧役職の生比較を含み前述バグと同根。正版へ寄せて削除推奨。</p>
+        <p class="path">models.py:147（正） vs models.py:3317（重複）</p>
+      </div>
+      <div class="card st-check">
+        <h3>担当メンバー設定カード <span class="chip check">削除予定</span></h3>
+        <p>すでに「削除予定」バッジ付きで最下部へ移動済み。所属長の担当所属はユーザー管理一覧に統合済み。上長(manager_id)設定の代替が揃えば完全削除。</p>
+        <p class="path">admin.html 最下部 ＋ admin.py save_assignments</p>
+      </div>
+    </div>
+
+    <h4 class="grp">現状維持推奨</h4>
+    <div class="cards">
+      <div class="card st-keep">
+        <h3>is_master エイリアス <span class="chip keep">維持</span></h3>
+        <p>「非推奨」明記だが normalize 経由で正しく動作。呼び出しの is_system_admin 統一は将来の整理課題。</p>
+      </div>
+      <div class="card st-keep">
+        <h3>パスワード変更機能 <span class="chip keep">維持</span></h3>
+        <p>将来のSSO化で廃止予定だが現用中。SSO導入時にまとめて撤去。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 業務フロー改善 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">PART 2</span><h2>業務フローに沿った改善余地</h2></div>
+    <p class="sec-sub">基幹フロー（ガント→タスク→週間予定→実績→振り返り→上長コメント）を毎日使う前提で、入力の手間・動線の分断・蓄積データの未活用を精査しました。効果×コストで優先度を付けています。</p>
+
+    <div class="legend">
+      <span>効果: <span class="badge2 b-hi">高</span> <span class="badge2 b-mid">中</span> <span class="badge2 b-lo">低</span></span>
+      <span>コスト: <span class="cost-s">小</span> <span class="cost-m">中</span> <span class="cost-l">大</span></span>
+      <span><span class="star">★</span> = 先行着手を推奨</span>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th style="width:34%">改善案</th><th style="width:8%">効果</th><th style="width:8%">コスト</th><th>現状の課題 → 改善で得られること</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="prop"><span class="star">★</span> 管理画面の実績状況から本人の画面へ直リンク</td>
+            <td><span class="badge2 b-hi">高</span></td><td class="cost-s">小</td>
+            <td>今は名前をクリックできず、実績画面で手動でユーザー切替が必要。行を本人の実績画面リンクにするだけで、確認→コメントが2クリックに。</td>
+          </tr>
+          <tr>
+            <td class="prop"><span class="star">★</span> 実績入力「予定を実績にコピー」</td>
+            <td><span class="badge2 b-hi">高</span></td><td class="cost-s">小</td>
+            <td>一度保存すると予定が反映されず空欄基準に。予定通りの日も打ち直しが必要。行ごとのコピー／「予定通り」トグルで毎日の入力を数クリックに。</td>
+          </tr>
+          <tr>
+            <td class="prop"><span class="star">★</span> 週間予定の曜日から当日実績へ遷移</td>
+            <td><span class="badge2 b-mid">中</span></td><td class="cost-s">小</td>
+            <td>週間予定を見て実績を入れる導線が分断。曜日ヘッダーを実績画面リンクにすれば往復が減る（バッジ用データは既にある）。</td>
+          </tr>
+          <tr>
+            <td class="prop"><span class="star">★</span> 配下コメントの期間横断ビュー（未コメント強調）</td>
+            <td><span class="badge2 b-hi">高</span></td><td class="cost-m">中</td>
+            <td>上長が見られるのは今日1日分のみ。週/期間で配下の振り返りを一覧し、上長コメント未入力を強調。蓄積コメントの実活用。</td>
+          </tr>
+          <tr>
+            <td class="prop">繰越タスクを当日にワンクリック投入</td>
+            <td><span class="badge2 b-mid">中</span></td><td class="cost-s">小</td>
+            <td>繰越は一覧表示のみで、当日枠へ入れるには手打ち。空きスロット投入関数は既にあるので「今日やる」ボタンで再入力ゼロに。</td>
+          </tr>
+          <tr>
+            <td class="prop">予実バッジをタスク一覧・ガントにも表示</td>
+            <td><span class="badge2 b-mid">中</span></td><td class="cost-m">中</td>
+            <td>実績工数ベースの遅れ判定（予実）が実績画面だけに。タスク一覧・ガントにも🔴遅れ/🟢前倒しを出し、客観的な遅れを一目に。</td>
+          </tr>
+          <tr>
+            <td class="prop">週間予定の合計時間をリアルタイム検証</td>
+            <td><span class="badge2 b-mid">中</span></td><td class="cost-m">中</td>
+            <td>過不足はExcel出力時しか警告されない。入力画面で標準勤務との差を即時色表示すれば手戻り削減。</td>
+          </tr>
+          <tr>
+            <td class="prop">休暇の期間一括登録</td>
+            <td><span class="badge2 b-mid">中</span></td><td class="cost-m">中</td>
+            <td>休暇は週単位でしか登録できず長期休暇が面倒。期間指定の一括登録で負荷減＋予定自動配分の休日精度向上。</td>
+          </tr>
+          <tr>
+            <td class="prop">定例作業の「平日すべて」プリセット・複製</td>
+            <td><span class="badge2 b-lo">低</span></td><td class="cost-s">小</td>
+            <td>毎回曜日をチェックする手間。プリセットとコピーで定例セットアップを短縮。</td>
+          </tr>
+          <tr>
+            <td class="prop">ガント保存時の既定担当者を明示</td>
+            <td><span class="badge2 b-lo">低</span></td><td class="cost-m">中</td>
+            <td>子タスクの担当が暗黙で自動セットされ取り違えの恐れ。バー上に担当名を表示し保存前に確認できるように。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flow-note">
+      <b>着手順の推奨：</b>まず ★印の4件（実績状況リンク／予定コピー／週間予定→実績遷移）はいずれも小コスト・テンプレート中心で、毎日使う一般ユーザーと管理職の双方に即効性があります。次に「配下コメント横断」「予実バッジ」で、すでに蓄積されているデータ（振り返り・予定工数）の活用度を底上げする構成が効果的です。
+    </div>
+  </section>
+
+  <!-- 良い点 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">NOTE</span><h2>すでに良くできている点（維持）</h2></div>
+    <p class="sec-sub">再入力を避ける連動設計は既に優秀です。今回の改善提案の多くは、これらを「画面の動線に露出させる」方向です。</p>
+    <div class="cards">
+      <div class="card st-keep"><h3>実績→タスク進捗の自動連動</h3><p>実績入力がタスクの進捗へ自動反映され、二重管理を防いでいる。</p></div>
+      <div class="card st-keep"><h3>リスケの週間予定 自動投入</h3><p>繰越・リスケが空きスロットへ自動で入る仕組みが実装済み。</p></div>
+      <div class="card st-keep"><h3>Excel出力の自動分類</h3><p>突発・繰越・リスケを出力時に自動で分類・整形している。</p></div>
+    </div>
+  </section>
+
+  <footer>
+    コード横断分析（routes / templates / models の相互参照照合＋各画面の動線精査）にもとづく整理・改善メモ。削除候補のうち「要確認」項目は、外部運用や製品方針の確認後に着手を推奨。実バグ（会社休日403）は次作業で最優先修正。
+  </footer>
+
+</div>

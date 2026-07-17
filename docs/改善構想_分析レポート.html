@@ -1,0 +1,372 @@
+<style>
+  :root {
+    --ground: #f7f8fa;
+    --surface: #ffffff;
+    --surface-2: #eef1f5;
+    --ink: #1a2230;
+    --ink-soft: #55617a;
+    --ink-faint: #8b96ab;
+    --line: #dce1ea;
+    --accent: #2563a8;
+    --accent-soft: #e7f0fa;
+    --good: #2e8b6f;
+    --good-bg: #e3f2ec;
+    --warn: #c98a2b;
+    --warn-bg: #f8efdd;
+    --crit: #c0453f;
+    --crit-bg: #f8e3e2;
+    --new: #7a4fb0;
+    --new-bg: #efe8f7;
+    --radius: 10px;
+    --maxw: 1080px;
+    --fs-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --fs-base: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0f141b;
+      --surface: #171e28;
+      --surface-2: #1f2833;
+      --ink: #e8ecf2;
+      --ink-soft: #a3afc2;
+      --ink-faint: #6b7789;
+      --line: #2a3542;
+      --accent: #5b9bd8;
+      --accent-soft: #17293c;
+      --good: #4bb593; --good-bg: #16302a;
+      --warn: #e0a94d; --warn-bg: #33290f;
+      --crit: #e0655f; --crit-bg: #331917;
+      --new: #a684d6; --new-bg: #241832;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f7f8fa; --surface: #ffffff; --surface-2: #eef1f5;
+    --ink: #1a2230; --ink-soft: #55617a; --ink-faint: #8b96ab; --line: #dce1ea;
+    --accent: #2563a8; --accent-soft: #e7f0fa;
+    --good: #2e8b6f; --good-bg: #e3f2ec; --warn: #c98a2b; --warn-bg: #f8efdd;
+    --crit: #c0453f; --crit-bg: #f8e3e2; --new: #7a4fb0; --new-bg: #efe8f7;
+  }
+  :root[data-theme="dark"] {
+    --ground: #0f141b; --surface: #171e28; --surface-2: #1f2833;
+    --ink: #e8ecf2; --ink-soft: #a3afc2; --ink-faint: #6b7789; --line: #2a3542;
+    --accent: #5b9bd8; --accent-soft: #17293c;
+    --good: #4bb593; --good-bg: #16302a; --warn: #e0a94d; --warn-bg: #33290f;
+    --crit: #e0655f; --crit-bg: #331917; --new: #a684d6; --new-bg: #241832;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--fs-base); line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px 96px; }
+
+  /* ── ヘッダー ── */
+  header.masthead {
+    border-bottom: 1px solid var(--line); background: var(--surface);
+    padding: 40px 0 32px;
+  }
+  .masthead .wrap { padding-bottom: 0; }
+  .eyebrow {
+    font-size: .72rem; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(1.6rem, 3.4vw, 2.4rem); line-height: 1.25; margin: 0 0 12px;
+    text-wrap: balance; letter-spacing: -.01em;
+  }
+  .lede { font-size: 1.02rem; color: var(--ink-soft); max-width: 62ch; margin: 0; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 20px; font-size: .82rem; color: var(--ink-faint); }
+  .meta-row b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ── セクション ── */
+  section { margin-top: 56px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px; border-bottom: 2px solid var(--ink); padding-bottom: 8px; }
+  .sec-num { font-family: var(--fs-mono); font-size: .8rem; color: var(--accent); font-weight: 700; letter-spacing: .05em; }
+  .sec-head h2 { font-size: 1.32rem; margin: 0; letter-spacing: -.005em; }
+  .sec-sub { color: var(--ink-soft); font-size: .92rem; margin: -8px 0 24px; max-width: 68ch; }
+
+  /* ── フロー図 ── */
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .flow-step {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 14px 16px; position: relative; border-top: 3px solid var(--accent);
+  }
+  .flow-step .n { font-family: var(--fs-mono); font-size: .72rem; color: var(--accent); font-weight: 700; }
+  .flow-step .t { font-weight: 700; font-size: .92rem; margin: 4px 0 4px; }
+  .flow-step .d { font-size: .78rem; color: var(--ink-soft); line-height: 1.5; }
+  .flow-step .who { display: inline-block; margin-top: 8px; font-size: .68rem; padding: 2px 7px; border-radius: 20px; background: var(--surface-2); color: var(--ink-soft); font-weight: 600; }
+
+  /* ── カード ── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .card h3 { margin: 0; font-size: 1.02rem; display: flex; align-items: center; gap: 9px; }
+  .card p { margin: 0; font-size: .88rem; color: var(--ink-soft); }
+  .card ul { margin: 4px 0 0; padding-left: 18px; font-size: .85rem; color: var(--ink-soft); }
+  .card li { margin-bottom: 5px; }
+  .card li::marker { color: var(--accent); }
+
+  /* ── チップ / ストライプ ── */
+  .chip { font-size: .68rem; font-weight: 700; padding: 2px 9px; border-radius: 20px; letter-spacing: .02em; white-space: nowrap; }
+  .chip.ok { background: var(--good-bg); color: var(--good); }
+  .chip.gap { background: var(--warn-bg); color: var(--warn); }
+  .chip.new { background: var(--new-bg); color: var(--new); }
+  .chip.big { background: var(--crit-bg); color: var(--crit); }
+
+  .card.strut-ok { border-left: 4px solid var(--good); }
+  .card.strut-gap { border-left: 4px solid var(--warn); }
+  .card.strut-new { border-left: 4px solid var(--new); }
+
+  /* ── ギャップ表 ── */
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .86rem; min-width: 640px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--surface-2); font-size: .74rem; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
+  tr:last-child td { border-bottom: none; }
+  td.want { color: var(--ink); font-weight: 600; }
+  td.now { color: var(--ink-soft); }
+  .eff { font-family: var(--fs-mono); font-size: .78rem; font-weight: 700; }
+  .eff.s { color: var(--good); } .eff.m { color: var(--warn); } .eff.l { color: var(--crit); }
+
+  /* ── ロードマップ ── */
+  .phases { display: flex; flex-direction: column; gap: 0; }
+  .phase { display: grid; grid-template-columns: 130px 1fr; gap: 20px; padding: 18px 0; border-top: 1px solid var(--line); }
+  .phase:first-child { border-top: none; }
+  .phase-tag { }
+  .phase-tag .p { font-family: var(--fs-mono); font-size: .72rem; color: var(--accent); font-weight: 700; letter-spacing: .05em; }
+  .phase-tag .name { font-weight: 700; font-size: .98rem; margin-top: 2px; }
+  .phase-tag .cost { font-size: .74rem; color: var(--ink-faint); margin-top: 6px; font-family: var(--fs-mono); }
+  .phase-body ul { margin: 0; padding-left: 18px; font-size: .88rem; color: var(--ink-soft); }
+  .phase-body li { margin-bottom: 6px; }
+  .phase-body li b { color: var(--ink); font-weight: 600; }
+
+  .callout {
+    background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: var(--radius); padding: 16px 20px; font-size: .9rem; color: var(--ink); margin-top: 20px;
+  }
+  .callout b { color: var(--accent); }
+
+  code { font-family: var(--fs-mono); font-size: .82em; background: var(--surface-2); padding: 1px 6px; border-radius: 4px; color: var(--ink); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; font-size: .78rem; color: var(--ink-soft); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 3px; }
+
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); font-size: .8rem; color: var(--ink-faint); }
+  @media (max-width: 640px) {
+    .phase { grid-template-columns: 1fr; gap: 8px; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow">予定管理システム — 改善構想と実装ロードマップ</p>
+    <h1>ガント起点の予定管理を、育成と分析まで届くプラットフォームへ</h1>
+    <p class="lede">現行システムの「ガント→タスク→週間予定→実績→分析」の一連の流れを再確認し、あなたの構想（AI月次分析・進捗の可視化・ログイン刷新・4段階ロール・所属単位の統制）を、既存コード資産に照らして実装案と優先順位に落とし込みました。</p>
+    <div class="meta-row">
+      <span><b>対象</b> Flask / SQLite / Bootstrap</span>
+      <span><b>現行テーブル</b> 15（うち連携キー <code>project_task_id</code> で全連結）</span>
+      <span><b>ユーザー</b> 8名 / 2部署 / 3役職</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ①〜⑦ フロー -->
+  <section>
+    <div class="sec-head"><span class="sec-num">FLOW</span><h2>基幹フローの再確認 ①〜⑦</h2></div>
+    <p class="sec-sub">すべての工程が <code>project_task_id</code> を連結キーに一本の線でつながっており、データ基盤としては良好です。⑤〜⑦の分析・育成部分に伸びしろがあります。</p>
+    <div class="flow">
+      <div class="flow-step"><div class="n">STEP 1</div><div class="t">作業予定を立てる</div><div class="d">ガントチャートで期間・担当・親子タスクを描く</div><span class="who">ユーザー</span></div>
+      <div class="flow-step"><div class="n">STEP 2</div><div class="t">タスク一覧に連動</div><div class="d">project_task として一元管理・状態/進捗を保持</div><span class="who">自動</span></div>
+      <div class="flow-step"><div class="n">STEP 3</div><div class="t">週間予定へ反映</div><div class="d">曜日ごとAM/PMスロットに自動配分</div><span class="who">ユーザー</span></div>
+      <div class="flow-step"><div class="n">STEP 4</div><div class="t">時間を手入力</div><div class="d">各スロットに予定工数を入力して保存</div><span class="who">ユーザー</span></div>
+      <div class="flow-step"><div class="n">STEP 5</div><div class="t">週間予定を出力</div><div class="d">管理画面からExcel出力</div><span class="who">マスタ</span></div>
+      <div class="flow-step"><div class="n">STEP 6</div><div class="t">実績を入力</div><div class="d">当日、予定に対する実績＋振り返りを記録</div><span class="who">ユーザー</span></div>
+      <div class="flow-step"><div class="n">STEP 7</div><div class="t">コメントを確認</div><div class="d">配下の振り返りを見て上長コメント</div><span class="who">マスタ / 管理者</span></div>
+    </div>
+  </section>
+
+  <!-- 現状の強み -->
+  <section>
+    <div class="sec-head"><span class="sec-num">ASSETS</span><h2>すでにある土台（活かせる資産）</h2></div>
+    <p class="sec-sub">構想の実現に必要なデータや仕組みの多くは、すでにコードとDBに存在します。ゼロからではなく「拡張」で届きます。</p>
+    <div class="cards">
+      <div class="card strut-ok">
+        <h3>コメントの蓄積 <span class="chip ok">活用可</span></h3>
+        <p><code>daily_comment</code> に日次で <b>振り返り・行動・上長コメント</b>が user×date 単位で蓄積（105件）。実データは業務内容・悩み・助言まで具体的。</p>
+        <p style="color:var(--good);font-weight:600;">→ AI月次分析の材料として質・量とも十分。</p>
+      </div>
+      <div class="card strut-ok">
+        <h3>認証の下地 <span class="chip ok">活用可</span></h3>
+        <p>users に <code>password_hash</code> / <code>remember_token</code>（365日・httponly・secrets製）が既にある。前回ログインの記録も token で実装済み。</p>
+        <p style="color:var(--good);font-weight:600;">→ ログイン方式への切替は「選択UIを廃し全員パスワード必須化」が主作業。</p>
+      </div>
+      <div class="card strut-ok">
+        <h3>所属・上司の紐付け <span class="chip ok">活用可</span></h3>
+        <p><code>dept</code>・<code>manager_id</code>・<code>dept_master</code> が揃い、<code>get_accessible_users</code> が manager_id 優先→dept フォールバックで絞り込み済み。</p>
+        <p style="color:var(--good);font-weight:600;">→ 「所属ごとに管理」の骨格は動いている。</p>
+      </div>
+      <div class="card strut-ok">
+        <h3>予実の判定ロジック <span class="chip ok">活用可</span></h3>
+        <p><code>get_task_plan_vs_actual</code> が実績時間÷予定工数で <b>遅れ/予定通り/前倒し</b>を判定済み（本日実績画面で使用中）。</p>
+        <p style="color:var(--good);font-weight:600;">→ 進捗可視化画面へ転用できる。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 新機能案 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">NEW</span><h2>新しい試み — 2つの柱</h2></div>
+    <div class="cards">
+      <div class="card strut-new">
+        <h3>AIによる月次コメント分析 <span class="chip new">新機能</span></h3>
+        <p>配下メンバーの1か月分の <code>reflection</code>/<code>action</code> をClaude APIで要約し、<b>「取り組んだこと・悩み・できるようになったこと」</b>を自動抽出。</p>
+        <ul>
+          <li>マスタ/管理者向けの「育成ダッシュボード」に月次サマリーを表示</li>
+          <li>成長の兆し・停滞のサインを言語化し、教育方針の起点に</li>
+          <li>個人の同意・閲覧範囲（自部署配下のみ）を厳格に制御</li>
+        </ul>
+        <p style="font-size:.8rem;color:var(--ink-faint);">材料は既存の daily_comment。追加はAPI連携と集計画面のみ。</p>
+      </div>
+      <div class="card strut-new">
+        <h3>実績後の進捗可視化画面 <span class="chip new">新機能</span></h3>
+        <p>ユーザーが実績登録した直後に、<b>自分の進捗状況を視覚的に</b>確認できる画面。何が遅れ・進み・問題ないかを一目で。</p>
+        <ul>
+          <li>タスク別の予定線 vs 実績線（既存の予実判定を図に）</li>
+          <li>遅延タスクを赤ストライプで警告、前倒しは緑で表示</li>
+          <li>今週の消化率・残工数・繰越の可視化</li>
+        </ul>
+        <p style="font-size:.8rem;color:var(--ink-faint);">判定ロジックは既存。進捗ダッシュボードへ予実を統合する形。</p>
+      </div>
+    </div>
+    <div class="callout">
+      <b>気づき：</b>現在の進捗ダッシュボードは <code>project_task</code> の宣言値（status/progress）だけを集計し、実績時間ベースの予実は本日実績画面でしか使われていません。<b>この2つを統合</b>すれば、新機能の大半は既存部品の再配置で実現できます。
+    </div>
+  </section>
+
+  <!-- 認証・ロール刷新 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">AUTH</span><h2>ログイン・ロール・所属統制の刷新</h2></div>
+    <p class="sec-sub">あなたの構想を現行3役職から4役職へ拡張し、所属単位の完全分離と、システム管理者による代理切替を加えます。</p>
+
+    <div class="cards" style="margin-bottom:20px;">
+      <div class="card">
+        <h3>ロール体系（現行3 → 構想4）</h3>
+        <ul>
+          <li><b>システム管理者</b> ＝ 全権限・全所属・代理切替可 <span class="chip new">新設</span></li>
+          <li><b>マスタ</b> ＝ 所属管理（統括以上）</li>
+          <li><b>管理者</b> ＝ 部下管理（管理職以上）</li>
+          <li><b>一般</b> ＝ 主任以下・自分のみ</li>
+        </ul>
+        <p style="font-size:.8rem;color:var(--ink-faint);">判定は <code>auth_helpers.py</code> に集約済み。ここへ「システム管理者」を1段足すのが中心。</p>
+      </div>
+      <div class="card">
+        <h3>ログイン方式の変更</h3>
+        <ul>
+          <li>「人を選択」を廃止し <b>ID＋パスワードのログイン方式</b>へ</li>
+          <li>前回ログインの記録（remember_token は既存・365日）</li>
+          <li>未設定6名への<b>初期パスワード発行</b>が移行時の要作業</li>
+          <li>ログアウトでトークンも失効させる（現状はセッションクリアのみ）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>所属単位の完全分離</h3>
+        <ul>
+          <li>ログイン後は<b>自所属のみ</b>を扱い、他所属には一切関与しない</li>
+          <li>全画面のデータ取得を所属スコープで統一（一部は実装済み）</li>
+          <li>横断参照はシステム管理者に限定</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>システム管理者の代理切替</h3>
+        <ul>
+          <li>任意ユーザーへ<b>成り代わり</b>、同じ画面・同じ処理を実行</li>
+          <li>セッションに「実ユーザー / 代理対象」を分離保持</li>
+          <li>代理中は画面上に明示バナー＋<code>operation_log</code>へ記録</li>
+        </ul>
+        <p style="font-size:.8rem;color:var(--ink-faint);">既存の「担当者切替」を、権限を伴う本格的な代理へ昇格させる。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ギャップ表 -->
+  <section>
+    <div class="sec-head"><span class="sec-num">GAP</span><h2>構想と現状のギャップ・実装規模</h2></div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--good)"></span>S＝小（既存拡張）</span>
+      <span><span class="dot" style="background:var(--warn)"></span>M＝中（新画面/ロジック）</span>
+      <span><span class="dot" style="background:var(--crit)"></span>L＝大（横断改修）</span>
+    </div>
+    <div class="table-scroll" style="margin-top:12px;">
+      <table>
+        <thead><tr><th>やりたいこと</th><th>現状</th><th style="width:64px;">規模</th><th>要点</th></tr></thead>
+        <tbody>
+          <tr><td class="want">ログイン方式へ変更</td><td class="now">人を選択＋条件付きPW</td><td><span class="eff m">M</span></td><td>全員PW必須化・初期PW配布・選択UI廃止</td></tr>
+          <tr><td class="want">前回ログイン記録</td><td class="now">token実装済</td><td><span class="eff s">S</span></td><td>ログアウト時のtoken失効を追加</td></tr>
+          <tr><td class="want">4段階ロール</td><td class="now">3役職</td><td><span class="eff m">M</span></td><td>「システム管理者」新設・判定関数拡張</td></tr>
+          <tr><td class="want">所属の完全分離</td><td class="now">一部スコープ済</td><td><span class="eff l">L</span></td><td>全ルートのデータ取得を所属で統一</td></tr>
+          <tr><td class="want">代理切替（成り代わり）</td><td class="now">担当者切替のみ</td><td><span class="eff l">L</span></td><td>実/代理ユーザー分離・処理も代理・ログ記録</td></tr>
+          <tr><td class="want">AI月次コメント分析</td><td class="now">材料は蓄積済</td><td><span class="eff m">M</span></td><td>Claude API連携＋育成ダッシュボード</td></tr>
+          <tr><td class="want">実績後の進捗可視化</td><td class="now">予実判定は存在</td><td><span class="eff m">M</span></td><td>ダッシュボードへ予実統合・図表化</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ロードマップ -->
+  <section>
+    <div class="sec-head"><span class="sec-num">PLAN</span><h2>実装ロードマップ（推奨順）</h2></div>
+    <p class="sec-sub">土台（認証・ロール・所属）を固めてから機能（分析・可視化）を載せる順です。各フェーズは独立してリリース可能な単位に区切っています。</p>
+    <div class="phases">
+      <div class="phase">
+        <div class="phase-tag"><div class="p">PHASE 1</div><div class="name">認証の刷新</div><div class="cost">規模 M</div></div>
+        <div class="phase-body"><ul>
+          <li><b>ログイン方式へ移行</b>：全員パスワード必須、ID＋PW入力、初期PW一括発行</li>
+          <li><b>前回ログイン記録</b>を全ロールへ（現状は管理職/マスタのみ）、ログアウトでtoken失効</li>
+          <li>移行時に既存セッション・未設定6名のPW初期化を安全に実施</li>
+        </ul></div>
+      </div>
+      <div class="phase">
+        <div class="phase-tag"><div class="p">PHASE 2</div><div class="name">ロールと所属統制</div><div class="cost">規模 L</div></div>
+        <div class="phase-body"><ul>
+          <li><b>4段階ロール</b>を <code>auth_helpers.py</code> に定義（システム管理者を最上位に）</li>
+          <li><b>所属の完全分離</b>：全データ取得を所属スコープに統一、他所属を遮断</li>
+          <li>ユーザー管理画面をロール階層に合わせて再構成</li>
+        </ul></div>
+      </div>
+      <div class="phase">
+        <div class="phase-tag"><div class="p">PHASE 3</div><div class="name">代理切替</div><div class="cost">規模 L</div></div>
+        <div class="phase-body"><ul>
+          <li><b>システム管理者の成り代わり</b>：実/代理ユーザーをセッション分離</li>
+          <li>閲覧だけでなく<b>処理も代理対象として実行</b>、明示バナー＋監査ログ</li>
+        </ul></div>
+      </div>
+      <div class="phase">
+        <div class="phase-tag"><div class="p">PHASE 4</div><div class="name">進捗の可視化</div><div class="cost">規模 M</div></div>
+        <div class="phase-body"><ul>
+          <li>実績登録後の<b>個人進捗画面</b>（遅れ/進み/問題を視覚化）</li>
+          <li>進捗ダッシュボードへ<b>予実（実績時間ベース）を統合</b></li>
+        </ul></div>
+      </div>
+      <div class="phase">
+        <div class="phase-tag"><div class="p">PHASE 5</div><div class="name">AI育成分析</div><div class="cost">規模 M</div></div>
+        <div class="phase-body"><ul>
+          <li><b>月次コメントのAI要約</b>（取り組み・悩み・成長）を Claude API で生成</li>
+          <li>マスタ/管理者向け<b>育成ダッシュボード</b>、教育方針の起点に</li>
+          <li>プライバシー：自部署配下のみ・生成物の保存範囲を明確化</li>
+        </ul></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    現行コード（auth / project_task / weekly_schedule / daily_result / daily_comment）と実DB（8ユーザー・15テーブル）の分析にもとづく構想メモ。実装着手前に、各フェーズの詳細設計（データ移行・権限マトリクス・API利用範囲）を別途固めることを推奨します。
+  </footer>
+
+</div>

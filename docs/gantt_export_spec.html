@@ -1,0 +1,318 @@
+<style>
+  :root {
+    --ground: #f7f8fa; --surface: #ffffff; --surface-2: #eef1f5;
+    --ink: #1a2230; --ink-soft: #55617a; --ink-faint: #8b96ab; --line: #dce1ea;
+    --accent: #2563a8; --accent-soft: #e7f0fa;
+    --good: #2e8b6f; --warn: #c98a2b; --crit: #c0453f;
+    --code-bg: #0f1a2b; --code-ink: #d6e2f5; --code-key: #7db3e8; --code-str: #9ccf8f;
+    --code-com: #6b7d99; --code-fn: #e0c07a;
+    --radius: 10px; --maxw: 900px;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0f141b; --surface: #171e28; --surface-2: #1f2833;
+      --ink: #e8ecf2; --ink-soft: #a3afc2; --ink-faint: #6b7789; --line: #2a3542;
+      --accent: #5b9bd8; --accent-soft: #17293c;
+      --good: #4bb593; --warn: #e0a94d; --crit: #e0655f;
+      --code-bg: #0b1420; --code-ink: #d6e2f5;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f7f8fa; --surface: #ffffff; --surface-2: #eef1f5;
+    --ink: #1a2230; --ink-soft: #55617a; --ink-faint: #8b96ab; --line: #dce1ea;
+    --accent: #2563a8; --accent-soft: #e7f0fa; --code-bg: #0f1a2b;
+  }
+  :root[data-theme="dark"] {
+    --ground: #0f141b; --surface: #171e28; --surface-2: #1f2833;
+    --ink: #e8ecf2; --ink-soft: #a3afc2; --ink-faint: #6b7789; --line: #2a3542;
+    --accent: #5b9bd8; --accent-soft: #17293c; --code-bg: #0b1420;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans); line-height: 1.75; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px 100px; }
+  header.mast { border-bottom: 1px solid var(--line); background: var(--surface); padding: 40px 0 30px; }
+  .mast .wrap { padding-bottom: 0; }
+  .eyebrow { font-size: .72rem; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin: 0 0 10px; }
+  h1 { font-size: clamp(1.5rem, 3.2vw, 2.1rem); line-height: 1.3; margin: 0 0 12px; letter-spacing: -.01em; }
+  .lede { font-size: 1rem; color: var(--ink-soft); max-width: 62ch; margin: 0; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 18px; font-size: .8rem; color: var(--ink-faint); }
+  .meta-row b { color: var(--ink-soft); font-weight: 600; }
+
+  h2 { font-size: 1.28rem; margin: 52px 0 4px; padding-bottom: 8px; border-bottom: 2px solid var(--ink); letter-spacing: -.005em; scroll-margin-top: 20px; }
+  h2 .n { font-family: var(--mono); font-size: .8rem; color: var(--accent); margin-right: 10px; }
+  h3 { font-size: 1.02rem; margin: 28px 0 6px; }
+  p { margin: 10px 0; }
+  .sub { color: var(--ink-soft); font-size: .93rem; }
+
+  code.inline { font-family: var(--mono); font-size: .84em; background: var(--surface-2); padding: 1px 6px; border-radius: 4px; color: var(--ink); }
+
+  pre { background: var(--code-bg); color: var(--code-ink); border-radius: var(--radius); padding: 16px 18px; overflow-x: auto; font-family: var(--mono); font-size: .82rem; line-height: 1.6; margin: 14px 0; border: 1px solid #ffffff12; }
+  pre .c { color: var(--code-com); }
+  pre .k { color: var(--code-key); }
+  pre .s { color: var(--code-str); }
+  pre .f { color: var(--code-fn); }
+
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; margin: 12px 0; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--surface-2); font-size: .74rem; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
+  tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: var(--mono); font-size: .82rem; }
+
+  .callout { border-radius: var(--radius); padding: 14px 18px; margin: 16px 0; font-size: .9rem; border: 1px solid; }
+  .callout.warn { background: color-mix(in srgb, var(--warn) 12%, transparent); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+  .callout.info { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+  .callout b { color: var(--accent); }
+  .callout.warn b { color: var(--warn); }
+
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 16px 0; }
+  .flow .step { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--accent); border-radius: var(--radius); padding: 12px 14px; }
+  .flow .step .s-n { font-family: var(--mono); font-size: .7rem; color: var(--accent); font-weight: 700; }
+  .flow .step .s-t { font-weight: 700; font-size: .9rem; margin: 3px 0; }
+  .flow .step .s-d { font-size: .78rem; color: var(--ink-soft); }
+
+  .toc { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 20px; margin-top: 22px; }
+  .toc ol { margin: 6px 0 0; padding-left: 20px; font-size: .9rem; }
+  .toc li { margin: 3px 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  ul.tight { margin: 8px 0; padding-left: 20px; font-size: .92rem; color: var(--ink-soft); }
+  ul.tight li { margin: 4px 0; }
+  ul.tight li b { color: var(--ink); font-weight: 600; }
+  ul.tight code { font-family: var(--mono); font-size: .84em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line); font-size: .8rem; color: var(--ink-faint); }
+  .filepath { font-family: var(--mono); font-size: .8rem; color: var(--ink-soft); background: var(--surface-2); padding: 2px 7px; border-radius: 4px; }
+</style>
+
+<header class="mast">
+  <div class="wrap">
+    <p class="eyebrow">技術仕様書 — 帳票出力（Excel / PDF）共通基盤</p>
+    <h1>格子状レポートを Excel と PDF で同一レイアウト出力する仕組み</h1>
+    <p class="lede">ガントチャートの Excel／PDF ダウンロード機能で用いた実装方式を、他システムへ再利用できるよう技術仕様としてまとめたものです。「表＋日付グリッド＋バー」のような格子状レポートを、openpyxl（Excel）と reportlab（PDF）で見た目を揃えて出力します。</p>
+    <div class="meta-row">
+      <span><b>対象読者</b> 実装者</span>
+      <span><b>言語</b> Python 3.13</span>
+      <span><b>フレームワーク</b> Flask（配信部）</span>
+      <span><b>参照元</b> ScheduleManagement</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="toc">
+    <b>目次</b>
+    <ol>
+      <li><a href="#s1">方式の概要と重要な前提</a></li>
+      <li><a href="#s2">依存ライブラリ</a></li>
+      <li><a href="#s3">Excel 生成（openpyxl）</a></li>
+      <li><a href="#s4">PDF 生成（reportlab）</a></li>
+      <li><a href="#s5">Flask での配信</a></li>
+      <li><a href="#s6">他システムへの移植手順</a></li>
+      <li><a href="#s7">代替方式（本物のExcel→PDF変換）</a></li>
+    </ol>
+  </div>
+
+  <!-- 1 -->
+  <h2 id="s1"><span class="n">01</span>方式の概要と重要な前提</h2>
+  <p>本方式は <b>「Excel ファイルを PDF に変換する」ものではありません</b>。同じデータ・同じレイアウト定義から、Excel と PDF を<b>それぞれ独立に描画</b>します。両者は「見た目が一致する」ように作り込みますが、内部的には別のライブラリで別々に生成されます。</p>
+
+  <div class="flow">
+    <div class="step"><div class="s-n">INPUT</div><div class="s-t">共通データ</div><div class="s-d">表示対象の行データ（ツリー/リスト）＋期間・列定義</div></div>
+    <div class="step"><div class="s-n">PATH A</div><div class="s-t">openpyxl</div><div class="s-d">セル・罫線・塗りで Excel を組み立て</div></div>
+    <div class="step"><div class="s-n">PATH B</div><div class="s-t">reportlab</div><div class="s-d">canvas に矩形・文字・線を描いて PDF 化</div></div>
+    <div class="step"><div class="s-n">OUTPUT</div><div class="s-t">ダウンロード</div><div class="s-d">Flask send_file でブラウザへ配信</div></div>
+  </div>
+
+  <div class="callout info">
+    <b>設計の要点：</b>「行データを平坦化したリスト」と「列定義（ラベルと幅）」を共通の入力とし、Excel 版・PDF 版の描画関数がそれぞれ同じ入力を受け取る構成にします。これにより両出力のレイアウトが自然に一致し、片方だけ崩れる事故を防げます。
+  </div>
+
+  <!-- 2 -->
+  <h2 id="s2"><span class="n">02</span>依存ライブラリ</h2>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>用途</th><th>ライブラリ</th><th class="mono">検証バージョン</th><th>備考</th></tr></thead>
+      <tbody>
+        <tr><td>Excel 生成</td><td class="mono">openpyxl</td><td class="mono">3.1.5</td><td>セル・罫線・塗り・列幅・セル結合・印刷設定</td></tr>
+        <tr><td>PDF 生成</td><td class="mono">reportlab</td><td class="mono">4.4.10</td><td>低レベル canvas 描画（矩形・文字・線）</td></tr>
+        <tr><td>日本語フォント</td><td class="mono">reportlab 同梱</td><td class="mono">—</td><td><code class="inline">HeiseiKakuGo-W5</code>（CIDフォント。外部ファイル不要）</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <pre><span class="c"># インストール</span>
+pip install openpyxl reportlab</pre>
+
+  <!-- 3 -->
+  <h2 id="s3"><span class="n">03</span>Excel 生成（openpyxl）</h2>
+  <p class="sub">セル単位でスタイルを設定します。塗り・罫線・整列・列幅・結合・印刷設定が要点です。</p>
+<pre><span class="k">import</span> openpyxl
+<span class="k">from</span> openpyxl.styles <span class="k">import</span> Font, PatternFill, Border, Side, Alignment
+<span class="k">from</span> openpyxl.utils <span class="k">import</span> get_column_letter
+
+wb = openpyxl.<span class="f">Workbook</span>(); ws = wb.active
+ws.title = <span class="s">"ガントチャート"</span>
+
+<span class="c"># スタイル部品</span>
+thin = <span class="f">Border</span>(left=<span class="f">Side</span>(style=<span class="s">"thin"</span>, color=<span class="s">"CCCCCC"</span>), right=<span class="f">Side</span>(style=<span class="s">"thin"</span>, color=<span class="s">"CCCCCC"</span>))
+header_fill = <span class="f">PatternFill</span>(<span class="s">"solid"</span>, fgColor=<span class="s">"334155"</span>)   <span class="c"># 16進カラー</span>
+center = <span class="f">Alignment</span>(horizontal=<span class="s">"center"</span>, vertical=<span class="s">"center"</span>)
+
+<span class="c"># セルに値・スタイルを設定</span>
+cell = ws.<span class="f">cell</span>(row, col, <span class="s">"値"</span>)
+cell.fill = header_fill
+cell.font = <span class="f">Font</span>(bold=<span class="k">True</span>, color=<span class="s">"FFFFFF"</span>, size=9, name=<span class="s">"游ゴシック"</span>)
+cell.alignment = center
+cell.border = thin
+
+<span class="c"># 列幅・セル結合</span>
+ws.column_dimensions[<span class="f">get_column_letter</span>(col)].width = 3.5
+ws.<span class="f">merge_cells</span>(start_row=r, start_column=1, end_row=r, end_column=10)
+
+<span class="c"># 印刷設定（A4横・幅1ページに収める）</span>
+ws.page_setup.orientation = <span class="s">"landscape"</span>
+ws.page_setup.fitToWidth = 1
+ws.page_setup.paperSize = ws.PAPERSIZE_A4
+ws.freeze_panes = <span class="s">"F3"</span>   <span class="c"># 固定列・見出しの固定</span></pre>
+
+  <h3>バー（進捗）の描き方</h3>
+  <p class="sub">日付列のセルを、期間・進捗に応じて塗り分けます。1セル＝1日。</p>
+<pre><span class="k">if</span> t_start &lt;= dt &lt;= t_end:                <span class="c"># その日がタスク期間内なら</span>
+    total = (t_end - t_start).days + 1
+    idx   = (dt - t_start).days
+    prog_days = <span class="f">round</span>(total * progress / 100)  <span class="c"># 進捗ぶんの日数</span>
+    color = <span class="s">"34D399"</span> <span class="k">if</span> idx &lt; prog_days <span class="k">else</span> <span class="s">"93C5FD"</span>  <span class="c"># 実績/予定</span>
+    cell.fill = <span class="f">PatternFill</span>(<span class="s">"solid"</span>, fgColor=color)</pre>
+
+  <!-- 4 -->
+  <h2 id="s4"><span class="n">04</span>PDF 生成（reportlab）</h2>
+  <p class="sub">reportlab の <code class="inline">canvas</code> に、矩形・文字・線を直接描きます。表もバーも「塗った矩形」の組み合わせで表現するため、Excel と同じ絵を再現できます。</p>
+
+  <h3>4-1. 初期化と日本語フォント</h3>
+<pre><span class="k">import</span> io
+<span class="k">from</span> reportlab.lib.pagesizes <span class="k">import</span> A4, landscape
+<span class="k">from</span> reportlab.pdfgen <span class="k">import</span> canvas <span class="k">as</span> _canvas
+<span class="k">from</span> reportlab.pdfbase <span class="k">import</span> pdfmetrics
+<span class="k">from</span> reportlab.pdfbase.cidfonts <span class="k">import</span> UnicodeCIDFont
+
+<span class="c"># 日本語CIDフォント登録（フォントファイル不要・reportlab同梱）</span>
+pdfmetrics.<span class="f">registerFont</span>(<span class="f">UnicodeCIDFont</span>(<span class="s">"HeiseiKakuGo-W5"</span>))
+jp_font = <span class="s">"HeiseiKakuGo-W5"</span>
+
+<span class="c"># 16進カラー → reportlabのRGB(0〜1)へ変換</span>
+<span class="k">def</span> <span class="f">_rgb</span>(h): <span class="k">return</span> (<span class="f">int</span>(h[0:2],16)/255, <span class="f">int</span>(h[2:4],16)/255, <span class="f">int</span>(h[4:6],16)/255)
+
+buf = io.<span class="f">BytesIO</span>()
+c = _canvas.<span class="f">Canvas</span>(buf, pagesize=<span class="f">landscape</span>(A4))
+page_w, page_h = <span class="f">landscape</span>(A4)</pre>
+
+  <div class="callout warn">
+    <b>座標系の注意（最重要）：</b>reportlab は<b>左下が原点</b>で、Y は上に向かって増加します。Excel やブラウザ（左上原点・下方向が増加）と<b>上下が逆</b>です。行を上から並べるときは <code class="inline">y = page_h - margin - ...</code> と計算し、次の行へは <code class="inline">y -= row_h</code>（減算）で下げます。
+  </div>
+
+  <h3>4-2. 表・グリッド・バーの描画プリミティブ</h3>
+<pre><span class="c"># セルを塗る（塗りつぶし矩形）  rect(左下x, 左下y, 幅, 高さ)</span>
+c.<span class="f">setFillColorRGB</span>(*<span class="f">_rgb</span>(<span class="s">"334155"</span>))
+c.<span class="f">rect</span>(x, y, w, h, fill=1, stroke=0)
+
+<span class="c"># 文字（中央/左/右寄せ）</span>
+c.<span class="f">setFillColorRGB</span>(1, 1, 1)
+c.<span class="f">setFont</span>(jp_font, 7)
+c.<span class="f">drawCentredString</span>(x + w/2, y + 4, <span class="s">"文字"</span>)
+c.<span class="f">drawString</span>(x + 2, y + 4, <span class="s">"文字"</span>)
+c.<span class="f">drawRightString</span>(x, y, <span class="s">"文字"</span>)
+
+<span class="c"># 罫線・枠</span>
+c.<span class="f">setStrokeColorRGB</span>(*<span class="f">_rgb</span>(<span class="s">"CCCCCC"</span>)); c.<span class="f">setLineWidth</span>(0.4)
+c.<span class="f">line</span>(x1, y1, x2, y2)
+c.<span class="f">rect</span>(x, y, w, h, fill=0, stroke=1)     <span class="c"># 枠だけ</span>
+
+<span class="c"># バー（Excelと同じ色分けロジック）</span>
+c.<span class="f">setFillColorRGB</span>(*<span class="f">_rgb</span>(fill))
+c.<span class="f">rect</span>(cx + 0.5, y + 2, day_w - 1, row_h - 4, fill=1, stroke=0)</pre>
+
+  <h3>4-3. 複数ページ（行数でページ送り）</h3>
+<pre>margin = 14; row_h = 15; header_h = 26
+rows_per_page = <span class="f">int</span>((page_h - margin*2 - header_h) // row_h)
+
+idx = 0
+<span class="k">while</span> idx &lt; <span class="f">len</span>(rows):
+    <span class="f">_draw_header</span>(...)                <span class="c"># 各ページ先頭に見出しを描く</span>
+    y = page_h - margin - header_h - row_h
+    drawn = 0
+    <span class="k">while</span> idx &lt; <span class="f">len</span>(rows) <span class="k">and</span> drawn &lt; rows_per_page:
+        <span class="f">_draw_row</span>(rows[idx], y)       <span class="c"># 1行描画</span>
+        y -= row_h; idx += 1; drawn += 1  <span class="c"># 座標系が下向き増加なので減算</span>
+    c.<span class="f">showPage</span>()                    <span class="c"># ← 改ページ確定</span>
+
+c.<span class="f">save</span>()
+buf.<span class="f">seek</span>(0)                          <span class="c"># BytesIO を返す</span></pre>
+
+  <h3>列定義（Excel/PDF 共通の考え方）</h3>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>列</th><th class="mono">PDF幅(pt)</th><th>内容</th><th>整列</th></tr></thead>
+      <tbody>
+        <tr><td>大項目</td><td class="mono">78</td><td>親タスク名</td><td>左</td></tr>
+        <tr><td>タスク名</td><td class="mono">150</td><td>インデント付きタスク名</td><td>左</td></tr>
+        <tr><td>担当</td><td class="mono">54</td><td>担当者（・区切り）</td><td>中央</td></tr>
+        <tr><td>状態</td><td class="mono">40</td><td>未着手/着手/…</td><td>中央</td></tr>
+        <tr><td>進捗%</td><td class="mono">32</td><td>0〜100%</td><td>中央</td></tr>
+        <tr><td>日付列 × N</td><td class="mono">残り幅÷日数</td><td>月/日＋曜日＋バー</td><td>中央</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 5 -->
+  <h2 id="s5"><span class="n">05</span>Flask での配信</h2>
+  <p class="sub">生成した <code class="inline">BytesIO</code> を <code class="inline">send_file</code> で返すだけです。Excel と PDF で mimetype と拡張子が違うのみ。</p>
+<pre><span class="k">from</span> flask <span class="k">import</span> send_file
+
+<span class="c"># Excel</span>
+<span class="k">return</span> <span class="f">send_file</span>(buf, as_attachment=<span class="k">True</span>,
+    download_name=<span class="s">"レポート.xlsx"</span>,
+    mimetype=<span class="s">"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"</span>)
+
+<span class="c"># PDF</span>
+<span class="k">return</span> <span class="f">send_file</span>(buf, as_attachment=<span class="k">True</span>,
+    download_name=<span class="s">"レポート.pdf"</span>, mimetype=<span class="s">"application/pdf"</span>)</pre>
+
+  <!-- 6 -->
+  <h2 id="s6"><span class="n">06</span>他システムへの移植手順</h2>
+  <ul class="tight">
+    <li><b>1. 依存を追加</b>：<code>pip install openpyxl reportlab</code></li>
+    <li><b>2. 共通入力を定義</b>：描画対象を「行データのリスト」に平坦化する。ツリー構造なら再帰で親→子の順に並べ、各行に <code>type</code>（見出し/データ）・表示値・期間・進捗を持たせる。</li>
+    <li><b>3. 列定義を1箇所に</b>：<code>[(ラベル, 幅), ...]</code> の形で固定列を定義し、Excel/PDF 両方でこの定義を使う。</li>
+    <li><b>4. 描画関数を2つ用意</b>：<code>build_xlsx(rows, cols, ...)</code> と <code>build_pdf(rows, cols, ...)</code>。本仕様の 03／04 のプリミティブをコピーして中身を実装。</li>
+    <li><b>5. 配信ルートを2本</b>：それぞれ <code>send_file</code> で返す（05）。</li>
+    <li><b>6. 色・フォントの共通化</b>：色は16進文字列で一元管理し、Excel は <code>PatternFill(fgColor=...)</code>、PDF は <code>_rgb(...)</code> に渡すと一致する。</li>
+  </ul>
+  <div class="callout info">
+    <b>再利用のコツ：</b>「行の平坦化」と「列定義」さえ共通化すれば、レポートの種類（ガント／勤怠表／集計表）が変わっても、描画プリミティブ（矩形・文字・線）はそのまま流用できます。表形式の帳票なら本方式がそのまま適用可能です。
+  </div>
+
+  <!-- 7 -->
+  <h2 id="s7"><span class="n">07</span>代替方式（本物の Excel→PDF 変換が必要な場合）</h2>
+  <p class="sub">本方式は「同じ絵を2回描く」再描画方式です。<b>既存の Excel ファイルをそのまま PDF 化</b>したい場合は別手段が必要です。</p>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>方式</th><th>手段</th><th>長所</th><th>短所</th></tr></thead>
+      <tbody>
+        <tr><td><b>再描画（本仕様）</b></td><td class="mono">reportlab</td><td>Excel不要・レイアウト完全制御・サーバー完結</td><td>描画コードが必要</td></tr>
+        <tr><td>Excel→PDF変換</td><td class="mono">LibreOffice<br>soffice --convert-to pdf</td><td>既存Excelをそのまま変換</td><td>LibreOffice の導入が必要</td></tr>
+        <tr><td>Excel→PDF変換</td><td class="mono">Excel COM<br>win32com</td><td>Excel本体の描画そのまま</td><td>Excel必須・Windows限定・サーバー不向き</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="sub">格子状の帳票（表＋グリッド＋バー）を安定してサーバー生成するなら、<b>本仕様の再描画方式（reportlab）を推奨</b>します。レイアウトが複雑でも外部プロセスに依存せず完結します。</p>
+
+  <footer>
+    参照実装：ScheduleManagement（Flask/SQLite）。<span class="filepath">web_app/routes/project_tasks.py</span> の <code class="inline">_build_gantt_excel_by_tree</code>（Excel）／<code class="inline">_build_gantt_pdf_by_tree</code>（PDF）、<span class="filepath">web_app/routes/planner.py</span> の <code class="inline">export</code>／<code class="inline">export_pdf</code>（配信）。<br>
+    本仕様書は再利用のための技術メモであり、コード断片は実装の要点を抜粋したものです。
+  </footer>
+
+</div>
