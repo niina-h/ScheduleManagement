@@ -1,6 +1,8 @@
 """認証関連のルート（ログイン・ログアウト）を提供するBlueprintモジュール。"""
 from __future__ import annotations
 
+import secrets
+
 from flask import (
     Blueprint,
     flash,
@@ -14,28 +16,96 @@ from flask import (
 from ..models import (
     check_user_password,
     clear_remember_token,
-    get_all_users,
-    get_user_by_id,
+    get_user_by_login_id,
     get_user_by_remember_token,
     set_remember_token,
     set_user_password,
     user_has_password,
 )
 from ..log_service import record_operation, ACTION_LOGIN, ACTION_LOGOUT
-from ..auth_helpers import is_privileged
+from ..auth_helpers import normalize_role, is_system_admin, is_dept_head
 
 auth_bp = Blueprint("auth", __name__)
+
+# 記憶トークンクッキーの有効期間（1年）
+_TOKEN_MAX_AGE = 365 * 24 * 3600
+
+# ── ログイン試行のレート制限（4桁PINの総当たり対策） ──
+# login_id ごとに連続失敗回数と最終失敗時刻をメモリに保持する。
+# 社内LAN・少人数運用のため、専用テーブルは設けずプロセス内メモリで十分。
+_MAX_FAILURES = 5           # 連続失敗の上限
+_LOCKOUT_SECONDS = 300      # ロックアウト時間（5分）
+_login_failures: dict[str, tuple[int, float]] = {}  # login_id(小文字) → (失敗回数, 最終失敗epoch)
+
+
+def _is_locked_out(login_id: str) -> int:
+    """login_id がロックアウト中なら残り秒数を返す（0=ロックなし）。"""
+    import time
+    rec = _login_failures.get(login_id.lower())
+    if not rec:
+        return 0
+    count, last = rec
+    if count < _MAX_FAILURES:
+        return 0
+    remaining = int(_LOCKOUT_SECONDS - (time.time() - last))
+    if remaining <= 0:
+        _login_failures.pop(login_id.lower(), None)  # 期限切れは解除
+        return 0
+    return remaining
+
+
+def _record_failure(login_id: str) -> None:
+    """ログイン失敗を記録する（連続失敗回数を加算）。"""
+    import time
+    key = login_id.lower()
+    count = _login_failures.get(key, (0, 0.0))[0] + 1
+    _login_failures[key] = (count, time.time())
+
+
+def _clear_failures(login_id: str) -> None:
+    """ログイン成功時に失敗カウントをクリアする。"""
+    _login_failures.pop(login_id.lower(), None)
+
+
+def _csrf_ok() -> bool:
+    """POSTフォームのCSRFトークンがセッションのものと一致するか検証する。
+
+    Returns:
+        bool: 一致すれば True。
+    """
+    token = request.form.get("csrf_token", "")
+    return bool(token) and secrets.compare_digest(token, session.get("csrf_token", ""))
+
+
+def _establish_session(user: dict) -> None:
+    """ログイン成功時にセッションへユーザー情報を設定する。
+
+    セッション固定化攻撃を防ぐため、ログイン前のセッションを破棄してから
+    新しい CSRF トークンとユーザー情報を設定する。
+
+    Args:
+        user: ユーザー情報の dict（id, name, role, dept を含む）。
+    """
+    session.clear()  # セッション固定化対策：ログイン前の状態を破棄
+    session["csrf_token"] = secrets.token_hex(32)  # トークン再生成
+    session["user_id"] = user["id"]
+    session["user_name"] = user["name"]
+    # 役職は正規化した新値（システム管理者・一般 等）で格納し、以後の判定・表示を統一する。
+    session["user_role"] = normalize_role(user["role"])
+    session["user_dept"] = user.get("dept", "")
+    session.permanent = True
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login() -> str:
-    """ログインページの表示とログイン処理を行う。
+    """ログインページの表示とログイン処理を行う（ログインID＋パスワード方式）。
 
-    GET  : ユーザー一覧付きのログインフォームを表示する。
-    POST : フォームで選択されたユーザーIDを検証し、セッションを設定してスケジュール画面へリダイレクトする。
+    GET  : ログインID・パスワードの入力フォームを表示する。
+           有効な記憶トークンがあれば自動ログインする（ログアウト直後を除く）。
+    POST : ログインIDでユーザーを特定し、パスワードを検証してセッションを張る。
 
     Returns:
-        str: GETの場合はHTMLレスポンス、POSTの場合はリダイレクトレスポンス。
+        str: GETはHTMLレスポンス、POSTはリダイレクトレスポンス。
     """
     remember_token = request.cookies.get("remember_token", "")
     remembered_user = get_user_by_remember_token(remember_token)
@@ -43,118 +113,94 @@ def login() -> str:
     # 記憶トークンによる自動ログイン（GET時・ログアウト直後はスキップ）
     if request.method == "GET" and not request.args.get("logged_out"):
         if remembered_user is not None:
-            session["user_id"] = remembered_user["id"]
-            session["user_name"] = remembered_user["name"]
-            session["user_role"] = remembered_user["role"]
-            session.permanent = True
+            _establish_session(remembered_user)
             return redirect(url_for("schedule.weekly"))
 
     if request.method == "POST":
-        raw_id = request.form.get("user_id", "").strip()
-        if not raw_id:
-            flash("ユーザーを選択してください", "warning")
+        if not _csrf_ok():
+            flash("セッションが無効です。もう一度お試しください", "danger")
             return redirect(url_for("auth.login"))
 
-        try:
-            user_id = int(raw_id)
-        except ValueError:
-            flash("無効なユーザーIDです", "warning")
+        login_id = request.form.get("login_id", "").strip()
+        password = request.form.get("password", "")
+        remember = request.form.get("remember_me", "") == "1"
+
+        if not login_id or not password:
+            flash("ログインIDとパスワードを入力してください", "warning")
             return redirect(url_for("auth.login"))
 
-        user = get_user_by_id(user_id)
-        if user is None:
-            flash("ユーザーが見つかりません", "warning")
+        # レート制限：連続失敗が上限に達していればロックアウト
+        locked = _is_locked_out(login_id)
+        if locked > 0:
+            flash(f"ログインの失敗が続いたため、約{(locked + 59) // 60}分間ロックされています", "danger")
             return redirect(url_for("auth.login"))
 
-        # 管理職・マスタでパスワードが設定されている場合は検証する
-        # ただし有効なremember_tokenがある場合はスキップ
-        if is_privileged(user["role"]) and user_has_password(user_id):
-            use_token = request.form.get("use_remember_token", "") == "1"
-            token_user = get_user_by_remember_token(request.cookies.get("remember_token", ""))
-            if use_token and token_user and token_user["id"] == user_id:
-                pass  # トークン認証済み・パスワードスキップ
-            else:
-                password = request.form.get("password", "")
-                if not check_user_password(user_id, password):
-                    flash("パスワードが正しくありません", "danger")
-                    return redirect(url_for("auth.login"))
+        user = get_user_by_login_id(login_id)
+        # ユーザー不明・パスワード不一致は同一メッセージ（ID存在の推測を防ぐ）
+        if user is None or not check_user_password(user["id"], password):
+            _record_failure(login_id)
+            flash("ログインIDまたはパスワードが正しくありません", "danger")
+            return redirect(url_for("auth.login"))
 
-        session["user_id"] = user["id"]
-        session["user_name"] = user["name"]
-        session["user_role"] = user["role"]
-        session["user_dept"] = user.get("dept", "")
-        session.permanent = True
+        user_id = user["id"]
+        _clear_failures(login_id)
+        _establish_session(user)
 
-        # ログイン成功時: 管理職・マスタはトークンを保存、一般ユーザーはトークンなし
         resp = redirect(url_for("schedule.weekly"))
-        if is_privileged(user["role"]):
-            resp.set_cookie("last_user_id", str(user_id), max_age=365 * 24 * 3600)
+        resp.set_cookie("last_login_id", login_id, max_age=_TOKEN_MAX_AGE)
+        # 「次回から自動ログイン」チェック時のみトークンを発行（全ロール対象）。
+        if remember:
             token = set_remember_token(user_id)
-            resp.set_cookie("remember_token", token, max_age=365 * 24 * 3600, httponly=True)
+            resp.set_cookie(
+                "remember_token", token, max_age=_TOKEN_MAX_AGE,
+                httponly=True, samesite="Lax",
+            )
         else:
             clear_remember_token(user_id)
             resp.delete_cookie("remember_token")
         record_operation(ACTION_LOGIN, f"user_id={user_id}")
         return resp
 
-    users = get_all_users()
-    # ログイン画面用: 部署名順 → ロール順（マスタ→管理職→ユーザー）
-    _role_order = {"マスタ": 0, "管理職": 1, "ユーザー": 2}
-    users.sort(key=lambda u: (u.get("dept", ""), _role_order.get(u.get("role", ""), 9)))
-
-    # パスワードが設定されている管理職・マスタIDのセット（JS用）
-    password_required_ids = [
-        u["id"] for u in users
-        if is_privileged(u["role"]) and user_has_password(u["id"])
-    ]
-
-    # クッキーから前回ログインユーザーIDを取得する
-    last_user_id = request.cookies.get("last_user_id", "")
-    remembered_user_id: int | None = remembered_user["id"] if remembered_user else None
-    return render_template(
-        "login.html",
-        users=users,
-        last_user_id=last_user_id,
-        password_required_ids=password_required_ids,
-        remembered_user_id=remembered_user_id,
-    )
+    # 前回ログインIDをクッキーから復元（入力欄の初期値に使う）
+    last_login_id = request.cookies.get("last_login_id", "")
+    return render_template("login.html", last_login_id=last_login_id)
 
 
 @auth_bp.route("/reset_password_and_login", methods=["POST"])
 def reset_password_and_login() -> str:
-    """ログイン画面からパスワードをリセットして即座にログインする。
+    """初回パスワード設定を行い、そのままログインする（全ロール対象）。
 
-    パスワード未設定ユーザー、またはパスワードを忘れたユーザーが
-    新しいパスワードを設定して同時にログインできる。
+    パスワード未設定のユーザーが、ログインIDと現行パスワードの確認を経ずに
+    初回パスワードを設定してログインする。既にパスワードが設定済みの場合は拒否する
+    （パスワード変更は管理画面またはログイン後の機能で行う）。
 
     Returns:
         str: 週間予定へのリダイレクト、またはエラー時はログイン画面へのリダイレクト。
     """
     import re as _re
-    raw_id = request.form.get("user_id", "").strip()
+    if not _csrf_ok():
+        flash("セッションが無効です。もう一度お試しください", "danger")
+        return redirect(url_for("auth.login"))
+
+    login_id = request.form.get("login_id", "").strip()
     new_pw = request.form.get("new_password", "")
     confirm_pw = request.form.get("new_password_confirm", "")
 
-    if not raw_id:
-        flash("ユーザーを選択してください", "warning")
+    if not login_id:
+        flash("ログインIDを入力してください", "warning")
         return redirect(url_for("auth.login"))
 
-    try:
-        user_id = int(raw_id)
-    except ValueError:
-        flash("無効なユーザーIDです", "warning")
-        return redirect(url_for("auth.login"))
-
-    user = get_user_by_id(user_id)
+    user = get_user_by_login_id(login_id)
     if user is None:
-        flash("ユーザーが見つかりません", "warning")
+        flash("ログインIDが正しくありません", "warning")
         return redirect(url_for("auth.login"))
 
-    if not is_privileged(user["role"]):
-        flash("パスワードの設定は管理職・マスタのみ対象です", "warning")
+    # 既にパスワード設定済みなら初回設定は不可（乗っ取り防止）。
+    if user_has_password(user["id"]):
+        flash("このユーザーは既にパスワードが設定されています。ログインしてください", "warning")
         return redirect(url_for("auth.login"))
 
-    if not _re.fullmatch(r'\d{4}', new_pw):
+    if not _re.fullmatch(r"\d{4}", new_pw):
         flash("パスワードは4桁の数字で入力してください", "warning")
         return redirect(url_for("auth.login"))
 
@@ -162,19 +208,18 @@ def reset_password_and_login() -> str:
         flash("パスワードと確認用パスワードが一致しません", "warning")
         return redirect(url_for("auth.login"))
 
+    user_id = user["id"]
     set_user_password(user_id, new_pw)
-
-    session["user_id"] = user["id"]
-    session["user_name"] = user["name"]
-    session["user_role"] = user["role"]
-    session["user_dept"] = user.get("dept", "")
-    session.permanent = True
+    _establish_session(user)
 
     resp = redirect(url_for("schedule.weekly"))
-    resp.set_cookie("last_user_id", str(user_id), max_age=365 * 24 * 3600)
+    resp.set_cookie("last_login_id", login_id, max_age=_TOKEN_MAX_AGE)
     token = set_remember_token(user_id)
-    resp.set_cookie("remember_token", token, max_age=365 * 24 * 3600, httponly=True)
-    record_operation(ACTION_LOGIN, f"user_id={user_id} (password_reset)")
+    resp.set_cookie(
+        "remember_token", token, max_age=_TOKEN_MAX_AGE,
+        httponly=True, samesite="Lax",
+    )
+    record_operation(ACTION_LOGIN, f"user_id={user_id} (initial_password_set)")
     flash("パスワードを設定してログインしました", "success")
     return resp
 
@@ -183,11 +228,60 @@ def reset_password_and_login() -> str:
 def logout() -> str:
     """ログアウト処理を行い、ログインページへリダイレクトする。
 
-    セッションを全消去してからログインページへ誘導する。
+    セッションを全消去し、記憶トークンをDB・クッキー両方から失効させてから
+    ログインページへ誘導する。
 
     Returns:
         str: ログインページへのリダイレクトレスポンス。
     """
     record_operation(ACTION_LOGOUT, "")
+    # 記憶トークンをDBから失効（自動ログインを確実に無効化）。
+    user_id = session.get("user_id")
+    if user_id:
+        clear_remember_token(int(user_id))
     session.clear()
-    return redirect(url_for("auth.login", logged_out=1))
+    resp = redirect(url_for("auth.login", logged_out=1))
+    resp.delete_cookie("remember_token")
+    return resp
+
+
+def get_switchable_depts() -> list[str]:
+    """ログイン中ユーザーが切り替え可能な所属名の一覧を返す。
+
+    - システム管理者: 全部署（dept_master）。
+    - 所属長: 自分の担当所属（user_affiliation）。
+    - その他: 空。
+
+    Returns:
+        list[str]: 切替可能な所属名のリスト。
+    """
+    from ..models import get_all_depts, get_user_affiliations
+    role = session.get("user_role", "")
+    if is_system_admin(role):
+        return [d["dept_name"] for d in get_all_depts()]
+    if is_dept_head(role):
+        uid = session.get("user_id")
+        return get_user_affiliations(int(uid)) if uid else []
+    return []
+
+
+@auth_bp.route("/switch_dept")
+def switch_dept() -> str:
+    """システム管理者・所属長が操作対象の所属を切り替える。
+
+    指定所属を session["active_dept"] に保存する。切替可能な所属以外は無視する。
+    'all'（空）を指定するとシステム管理者は全所属表示へ戻る。
+
+    Returns:
+        str: 直前のページ、なければ週間予定へのリダイレクト。
+    """
+    if not session.get("user_id"):
+        return redirect(url_for("auth.login"))
+    dept = request.args.get("dept", "").strip()
+    allowed = get_switchable_depts()
+    if dept == "" or dept.lower() == "all":
+        session.pop("active_dept", None)  # 全所属表示へ
+    elif dept in allowed:
+        session["active_dept"] = dept
+    # それ以外（許可外）は無視して現状維持
+    return redirect(request.referrer or url_for("schedule.weekly"))
