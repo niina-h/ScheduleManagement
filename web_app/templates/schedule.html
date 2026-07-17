@@ -16,7 +16,7 @@
   </h5>
   <a class="btn btn-outline-secondary btn-sm nav-confirm" href="{{ url_for('schedule.weekly') }}?week={{ next_week }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user_id }}{% endif %}">次週 ▶</a>
   <a class="btn btn-outline-primary btn-sm ms-2 nav-confirm" href="{{ url_for('schedule.weekly') }}{% if is_admin_view is defined and is_admin_view %}?user_id={{ target_user_id }}{% endif %}">今週</a>
-  {% if (session.user_role == '管理職' or session.user_role == 'マスタ') and all_users is defined and all_users %}
+  {% if (session.user_role == '管理職' or session.user_role == 'システム管理者') and all_users is defined and all_users %}
   <div class="input-group input-group-sm ms-auto" style="width:auto;">
     <span class="input-group-text">切り替え：</span>
     <select class="form-select form-select-sm" style="width:auto;"

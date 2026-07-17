@@ -20,7 +20,7 @@
   </a>
   <a class="btn btn-outline-primary btn-sm ms-2"
      href="{{ url_for('daily_bp.daily_today') }}{% if is_admin_view is defined and is_admin_view %}?user_id={{ target_user.id }}{% endif %}">今日</a>
-  {% if (session.user_role == '管理職' or session.user_role == 'マスタ') and all_users %}
+  {% if (session.user_role == '管理職' or session.user_role == 'システム管理者') and all_users %}
   <div class="input-group input-group-sm ms-auto" style="width:auto;">
     <span class="input-group-text">切り替え：</span>
     <select class="form-select form-select-sm" style="width:auto;"
@@ -127,8 +127,14 @@
       <div class="card h-100">
         <div class="card-header bg-success text-white py-2 d-flex justify-content-between align-items-center">
           <strong>✏️ 本日の実績</strong>
-          <button type="button" id="btn-clear-result" class="btn btn-sm btn-outline-light"
-                  title="実績をクリアして予定を反映">実績クリア</button>
+          <div class="d-flex align-items-center gap-2">
+            <label class="small mb-0" style="cursor:pointer;font-weight:normal;white-space:nowrap;"
+                   title="予定に対する進捗（遅れ/前倒し）の表示を隠します">
+              <input type="checkbox" id="hide-progress-today"> 本日は表示しない
+            </label>
+            <button type="button" id="btn-clear-result" class="btn btn-sm btn-outline-light"
+                    title="実績をクリアして予定を反映">実績クリア</button>
+          </div>
         </div>
         <div class="card-body p-2">
           <table class="table table-sm table-bordered mb-0">
@@ -370,8 +376,8 @@
 
   {# ---- 管理者（上長）コメント欄 ---- #}
   {# 入力フォーム表示条件: 管理職→管理職/マスタ以外、マスタ→全員（自分以外）。管理職→マスタは閲覧専用ブロックで表示する #}
-  {% if (session.user_role == '管理職' or session.user_role == 'マスタ') and is_admin_view is defined and is_admin_view
-      and not (session.user_role == '管理職' and target_user.get('role','') in ('管理職','マスタ')) %}
+  {% if (session.user_role == '管理職' or session.user_role == 'システム管理者') and is_admin_view is defined and is_admin_view
+      and not (session.user_role == '管理職' and target_user.get('role','') in ('管理職','システム管理者')) %}
   {# 管理者が部下の画面を閲覧中: 振り返り（左）＋上長コメント（右）の2カラム #}
   <div class="row g-3 mt-1">
     <!-- 左: 部下の振り返り（読み取り専用） -->
@@ -504,13 +510,13 @@
     <a href="{{ url_for('mail_report_bp.user_preview', date=date_str) }}"
        class="btn btn-outline-primary">📧 日報メール</a>
     {% endif %}
-    {% if session.user_role == '管理職' or session.user_role == 'マスタ' %}
+    {% if session.user_role == '管理職' or session.user_role == 'システム管理者' %}
     <a href="{{ url_for('export_bp.download_team_report', date=date_str) }}"
        class="btn btn-outline-info">📋 チーム日報 Excel</a>
     <a href="{{ url_for('mail_report_bp.preview', date=date_str) }}"
        class="btn btn-outline-primary">📧 管理職日報メール</a>
     {% endif %}
-    {% if session.user_role == 'マスタ' %}
+    {% if session.user_role == 'システム管理者' %}
     <a href="{{ url_for('export_bp.export_admin_daily', date_str=date_str) }}"
        class="btn btn-outline-warning">📊 全員日報 Excel</a>
 
@@ -540,7 +546,7 @@
 {% endfor %}
 
 {# ---- 管理者: 部下の振り返りコメント一覧 ---- #}
-{% if (session.user_role == '管理職' or session.user_role == 'マスタ') and not is_admin_view and subordinate_comments %}
+{% if (session.user_role == '管理職' or session.user_role == 'システム管理者') and not is_admin_view and subordinate_comments %}
 <div class="mt-4">
   <h6 class="fw-bold border-bottom pb-2">部下の振り返りコメント（{{ date_str }}）</h6>
   {% for item in subordinate_comments %}
@@ -966,4 +972,57 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
 })();
 </script>
 <script type="application/json" id="project-tasks-data">{{ project_tasks_json | safe }}</script>
+<script type="application/json" id="task-progress-data">{{ task_progress_json | safe }}</script>
+<script>
+/* 実績 vs 予定の進捗可視化（遅れ/予定通り/前倒し）。
+   タスクに紐づく実績合計時間から算出した実績進捗率と、日付ベースの予定進捗率を比較する。 */
+(function () {
+  var TP = {};
+  try { TP = JSON.parse(document.getElementById('task-progress-data').textContent || '{}'); } catch (e) {}
+  var STATE = {
+    behind:  { t: '遅れ',   bg: '#fee2e2', fg: '#b91c1c' },
+    ahead:   { t: '前倒し', bg: '#dcfce7', fg: '#15803d' },
+    ontrack: { t: '予定通り', bg: '#e0e7ff', fg: '#4338ca' }
+  };
+  var toggle = document.getElementById('hide-progress-today');
+  function isHidden() { return toggle && toggle.checked; }
+
+  function render() {
+    document.querySelectorAll('.pt-id-field').forEach(function (f) {
+      var cell = f.closest('td'); if (!cell) return;
+      var wrap = cell.querySelector('.d-flex'); if (!wrap) return;
+      var badge = wrap.querySelector('.pt-prog-badge');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'pt-prog-badge badge ms-1';
+        badge.style.fontSize = '0.68em';
+        badge.style.whiteSpace = 'nowrap';
+        wrap.appendChild(badge);
+      }
+      var info = f.value ? TP[f.value] : null;
+      if (isHidden() || !info || info.state === 'none') { badge.style.display = 'none'; return; }
+      var s = STATE[info.state] || STATE.ontrack;
+      var sign = info.diff > 0 ? ('+' + info.diff) : ('' + info.diff);
+      badge.style.display = '';
+      badge.style.background = s.bg;
+      badge.style.color = s.fg;
+      badge.textContent = info.state === 'ontrack' ? s.t : (s.t + ' ' + sign + '%');
+      badge.title = '予定進捗 ' + info.planned + '% に対して実績進捗 ' + info.actual + '%（差 ' + sign + '%）';
+    });
+  }
+
+  if (toggle) {
+    toggle.checked = localStorage.getItem('hideProgressToday') === '1';
+    toggle.addEventListener('change', function () {
+      localStorage.setItem('hideProgressToday', toggle.checked ? '1' : '0');
+      render();
+    });
+  }
+  // タスク自動マッチ後（紐付けID変化後）にも再描画
+  document.querySelectorAll('input.result-task').forEach(function (inp) {
+    inp.addEventListener('change', function () { setTimeout(render, 0); });
+  });
+  render();
+})();
+</script>
 {% endblock %}

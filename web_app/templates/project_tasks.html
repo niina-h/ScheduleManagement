@@ -1,17 +1,70 @@
 {% extends "base.html" %}
-{% block title %}タスク管理 - 予定管理システム{% endblock %}
+{% set page = only_tab if (only_tab is defined and only_tab) else 'tasks' %}
+{% set page_url = url_for('project_tasks_bp.routine_page') if page == 'routine' else (url_for('project_tasks_bp.events_page') if page == 'events' else url_for('project_tasks_bp.task_list')) %}
+{% block title %}{% if page == 'routine' %}定例作業{% elif page == 'events' %}イベント{% else %}タスク管理{% endif %} - 予定管理システム{% endblock %}
 {% block content %}
+{% if page == 'events' %}
+<style>
+  .ev-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .ev-cal-grid .ev-cal-dow { text-align: center; font-size: .68rem; font-weight: 700; color: #64748b; padding: 2px 0; }
+  .ev-cal-grid .ev-cal-day { position: relative; min-height: 46px; border: 1px solid #e2e8f0; border-radius: 4px;
+    padding: 2px 3px; font-size: .72rem; cursor: pointer; background: #fff; }
+  .ev-cal-grid .ev-cal-day.other-month { color: #cbd5e1; background: #f8fafc; }
+  .ev-cal-grid .ev-cal-day.today { border-color: #3b82f6; box-shadow: inset 0 0 0 1px #3b82f6; }
+  .ev-cal-grid .ev-cal-day.selected { background: #eef2ff; border-color: #4338ca; }
+  .ev-cal-grid .ev-cal-day.has-event { background: #ecfdf5; }
+  /* 登録イベント数バッジ（各日の右下に常時表示） */
+  .ev-cal-grid .ev-cal-badge { position: absolute; bottom: 2px; right: 3px; font-size: .58rem; line-height: 1;
+    color: #fff; background: #10b981; border-radius: 8px; padding: 1px 4px; font-weight: 700; }
+  .event-row.ev-hidden { display: none; }
+  .ev-time-one:disabled { background: #f1f5f9; color: #94a3b8; }
+  .event-row.ev-readonly { opacity: .75; }
+</style>
+{% endif %}
+
+{# ── イベント時刻の単一ドロップダウン（09:00〜19:00 を15分刻み）マクロ ──
+   name_prefix: フィールド名（例 "event_start_time" や "event_start_time_5"）
+   value: 既存の "HH:MM" 文字列（空可）
+   form_id: 属する form の id（各行の bulkEventForm 用。追加フォームでは None）
+   disabled: MS 等で無効化する場合 True
+   1つのプルダウンで開始/終了時刻を選ぶ。未選択（空）も許可。 #}
+{% macro ev_time_select(name_prefix, value, form_id=None, disabled=False, cls='') %}
+  <select {% if form_id %}form="{{ form_id }}"{% endif %} name="{{ name_prefix }}"
+          class="form-select form-select-sm ev-time-one {{ cls }}" style="width:auto;display:inline-block;font-size:.75rem;"
+          {% if disabled %}disabled{% endif %}>
+    <option value="">--</option>
+    {% for h in range(9, 20) %}
+      {% for m in ['00','15','30','45'] %}
+        {% set t = '%02d:%s' % (h, m) %}
+        {% if not (h == 19 and m != '00') %}
+        <option value="{{ t }}" {% if value == t %}selected{% endif %}>{{ t }}</option>
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
+  </select>
+{% endmacro %}
 <div class="row justify-content-center">
   <div class="col-lg-12">
 
     <div class="d-flex align-items-center justify-content-between mb-2">
       <div class="d-flex align-items-center gap-3">
-        <h5 class="fw-bold mb-0">タスク管理</h5>
-        {% if is_master is defined and is_master and selectable_users %}
+        <h5 class="fw-bold mb-0">{% if page == 'routine' %}🔁 定例作業{% elif page == 'events' %}📅 イベント{% else %}タスク管理{% endif %}</h5>
+        {# タスク管理: マスタのみ担当者切替（全員含む）。イベント: 全ユーザーが同部署メンバーを切替。 #}
+        {% if page == 'events' and selectable_users %}
         <div class="d-flex align-items-center gap-1">
           <label class="form-label small fw-semibold mb-0">担当者：</label>
           <select id="userSwitch" class="form-select form-select-sm" style="width:140px; font-size:0.8rem;"
-                  onchange="location.href='{{ url_for('project_tasks_bp.task_list') }}?user_id='+this.value">
+                  onchange="location.href='{{ page_url }}?user_id='+this.value">
+            {% for u in selectable_users %}
+            <option value="{{ u.id }}" {% if target_user_id == u.id %}selected{% endif %}>{{ u.last_name or u.name }}{% if u.id == session.user_id %}（自分）{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% elif is_master is defined and is_master and selectable_users and page != 'routine' %}
+        <div class="d-flex align-items-center gap-1">
+          <label class="form-label small fw-semibold mb-0">担当者：</label>
+          <select id="userSwitch" class="form-select form-select-sm" style="width:140px; font-size:0.8rem;"
+                  onchange="location.href='{{ page_url }}?user_id='+this.value">
             <option value="0" {% if target_user_id == 0 %}selected{% endif %}>全員</option>
             {% for u in selectable_users %}
             <option value="{{ u.id }}" {% if target_user_id == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
@@ -21,35 +74,27 @@
         {% endif %}
       </div>
       <div class="d-flex gap-2">
-        <a class="btn btn-outline-secondary btn-sm gantt-link"
-           data-base="{{ url_for('project_tasks_bp.gantt') }}"
-           href="{{ url_for('project_tasks_bp.gantt') }}">ガントチャート</a>
+        {% if page == 'tasks' %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('planner_bp.planner') }}">ガントチャート</a>
+        {% endif %}
       </div>
     </div>
 
-    {# ── タブナビゲーション ── #}
+    {# ── タブナビゲーション（タスク一覧のみタブ表示。定例作業／イベントは専用画面のためタブ非表示） ── #}
+    {% if page == 'tasks' %}
     <ul class="nav nav-tabs mb-0" id="taskMgmtTabs" role="tablist">
       <li class="nav-item" role="presentation">
         <button class="nav-link active" id="tab-tasks-btn" data-bs-toggle="tab" data-bs-target="#tab-tasks" type="button" role="tab">
           📋 タスク一覧
         </button>
       </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-routine-btn" data-bs-toggle="tab" data-bs-target="#tab-routine" type="button" role="tab">
-          🔁 定例作業
-        </button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-events-btn" data-bs-toggle="tab" data-bs-target="#tab-events" type="button" role="tab">
-          📅 イベント
-        </button>
-      </li>
     </ul>
+    {% endif %}
 
-    <div class="tab-content border border-top-0 rounded-bottom p-2 bg-white">
+    <div class="tab-content {% if page == 'tasks' %}border border-top-0{% else %}border{% endif %} rounded-bottom p-2 bg-white">
 
     {# ══════════════ タスク一覧タブ ══════════════ #}
-    <div class="tab-pane fade show active" id="tab-tasks" role="tabpanel">
+    <div class="tab-pane fade {% if page == 'tasks' %}show active{% endif %}" id="tab-tasks" role="tabpanel">
     {# ── タスク一覧テーブル ── #}
     {% set ns = namespace(current_cat='') %}
     <div class="card shadow-sm mb-3">
@@ -311,9 +356,9 @@
     </div>{# /tab-pane tasks #}
 
     {# ══════════════ 定例作業タブ ══════════════ #}
-    <div class="tab-pane fade" id="tab-routine" role="tabpanel">
+    <div class="tab-pane fade {% if page == 'routine' %}show active{% endif %}" id="tab-routine" role="tabpanel">
     <div class="row g-3 mb-2">
-      <div class="col-md-6">
+      <div class="col-12">
         <div class="card shadow-sm h-100">
           <div class="card-header fw-semibold small py-1 d-flex align-items-center gap-3" style="background:#6d4c41;color:#fff;">
             <span>🔁 定例 <span class="ms-2 small fw-normal text-warning">ガントチャート対象外・反映で定例行をキープ</span></span>
@@ -321,34 +366,27 @@
           </div>
           <div class="collapse" id="addRoutineForm">
             <div class="card-body border-bottom p-2">
-              {% if routine_task_options %}
               <form method="post" action="{{ url_for('project_tasks_bp.save_routine') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="row g-1 align-items-end">
                   <div class="col">
-                    <label class="form-label small mb-0">作業選択（大区分：定例）</label>
-                    <select name="task_name" class="form-select form-select-sm" id="routineTaskSel" required
-                            onchange="fillRoutineSubcat(this)">
-                      <option value="">-- 作業を選択 --</option>
-                      {% for t in routine_task_options %}
-                      <option value="{{ t.task_name }}"
-                              data-subcat="{{ t.subcategory_name or '' }}"
-                              data-hours="{{ t.default_hours or 0 }}">{{ t.task_name }}</option>
-                      {% endfor %}
-                    </select>
-                    <input type="hidden" name="subcategory_name" id="routineSubcat">
-                    <input type="hidden" name="default_hours" id="routineHours">
+                    <label class="form-label small mb-0">作業名</label>
+                    <input type="text" name="task_name" class="form-control form-control-sm"
+                           placeholder="作業名を入力" required maxlength="100">
                   </div>
                   <div class="col-auto">
-                    <label class="form-label small mb-0">行（1〜10）</label>
-                    <select name="row_number" class="form-select form-select-sm" style="width:100px;" required>
-                      <option value="">--</option>
-                      {% for n in range(1, 11) %}
-                      <option value="{{ n }}" {% if n in used_rows %}disabled class="text-muted"{% endif %}>
-                        {{ n }}{% if n in used_rows %} ✓{% endif %}
-                        {% if n <= 5 %}（AM{{ n }}）{% else %}（PM{{ n-5 }}）{% endif %}
-                      </option>
-                      {% endfor %}
+                    <label class="form-label small mb-0">時間(h)</label>
+                    <input type="number" name="default_hours" class="form-control form-control-sm"
+                           style="width:90px;" step="0.25" min="0" max="24" value="1" required>
+                  </div>
+                  <div class="col-auto">
+                    {# 行番号は手入力せず、区分（午前/午後）を選ぶだけ。空き行はサーバーが自動割当（各最大3件）。 #}
+                    {% set am_used = used_rows | select('le', 3) | list | length %}
+                    {% set pm_used = used_rows | select('ge', 6) | select('le', 8) | list | length %}
+                    <label class="form-label small mb-0">区分</label>
+                    <select name="period" class="form-select form-select-sm" style="width:140px;" required>
+                      <option value="AM" {% if am_used >= 3 %}disabled{% endif %}>午前（AM {{ am_used }}/3）</option>
+                      <option value="PM" {% if pm_used >= 3 %}disabled{% endif %}>午後（PM {{ pm_used }}/3）</option>
                     </select>
                   </div>
                   <div class="col-auto">
@@ -366,12 +404,6 @@
                   </div>
                 </div>
               </form>
-              {% else %}
-              <div class="alert alert-info small py-1 mb-0">
-                作業登録に「定例」カテゴリの作業が登録されていません。<br>
-                <a href="{{ url_for('tasks.task_list') }}">作業登録</a> で大区分「定例」の作業を追加してください。
-              </div>
-              {% endif %}
             </div>
           </div>
           <div class="card-body p-2">
@@ -399,7 +431,7 @@
                     <span class="{% if day_flags[di]|trim == '1' %}text-primary fw-bold{% else %}text-muted{% endif %}" style="margin:0 1px;">{{ dn }}</span>
                     {% endfor %}
                   </td>
-                  <td class="small text-center" title="作業マスタの標準時間を自動反映">{{ '%g'|format(r.default_hours|float) }}h</td>
+                  <td class="small text-center">{{ '%g'|format(r.default_hours|float) }}h</td>
                   <td class="text-center">
                     <form method="post" action="{{ url_for('project_tasks_bp.delete_routine', routine_id=r.id) }}"
                           class="d-inline" onsubmit="return confirm('削除しますか？')">
@@ -413,6 +445,7 @@
                 {% endfor %}
               </tbody>
             </table>
+            <p class="text-muted small mb-0 mt-1">※ 同じ行番号で再登録すると、作業名・時間・曜日を上書き変更できます。</p>
           </div>
         </div>
       </div>
@@ -420,17 +453,44 @@
     </div>{# /row 定例 #}
     </div>{# /tab-pane routine #}
 
-    {# ══════════════ イベントタブ ══════════════ #}
-    <div class="tab-pane fade" id="tab-events" role="tabpanel">
-    <div class="col-md-12">
-
-    {# ── イベント一覧テーブル ── #}
+    {# ══════════════ イベントタブ（左＝月カレンダー、右＝一覧） ══════════════ #}
+    <div class="tab-pane fade {% if page == 'events' %}show active{% endif %}" id="tab-events" role="tabpanel">
     {% set events = tasks | selectattr('is_event') | list %}
+    <div class="row g-3">
+
+    {# ── 左: 月カレンダー ── #}
+    <div class="col-lg-4">
+      <div class="card shadow-sm mb-3">
+        <div class="card-header bg-secondary text-white fw-semibold small py-1 d-flex align-items-center justify-content-between">
+          <button type="button" class="btn btn-outline-light btn-sm py-0 px-2" id="evCalPrev">◀</button>
+          <span id="evCalTitle">-</span>
+          <button type="button" class="btn btn-outline-light btn-sm py-0 px-2" id="evCalNext">▶</button>
+        </div>
+        <div class="card-body p-2">
+          <div id="evCalGrid" class="ev-cal-grid"></div>
+          <div class="d-flex align-items-center justify-content-between mt-2">
+            <span class="small text-muted">日付を選び「＋イベント追加」／クリックで一覧を絞り込み</span>
+            <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2" id="evCalClear">絞り込み解除</button>
+          </div>
+          <div class="d-grid mt-2">
+            <button type="button" class="btn btn-success btn-sm" id="evAddOpenBtn"
+                    data-bs-toggle="collapse" data-bs-target="#addEventForm">
+              ＋ イベント追加<span id="evAddSelDate" class="ms-1 small"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>{# /col-lg-4 カレンダー #}
+
+    {# ── 右: 追加フォーム＋一覧 ── #}
+    <div class="col-lg-8">
+
     <div class="card shadow-sm mb-3">
       <div class="card-header bg-success text-white fw-semibold small py-1 d-flex align-items-center gap-3">
         <span>📅 イベント一覧（会議・行事など）</span>
-        <button type="button" class="btn btn-outline-light btn-sm py-0" data-bs-toggle="collapse" data-bs-target="#addEventForm">＋ イベント追加</button>
       </div>
+
+      {# ── 追加フォーム（カレンダーで開始日を選択→開いて登録） ── #}
       <div class="collapse" id="addEventForm">
         <div class="card-body border-bottom p-2">
           <form method="post" action="{{ url_for('project_tasks_bp.add_task') }}" id="eventAddFormEl">
@@ -440,66 +500,71 @@
             <input type="hidden" name="progress" value="0">
             <input type="hidden" name="delay_days" value="0">
             <input type="hidden" name="planned_hours" id="ev-planned-hours" value="0">
-            <div class="row g-2 align-items-end">
-              <div class="col-md-3">
+            {# 大区分は廃止：イベントは常に category なしで登録する #}
+            <div class="row g-3 align-items-end">
+              <div class="col-md-6">
                 <label class="form-label small fw-semibold">イベント名 <span class="text-danger">*</span></label>
                 <input type="text" name="task_name" class="form-control form-control-sm" required>
               </div>
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold">大区分</label>
-                <select name="category_id" class="form-select form-select-sm" id="ev-add-cat">
-                  <option value="">（なし）</option>
-                  {% for c in categories %}
-                  <option value="{{ c.id }}">{{ c.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold">関係者</label>
-                <select name="event_members" class="form-select form-select-sm" id="ev-members" multiple size="4" style="font-size:0.75rem;">
-                  {% for u in users %}
-                  <option value="{{ u.id }}" {% if u.id == session.user_id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
-                  {% endfor %}
-                </select>
-                <input type="hidden" name="assigned_to" id="ev-assigned-to" value="">
-                <input type="hidden" name="assigned_to_2" id="ev-assigned-to-2" value="">
-              </div>
-              <div class="col-auto">
-                <label class="form-label small fw-semibold">開始日 <span class="text-danger">*</span></label>
-                <input type="date" name="start_date" id="ev-start-date" class="form-control form-control-sm px-1" required
-                       style="width:120px;" oninput="syncEvEndDate(this)">
-              </div>
-              <div class="col-auto">
-                <label class="form-label small fw-semibold">終了日 <span class="text-danger">*</span></label>
-                <input type="date" name="end_date" id="ev-end-date" class="form-control form-control-sm px-1" required
-                       style="width:120px;">
-              </div>
-              <div class="col-auto d-flex align-items-end pb-1">
-                <div class="form-check">
-                  <input type="checkbox" name="is_milestone" class="form-check-input" id="ev-milestone" value="1"
-                         onchange="toggleEvMilestone(this)">
-                  <label class="form-check-label small" for="ev-milestone">MS</label>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold">開催日 <span class="text-danger">*</span></label>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  {# 開催日は左のカレンダーで選択。表示は読み取り専用、値は hidden で送信 #}
+                  <input type="hidden" name="start_date" id="ev-start-date" required>
+                  <span id="ev-start-disp" class="badge bg-light text-dark border px-2 py-1"
+                        style="font-size:.8rem;">← カレンダーで日付を選択</span>
+                  <div class="form-check mb-0">
+                    <input type="checkbox" class="form-check-input" id="ev-multiday" onchange="toggleEvMultiday(this)">
+                    <label class="form-check-label small" for="ev-multiday">複数日</label>
+                  </div>
+                  <span id="ev-end-wrap" class="align-items-center gap-1" style="display:none;">
+                    <span class="small text-muted">〜</span>
+                    <input type="date" name="end_date" id="ev-end-date" class="form-control form-control-sm px-1" style="width:140px;">
+                  </span>
+                  <div class="form-check mb-0 ms-2">
+                    <input type="checkbox" name="is_milestone" class="form-check-input" id="ev-milestone" value="1"
+                           onchange="toggleEvMilestone(this)">
+                    <label class="form-check-label small" for="ev-milestone">MS（時刻なし）</label>
+                  </div>
                 </div>
               </div>
+            </div>
+            <div class="row g-3 align-items-end mt-1">
               <div class="col-auto">
-                <label class="form-label small fw-semibold">開始時刻</label>
-                <input type="time" name="event_start_time" id="ev-start-time" class="form-control form-control-sm"
-                       style="width:90px;font-size:0.75rem;" step="900" oninput="calcEvHours()" onblur="roundToQuarter(this); calcEvHours()">
+                <label class="form-label small fw-semibold d-block">関係者</label>
+                <div class="ev-mem-picker" data-ids="{{ session.user_id }}">
+                  <button type="button" class="btn btn-outline-primary btn-sm ev-mem-btn">👤 <span class="ev-mem-cnt">0</span></button>
+                  <input type="hidden" name="event_members" class="ev-mem-input" value="{{ session.user_id }}">
+                </div>
+                {# assigned_to / assigned_to_2 は event_members から先頭2人をサーバー側で自動セット #}
               </div>
-              <div class="col-auto">
-                <label class="form-label small fw-semibold">終了時刻</label>
-                <input type="time" name="event_end_time" id="ev-end-time" class="form-control form-control-sm"
-                       style="width:90px;font-size:0.75rem;" step="900" oninput="calcEvHours()" onblur="roundToQuarter(this); calcEvHours()">
+              <div class="col-auto ev-time-block">
+                <label class="form-label small fw-semibold d-block">開始時刻</label>
+                {{ ev_time_select('event_start_time', '', None, False, 'ev-add-start') }}
               </div>
-              <div class="col-md-1 d-flex align-items-end">
-                <button type="submit" class="btn btn-success btn-sm w-100">追加</button>
+              <div class="col-auto ev-time-block">
+                <label class="form-label small fw-semibold d-block">所要時間</label>
+                <span class="btn-group btn-group-sm ev-dur-group" role="group">
+                  <button type="button" class="btn btn-outline-secondary ev-dur" data-min="30">30分</button>
+                  <button type="button" class="btn btn-outline-secondary ev-dur" data-min="60">1h</button>
+                  <button type="button" class="btn btn-outline-secondary ev-dur" data-min="90">1.5h</button>
+                  <button type="button" class="btn btn-outline-secondary ev-dur" data-min="120">2h</button>
+                  <button type="button" class="btn btn-outline-secondary ev-dur" data-min="240">半日</button>
+                </span>
+              </div>
+              <div class="col-auto ev-time-block">
+                <label class="form-label small fw-semibold d-block">終了時刻</label>
+                {{ ev_time_select('event_end_time', '', None, False, 'ev-add-end') }}
+              </div>
+              <div class="col-auto ms-auto">
+                <button type="submit" class="btn btn-success btn-sm px-4">追加</button>
               </div>
             </div>
           </form>
         </div>
       </div>
-      {# ── 絞り込み + 一括削除UI ── #}
-      {% if privileged %}
+
+      {# ── 絞り込み + 選択一括削除UI ── #}
       <div class="card-body p-2 border-bottom d-flex align-items-center gap-2 flex-wrap small">
         <label class="form-check-label small" style="cursor:pointer; white-space:nowrap;">
           <input type="checkbox" id="eventFilterPast" class="form-check-input" style="width:14px;height:14px;">
@@ -507,56 +572,56 @@
         </label>
         <span class="text-muted ms-2" id="eventFilterCount" style="font-size:0.8rem;"></span>
         <button type="button" class="btn btn-outline-danger btn-sm ms-auto py-0 px-2" id="eventBulkDeleteBtn"
-                style="font-size:0.8rem;" title="表示中のイベントを一括削除">🗑 表示中を一括削除</button>
+                style="font-size:0.8rem;" title="チェックしたイベントを削除">🗑 選択したイベントを削除</button>
       </div>
       <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkEventForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="from_tab" value="events">
-      {% endif %}
       <div class="card-body p-0">
         <table class="table table-sm table-hover mb-0" id="eventTable">
           <thead class="table-light">
             <tr>
               <th style="width:28%">イベント名</th>
-              <th style="width:15%">関係者</th>
-              <th style="width:8%">開始日</th>
-              <th style="width:8%">終了日</th>
+              <th style="width:7%" class="text-center">関係者</th>
+              <th style="width:9%">開始日</th>
+              <th style="width:9%">終了日</th>
               <th style="width:4%" class="text-center">MS</th>
-              <th style="width:8%">開始時刻</th>
-              <th style="width:8%">終了時刻</th>
-              {% if privileged %}<th style="width:4%" class="text-center text-danger">削除</th>{% endif %}
+              <th style="width:15%">開始時刻</th>
+              <th style="width:15%">終了時刻</th>
+              <th style="width:4%" class="text-center text-danger">削除</th>
             </tr>
           </thead>
           <tbody>
             {% for t in events %}
-            <tr class="event-row{% if t.is_milestone %} table-warning{% endif %}"
+            {% set can_edit = t.can_edit %}
+            <tr class="event-row{% if t.is_milestone %} table-warning{% endif %}{% if not can_edit %} ev-readonly{% endif %}"
                 data-task-id="{{ t.id }}"
-                data-event-end="{{ t.end_date or t.start_date or '' }}">
-              {% if privileged %}
+                data-event-start="{{ t.start_date or '' }}"
+                data-event-end="{{ t.end_date or t.start_date or '' }}"
+                data-can-edit="{{ '1' if can_edit else '0' }}">
+              {% set member_id_list = (t.event_member_ids or '').split(',') | reject('equalto', '') | list %}
+              {% if not member_id_list %}
+                {% set member_id_list = [] %}
+                {% if t.assigned_to %}{% set _ = member_id_list.append(t.assigned_to|string) %}{% endif %}
+                {% if t.assigned_to_2 %}{% set _ = member_id_list.append(t.assigned_to_2|string) %}{% endif %}
+              {% endif %}
+              {% if can_edit %}
+              {# ── 編集可能行（自分が関係者） ── #}
               <input type="hidden" form="bulkEventForm" name="task_id" value="{{ t.id }}">
-              <input type="hidden" form="bulkEventForm" name="category_id_{{ t.id }}" value="{{ t.category_id or '' }}">
+              <input type="hidden" form="bulkEventForm" name="category_id_{{ t.id }}" value="">
               <input type="hidden" form="bulkEventForm" name="subcategory_id_{{ t.id }}" value="{{ t.subcategory_id or '' }}">
               <input type="hidden" form="bulkEventForm" name="description_{{ t.id }}" value="{{ t.description or '' }}">
               <input type="hidden" form="bulkEventForm" name="status_{{ t.id }}" value="{{ t.status }}">
               <input type="hidden" form="bulkEventForm" name="delay_days_{{ t.id }}" value="{{ t.delay_days or 0 }}">
               <input type="hidden" form="bulkEventForm" name="progress_{{ t.id }}" value="{{ t.progress }}">
               <input type="hidden" form="bulkEventForm" name="is_event_{{ t.id }}" value="1">
-              {# assigned_to / assigned_to_2 は event_members から先頭2人をサーバー側で自動セットするためここでは送信しない #}
               <td><input type="text" form="bulkEventForm" name="task_name_{{ t.id }}" value="{{ t.task_name }}" class="form-control form-control-sm"></td>
               <td>
-                {% set member_id_list = (t.event_member_ids or '').split(',') | reject('equalto', '') | list %}
-                {% if not member_id_list %}
-                  {# 後方互換: assigned_to / assigned_to_2 をフォールバック #}
-                  {% set member_id_list = [] %}
-                  {% if t.assigned_to %}{% set _ = member_id_list.append(t.assigned_to|string) %}{% endif %}
-                  {% if t.assigned_to_2 %}{% set _ = member_id_list.append(t.assigned_to_2|string) %}{% endif %}
-                {% endif %}
-                <select form="bulkEventForm" name="event_members_{{ t.id }}" class="form-select form-select-sm"
-                        multiple size="3" style="min-height:62px; font-size:0.75rem;" title="Ctrl/Shiftで複数選択">
-                  {% for u in users %}
-                  <option value="{{ u.id }}" {% if (u.id|string) in member_id_list %}selected{% endif %}>{{ u.last_name or u.name }}</option>
-                  {% endfor %}
-                </select>
+                <div class="ev-mem-picker" data-ids="{{ member_id_list | join(',') }}">
+                  <button type="button" class="btn btn-outline-primary btn-sm ev-mem-btn">👤 <span class="ev-mem-cnt">0</span></button>
+                  <input type="hidden" form="bulkEventForm" name="event_members_{{ t.id }}" class="ev-mem-input"
+                         value="{{ member_id_list | join(',') }}">
+                </div>
               </td>
               <td><input type="date" form="bulkEventForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}"
                          class="form-control form-control-sm px-1 ev-date-input" data-tid="{{ t.id }}"
@@ -565,42 +630,28 @@
               <td><input type="date" form="bulkEventForm" name="end_date_{{ t.id }}" id="ev-end-{{ t.id }}"
                          value="{{ t.end_date or t.start_date }}"
                          class="form-control form-control-sm px-1 ev-end-input" data-tid="{{ t.id }}"
-                         style="width:100px;"
-                         onchange="syncEventRowEnd(this, '{{ t.id }}')"></td>
+                         style="width:100px;"></td>
               <td class="text-center">
                 <input type="checkbox" form="bulkEventForm" name="is_milestone_{{ t.id }}"
                        class="form-check-input ev-ms-check" value="1"
                        data-tid="{{ t.id }}"
                        {% if t.is_milestone %}checked{% endif %}
                        onchange="toggleEvMilestoneEdit(this, '{{ t.id }}')">
-                <input type="hidden" form="bulkEventForm" name="planned_hours_{{ t.id }}" id="ev-ph-{{ t.id }}"
-                       value="{{ t.planned_hours or 0 }}">
               </td>
-              <td>
-                <input type="time" form="bulkEventForm" name="event_start_time_{{ t.id }}"
-                       value="{{ t.event_start_time or '' }}"
-                       class="form-control form-control-sm ev-start-time px-1" data-tid="{{ t.id }}"
-                       step="900"
-                       {% if t.is_milestone %}disabled{% endif %}
-                       oninput="calcEvHoursEdit('{{ t.id }}')"
-                       onblur="roundToQuarter(this); calcEvHoursEdit('{{ t.id }}')">
-              </td>
-              <td>
-                <input type="time" form="bulkEventForm" name="event_end_time_{{ t.id }}"
-                       value="{{ t.event_end_time or '' }}"
-                       class="form-control form-control-sm ev-end-time px-1" data-tid="{{ t.id }}"
-                       step="900"
-                       {% if t.is_milestone %}disabled{% endif %}
-                       oninput="calcEvHoursEdit('{{ t.id }}')"
-                       onblur="roundToQuarter(this); calcEvHoursEdit('{{ t.id }}')">
+              <td>{{ ev_time_select('event_start_time_' ~ t.id, t.event_start_time or '', 'bulkEventForm', t.is_milestone) }}</td>
+              <td>{{ ev_time_select('event_end_time_' ~ t.id, t.event_end_time or '', 'bulkEventForm', t.is_milestone) }}</td>
+              <td class="text-center">
+                <input type="checkbox" form="bulkEventForm" name="delete_{{ t.id }}" value="1"
+                       class="form-check-input delete-check" style="width:1.1em;height:1.1em;"
+                       title="{{ t.task_name }}を削除">
               </td>
               {% else %}
+              {# ── 閲覧のみ行（自分が関係しない・他者切替時） ── #}
               <td class="small">{{ t.task_name }}{% if t.is_milestone %} <span class="badge bg-warning text-dark">MS</span>{% endif %}</td>
               <td class="small">
-                {% set member_id_list_ro = (t.event_member_ids or '').split(',') | reject('equalto', '') | list %}
-                {% if member_id_list_ro %}
+                {% if member_id_list %}
                   {% set _names = [] %}
-                  {% for u in users %}{% if (u.id|string) in member_id_list_ro %}{% set _ = _names.append(u.last_name or u.name) %}{% endif %}{% endfor %}
+                  {% for u in users %}{% if (u.id|string) in member_id_list %}{% set _ = _names.append(u.last_name or u.name) %}{% endif %}{% endfor %}
                   {{ _names | join('・') }}
                 {% else %}
                   {{ t.assigned_name or '' }}{% if t.assigned_name_2 %}・{{ t.assigned_name_2 }}{% endif %}
@@ -609,33 +660,148 @@
               <td class="small">{{ t.start_date }}</td>
               <td class="small">{{ t.end_date or t.start_date }}</td>
               <td class="text-center small">{% if t.is_milestone %}◆{% endif %}</td>
-              <td class="small">{{ t.event_start_time or ('--') }}</td>
-              <td class="small">{{ t.event_end_time or ('--') }}</td>
-              {% endif %}
-              {% if privileged %}
-              <td class="text-center">
-                <input type="checkbox" form="bulkEventForm" name="delete_{{ t.id }}" value="1"
-                       class="form-check-input delete-check" style="width:1.1em;height:1.1em;"
-                       title="{{ t.task_name }}を削除">
-              </td>
+              <td class="small">{{ t.event_start_time or '--' }}</td>
+              <td class="small">{{ t.event_end_time or '--' }}</td>
+              <td class="text-center small text-muted" title="閲覧のみ">🔒</td>
               {% endif %}
             </tr>
             {% else %}
-            <tr><td colspan="{{ 9 if privileged else 8 }}" class="text-center text-muted py-2">イベントが登録されていません</td></tr>
+            <tr><td colspan="8" class="text-center text-muted py-2">イベントが登録されていません</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-      {% if privileged and events %}
+      {% if events %}
       <div class="card-footer d-flex justify-content-end">
         <button type="submit" form="bulkEventForm" class="btn btn-success btn-sm">イベント一括保存</button>
       </div>
       {% endif %}
-      {% if privileged %}
       </form>
-      {% endif %}
     </div>{# /イベントカード #}
-    </div>{# /col-md-12 #}
+    </div>{# /col-lg-8 #}
+    </div>{# /row #}
+
+    <script type="application/json" id="evCalData">{{ events | tojson }}</script>
+    <script>
+    (function () {
+      var raw = JSON.parse(document.getElementById('evCalData').textContent || '[]');
+      var EVENTS = raw.map(function (t) {
+        return { id: t.id, name: t.task_name, start: t.start_date, end: t.end_date || t.start_date };
+      }).filter(function (e) { return e.start; });
+
+      function toDate(iso) { var p = iso.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+      function toIso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+
+      var today = new Date(); today.setHours(0, 0, 0, 0);
+      // 初期表示は常に当月（今月）。一覧は当月の全件を表示する。
+      var viewYear = today.getFullYear(), viewMonth = today.getMonth();  // 0-11
+      var selectedIso = null;
+      var grid = document.getElementById('evCalGrid');
+      var titleEl = document.getElementById('evCalTitle');
+      var DOW = ['日', '月', '火', '水', '木', '金', '土'];
+
+      function countEventsOn(iso) {
+        var d = toDate(iso);
+        return EVENTS.filter(function (e) { return toDate(e.start) <= d && d <= toDate(e.end); }).length;
+      }
+
+      function renderCalendar() {
+        titleEl.textContent = viewYear + '年 ' + (viewMonth + 1) + '月';
+        grid.innerHTML = '';
+        DOW.forEach(function (dn) {
+          var h = document.createElement('div'); h.className = 'ev-cal-dow'; h.textContent = dn; grid.appendChild(h);
+        });
+        var first = new Date(viewYear, viewMonth, 1);
+        var startOffset = first.getDay();  // 0=日
+        var cellStart = new Date(viewYear, viewMonth, 1 - startOffset);
+        for (var i = 0; i < 42; i++) {
+          var d = new Date(cellStart); d.setDate(cellStart.getDate() + i);
+          var iso = toIso(d);
+          var cell = document.createElement('div');
+          cell.className = 'ev-cal-day';
+          if (d.getMonth() !== viewMonth) cell.classList.add('other-month');
+          if (d.getTime() === today.getTime()) cell.classList.add('today');
+          if (iso === selectedIso) cell.classList.add('selected');
+          var cnt = countEventsOn(iso);
+          if (cnt > 0) cell.classList.add('has-event');
+          // 登録イベント数を各日に常時表示（0件は非表示）。
+          cell.innerHTML = '<div>' + d.getDate() + '</div>' +
+            (cnt > 0 ? '<span class="ev-cal-badge">' + cnt + '件</span>' : '');
+          cell.addEventListener('click', function () { onDayClick(this.dataset.iso); });
+          cell.dataset.iso = iso;
+          grid.appendChild(cell);
+        }
+      }
+
+      var startInput = document.getElementById('ev-start-date');
+      var endInput = document.getElementById('ev-end-date');
+      var startDisp = document.getElementById('ev-start-disp');
+      var selDateLabel = document.getElementById('evAddSelDate');
+      var addForm = document.getElementById('addEventForm');
+
+      // 追加フォームの開催日（開始日）を設定し、表示バッジを更新する。
+      function setAddStart(iso) {
+        if (startInput) startInput.value = iso || '';
+        if (startDisp) {
+          startDisp.textContent = iso ? iso : '← カレンダーで日付を選択';
+          startDisp.classList.toggle('bg-primary', !!iso);
+          startDisp.classList.toggle('text-white', !!iso);
+          startDisp.classList.toggle('bg-light', !iso);
+          startDisp.classList.toggle('text-dark', !iso);
+        }
+        var multi = document.getElementById('ev-multiday');
+        if (iso && endInput && (!multi || !multi.checked)) endInput.value = iso;  // 単日は終了=開始
+      }
+
+      function onDayClick(iso) {
+        // 日付選択：一覧の絞り込みと、追加フォームの開催日セットを兼ねる。
+        selectedIso = (selectedIso === iso) ? null : iso;
+        applyFilter();
+        renderCalendar();
+        setAddStart(selectedIso);
+        if (selDateLabel) selDateLabel.textContent = selectedIso ? '（' + selectedIso + '）' : '';
+      }
+
+      // 一覧の絞り込み：日付を選択中はその日、未選択なら「表示中の月の全件」を表示する。
+      function applyFilter() {
+        var ym = viewYear + '-' + String(viewMonth + 1).padStart(2, '0');  // 表示中の年月 "YYYY-MM"
+        var rows = document.querySelectorAll('#eventTable tbody tr.event-row');
+        rows.forEach(function (r) {
+          var s = r.dataset.eventStart, e = r.dataset.eventEnd;
+          var show;
+          if (selectedIso) {
+            show = s && e && s <= selectedIso && selectedIso <= e;         // 選択日を含むイベント
+          } else {
+            show = s && e && s.slice(0, 7) <= ym && ym <= e.slice(0, 7);   // 表示中の月に重なるイベント（当月全件）
+          }
+          r.classList.toggle('ev-hidden', !show);
+        });
+      }
+
+      // 追加ボタン押下時、日付未選択なら本日を既定で入れる。
+      var addOpenBtn = document.getElementById('evAddOpenBtn');
+      if (addOpenBtn) addOpenBtn.addEventListener('click', function () {
+        if (startInput && !startInput.value) { selectedIso = toIso(today); setAddStart(selectedIso); renderCalendar(); }
+      });
+
+      document.getElementById('evCalPrev').addEventListener('click', function () {
+        viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; } selectedIso = null; renderCalendar(); applyFilter();
+      });
+      document.getElementById('evCalNext').addEventListener('click', function () {
+        viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; } selectedIso = null; renderCalendar(); applyFilter();
+      });
+      document.getElementById('evCalClear').addEventListener('click', function () {
+        // 絞り込み解除：選択日を外し、当月に戻して当月全件を表示。
+        selectedIso = null;
+        viewYear = today.getFullYear(); viewMonth = today.getMonth();
+        renderCalendar(); applyFilter();
+        if (selDateLabel) selDateLabel.textContent = '';
+      });
+
+      renderCalendar();
+      applyFilter();  // 初期表示で当月全件に絞る
+    })();
+    </script>
     </div>{# /tab-pane events #}
 
     </div>{# /tab-content #}
@@ -653,9 +819,21 @@
 <style>
 #taskTable td, #taskTable th { padding-left: 1px; padding-right: 1px; }
 #taskTable .form-control, #taskTable .form-select { padding-left: 2px; padding-right: 2px; }
-#eventTable td, #eventTable th { padding-left: 2px; padding-right: 2px; }
-#eventTable .form-control, #eventTable .form-select { padding-left: 3px; padding-right: 3px; }
-#eventTable .ev-start-time, #eventTable .ev-end-time { width: 100% !important; min-width: 0; font-size: 0.75rem; padding: 1px 2px; }
+/* イベント画面は全体的に大きめの見やすいサイズにする */
+#eventTable td, #eventTable th { padding: 6px 8px; vertical-align: middle; }
+#eventTable th { font-size: .9rem; }
+#eventTable td { font-size: .9rem; }
+#eventTable .form-control, #eventTable .form-select { font-size: .9rem; padding: 4px 6px; }
+#eventTable .ev-time-one { font-size: .9rem !important; padding: 4px 6px; width: auto; }
+#eventTable .ev-mem-btn { font-size: .9rem; padding: 4px 10px; }
+/* 追加フォームも大きめに */
+#addEventForm .form-control, #addEventForm .form-select, #addEventForm .ev-time-one { font-size: .95rem; }
+#addEventForm .form-label { font-size: .82rem; }
+#addEventForm .ev-dur { font-size: .85rem; padding: 4px 10px; }
+#addEventForm .ev-mem-btn { font-size: .95rem; padding: 5px 12px; }
+/* 定例作業も大きめに */
+#tab-routine table td, #tab-routine table th { padding: 8px 10px; vertical-align: middle; font-size: .92rem; }
+#tab-routine .form-control, #tab-routine .form-select { font-size: .92rem; }
 </style>
 <script>
 /* ── 中区分フィルター + 完了非表示（URLパラメータで保持） ── */
@@ -880,8 +1058,8 @@
     });
   }
 
-  // ページロード時：add_open=1 なら保持値を復元
-  if (addOpen && addTaskFormEl) {
+  // ページロード時：add_open=1 なら保持値を復元（タスク一覧のみ。定例/イベントは対象外）
+  if (addOpen && addTaskFormEl && tab !== 'routine' && tab !== 'events') {
     var raw = null;
     try { raw = sessionStorage.getItem(STORAGE_KEY); } catch (e) {}
     if (raw) {
@@ -1054,109 +1232,175 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 });
 
-/* ── イベント追加フォーム: 開催日→終了日同期 ── */
-function syncEvEndDate(dateInput) {
-  var evEnd = document.getElementById('ev-end-date');
-  if (!evEnd) return;
-  // 終了日が未入力、または開始日より前の場合のみ自動セット（手動指定を尊重）
-  if (!evEnd.value || evEnd.value < dateInput.value) {
-    evEnd.value = dateInput.value;
-  }
-}
-
-/* ── イベント追加フォーム: 関係者→assigned_to同期 ── */
+/* ── イベント関係者ピッカー（ガントチャート方式：👤ボタン＋ポップオーバー、1行表示） ──
+   選択IDはカンマ区切りで各ピッカーの hidden(.ev-mem-input) に保持する。
+   先頭2人の assigned_to/assigned_to_2 への反映はサーバー側で行うため、ここでは同期不要。 */
 (function() {
-  var form = document.getElementById('eventAddFormEl');
-  if (!form) return;
-  form.addEventListener('submit', function() {
-    var sel = document.getElementById('ev-members');
-    var a1 = document.getElementById('ev-assigned-to');
-    var a2 = document.getElementById('ev-assigned-to-2');
-    var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
-    a1.value = selected[0] || '';
-    a2.value = selected[1] || '';
+  // 選択候補（ログインユーザーと同じ部署のみ）。tojson で一括出力（構文事故防止）。
+  var EV_USERS = {{ assign_users_js | tojson }};
+  // 既存関係者の名前解決用（全ユーザー。他部署の既存関係者も名前を出す）。
+  var ALL_NAME = {{ all_name_js | tojson }};
+
+  // ポップオーバー本体（1つを使い回す）
+  var pop = document.createElement('div');
+  pop.id = 'evMemPop';
+  pop.style.cssText = 'position:absolute;z-index:3000;display:none;background:#fff;border:1px solid #cbd5e1;'
+    + 'border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);padding:6px;max-height:260px;overflow-y:auto;width:200px;';
+  pop.innerHTML = '<div class="small text-muted px-1 pb-1 mb-1 border-bottom">関係者（複数選択可）</div><div class="ev-pop-body"></div>';
+  document.body.appendChild(pop);
+  var popBody = pop.querySelector('.ev-pop-body');
+  var activePicker = null;
+
+  function idsOf(picker) {
+    var v = picker.querySelector('.ev-mem-input').value || '';
+    return v.split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s; });
+  }
+  function refreshPicker(picker) {
+    // 氏名一覧は表示しない（👤ボタンのポップで確認するため）。件数バッジのみ更新。
+    var ids = idsOf(picker);
+    var cnt = picker.querySelector('.ev-mem-cnt');
+    if (cnt) cnt.textContent = ids.length;
+    // ボタンの title に氏名を出しておく（ホバーで確認可能）。
+    var names = ids.map(function(id){ return ALL_NAME[id] || '?'; });
+    var btn = picker.querySelector('.ev-mem-btn');
+    if (btn) btn.title = names.length ? '関係者: ' + names.join('、') : '関係者を選択';
+  }
+  function openPop(picker, btn) {
+    activePicker = picker;
+    var sel = idsOf(picker);
+    popBody.innerHTML = '';
+    EV_USERS.forEach(function(u) {
+      var lbl = document.createElement('label');
+      lbl.style.cssText = 'display:block;font-size:.82rem;padding:3px 4px;border-radius:4px;cursor:pointer;';
+      var ck = document.createElement('input');
+      ck.type = 'checkbox'; ck.value = String(u.id);
+      ck.style.marginRight = '6px';
+      ck.checked = sel.indexOf(String(u.id)) >= 0;
+      ck.addEventListener('change', function() {
+        var chosen = Array.prototype.slice.call(popBody.querySelectorAll('input:checked'))
+          .map(function(c){ return c.value; });
+        picker.querySelector('.ev-mem-input').value = chosen.join(',');
+        refreshPicker(picker);
+      });
+      lbl.appendChild(ck);
+      lbl.appendChild(document.createTextNode(u.name));
+      popBody.appendChild(lbl);
+    });
+    var r = btn.getBoundingClientRect();
+    pop.style.display = 'block';
+    var top = r.bottom + 4, h = pop.offsetHeight;
+    if (r.bottom + h + 4 > window.innerHeight && r.top - h - 4 > 0) top = r.top - h - 4;
+    pop.style.left = (window.scrollX + r.left) + 'px';
+    pop.style.top = (window.scrollY + top) + 'px';
+  }
+
+  // 初期描画＋ボタン結線
+  document.querySelectorAll('.ev-mem-picker').forEach(function(picker) {
+    refreshPicker(picker);
+    picker.querySelector('.ev-mem-btn').addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (activePicker === picker && pop.style.display === 'block') { pop.style.display = 'none'; activePicker = null; return; }
+      openPop(picker, this);
+    });
+  });
+  document.addEventListener('mousedown', function(e) {
+    if (pop.style.display === 'block' && !pop.contains(e.target) && !e.target.closest('.ev-mem-btn')) {
+      pop.style.display = 'none'; activePicker = null;
+    }
   });
 })();
 
-/* ── イベント追加フォーム: 開始/終了時刻→所要時間計算 ── */
-function calcEvHours() {
-  var st = document.getElementById('ev-start-time');
-  var et = document.getElementById('ev-end-time');
-  var ph = document.getElementById('ev-planned-hours');
-  var disp = document.getElementById('ev-hours-display');
-  if (!st || !et) return;
-  if (!st.value || !et.value) { if (ph) ph.value = 0; if (disp) disp.value = '0h'; return; }
-  var sm = timeToMin(st.value);
-  var em = timeToMin(et.value);
-  var diff = (em - sm) / 60;
-  if (diff < 0) diff = 0;
-  var h = Math.round(diff * 10) / 10;
-  if (ph) ph.value = h;
-  if (disp) disp.value = h + 'h';
-}
+/* 追加フォーム送信前: 開催日（カレンダー選択）が未設定なら警告して中断する。
+   開催日は hidden のため required が効かず、JS で明示チェックする。 */
+(function () {
+  var form = document.getElementById('eventAddFormEl');
+  if (!form) return;
+  form.addEventListener('submit', function (e) {
+    var start = document.getElementById('ev-start-date');
+    if (!start || !start.value) {
+      e.preventDefault();
+      alert('開催日を左のカレンダーで選択してください。');
+    }
+  });
+})();
 
-/* ── イベント追加フォーム: MSチェック→時刻入力をdisabled制御 ── */
+/* ══════════ イベント時刻（単一ドロップダウン 09:00〜19:00・15分刻み） ══════════ */
+
+/* 開始時刻＋所要時間ボタン → 終了時刻を自動計算（追加フォーム）。
+   9:00〜19:00 を上限として、開始＋所要分で終了時刻をセットする。 */
+(function () {
+  function toMin(t) { if (!t || t.indexOf(':') < 0) return null; var p = t.split(':'); return +p[0]*60 + +p[1]; }
+  function toHHMM(m) {
+    m = Math.min(19*60, m);  // 19:00 を上限
+    return (m/60 < 10 ? '0' : '') + Math.floor(m/60) + ':' + (m%60 < 10 ? '0' : '') + (m%60);
+  }
+  var startSel = document.querySelector('.ev-add-start');
+  var endSel = document.querySelector('.ev-add-end');
+  var durBtns = document.querySelectorAll('.ev-dur');
+  durBtns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (!startSel || !endSel) return;
+      var sm = toMin(startSel.value);
+      if (sm == null) { alert('先に開始時刻を選んでください。'); return; }
+      endSel.value = toHHMM(sm + parseInt(b.dataset.min));
+      // 押したボタンをハイライト
+      durBtns.forEach(function (x) { x.classList.remove('active', 'btn-secondary'); x.classList.add('btn-outline-secondary'); });
+      b.classList.remove('btn-outline-secondary'); b.classList.add('btn-secondary', 'active');
+    });
+  });
+})();
+
+/* MSチェック→時刻ドロップダウン・所要ボタンを無効化（値も空に） */
+function setEvRowTimeDisabled(scope, disabled) {
+  scope.querySelectorAll('.ev-time-one').forEach(function (sel) {
+    sel.disabled = disabled;
+    if (disabled) sel.value = '';
+  });
+  scope.querySelectorAll('.ev-dur').forEach(function (b) { b.disabled = disabled; });
+}
+/* 追加フォーム MS */
 function toggleEvMilestone(cb) {
-  var st = document.getElementById('ev-start-time');
-  var et = document.getElementById('ev-end-time');
-  var ph = document.getElementById('ev-planned-hours');
-  if (cb.checked) {
-    if (st) { st.disabled = true; st.value = ''; }
-    if (et) { et.disabled = true; et.value = ''; }
-    if (ph) ph.value = 0;
-  } else {
-    if (st) st.disabled = false;
-    if (et) et.disabled = false;
-  }
+  var form = document.getElementById('eventAddFormEl');
+  if (form) setEvRowTimeDisabled(form, cb.checked);
 }
-
-/* ── イベント一覧: MSチェック→時刻入力をdisabled制御 ── */
+/* 一覧行 MS */
 function toggleEvMilestoneEdit(cb, tid) {
-  var st = document.querySelector('.ev-start-time[data-tid="' + tid + '"]');
-  var et = document.querySelector('.ev-end-time[data-tid="' + tid + '"]');
-  var ph = document.getElementById('ev-ph-' + tid);
-  if (cb.checked) {
-    if (st) { st.disabled = true; st.value = ''; }
-    if (et) { et.disabled = true; et.value = ''; }
-    if (ph) ph.value = 0;
-  } else {
-    if (st) st.disabled = false;
-    if (et) et.disabled = false;
+  var row = cb.closest('tr.event-row');
+  if (row) setEvRowTimeDisabled(row, cb.checked);
+}
+
+/* 追加フォーム: 複数日チェック→終了日欄の表示切替 */
+function toggleEvMultiday(cb) {
+  var wrap = document.getElementById('ev-end-wrap');
+  var end = document.getElementById('ev-end-date');
+  var start = document.getElementById('ev-start-date');
+  if (!wrap) return;
+  wrap.style.display = cb.checked ? 'inline-flex' : 'none';
+  if (!cb.checked) {
+    if (end && start) end.value = start.value || '';  // 単日: 終了日=開始日
+  } else if (end && start && !end.value) {
+    end.value = start.value;  // 複数日: 既定で開始日をセット
   }
 }
 
-/* ── 時刻を15分単位に丸める ── */
-function roundToQuarter(input) {
-  if (!input.value) return;
-  var parts = input.value.split(':');
-  var h = parseInt(parts[0]);
-  var m = Math.round(parseInt(parts[1]) / 15) * 15;
-  if (m >= 60) { h += Math.floor(m / 60); m = m % 60; }
-  if (h >= 24) { h = 23; m = 45; }
-  input.value = (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+/* ── イベント追加フォーム: 開催日→終了日同期（複数日時のみ） ── */
+function syncEvEndDate(dateInput) {
+  var evEnd = document.getElementById('ev-end-date');
+  var multi = document.getElementById('ev-multiday');
+  if (!evEnd || !multi || !multi.checked) return;
+  if (!evEnd.value || evEnd.value < dateInput.value) evEnd.value = dateInput.value;
 }
-
 /* ── イベント一覧: 開催日→終了日同期 ── */
 function syncEvEndDateEdit(dateInput) {
   var tid = dateInput.dataset.tid;
   var endInput = document.getElementById('ev-end-' + tid);
   if (!endInput) return;
-  // 終了日が未入力、または開始日より前の場合のみ自動セット（手動指定を尊重）
-  if (!endInput.value || endInput.value < dateInput.value) {
-    endInput.value = dateInput.value;
-    // 行の data-event-end も更新（絞り込み用）
-    var row = dateInput.closest('tr.event-row');
-    if (row) row.dataset.eventEnd = endInput.value;
-  }
+  if (!endInput.value || endInput.value < dateInput.value) endInput.value = dateInput.value;
+  var row = dateInput.closest('tr.event-row');
+  if (row) row.dataset.eventEnd = endInput.value || row.dataset.eventEnd;
 }
 
-function syncEventRowEnd(endInput, tid) {
-  // 終了日が手動変更された時に行の data-event-end を更新
-  var row = endInput.closest('tr.event-row');
-  if (row) row.dataset.eventEnd = endInput.value;
-}
-
-/* ── イベント一覧の絞り込み + 一括削除 ── */
+/* ── イベント一覧の絞り込み + 選択一括削除 ── */
 (function() {
   var filterPast = document.getElementById('eventFilterPast');
   var bulkDelBtn = document.getElementById('eventBulkDeleteBtn');
@@ -1167,91 +1411,40 @@ function syncEventRowEnd(endInput, tid) {
 
   function applyEventFilter() {
     var rows = document.querySelectorAll('#eventTable tbody tr.event-row');
-    var shown = 0;
     rows.forEach(function(r) {
       var endDate = r.dataset.eventEnd || '';
       var hide = false;
-      // 「開催日が過ぎたもの」= 終了日 < 今日 のもののみ表示
-      if (filterPast.checked) {
-        if (!endDate || endDate >= todayStr) hide = true;
-      }
+      if (filterPast.checked && (!endDate || endDate >= todayStr)) hide = true;
       r.style.display = hide ? 'none' : '';
-      if (!hide) shown++;
     });
     if (countEl) {
-      countEl.textContent = filterPast.checked
-        ? '表示中: ' + shown + ' 件（過去イベント）'
-        : '';
+      var checked = document.querySelectorAll('#eventTable tbody .delete-check:checked').length;
+      countEl.textContent = checked ? '選択中: ' + checked + ' 件' : '';
     }
   }
   filterPast.addEventListener('change', applyEventFilter);
 
+  // 「選択一括削除」：チェックが入った行（delete-check）のみ削除する。
   bulkDelBtn.addEventListener('click', function() {
-    var visibleRows = Array.from(document.querySelectorAll('#eventTable tbody tr.event-row'))
-      .filter(function(r) { return r.style.display !== 'none'; });
-    if (visibleRows.length === 0) {
-      alert('削除対象のイベントがありません。\n「開催日が過ぎたものだけ表示」にチェックを入れて、過去イベントを絞り込んでから実行してください。');
+    var checkedBoxes = Array.from(document.querySelectorAll('#eventTable tbody .delete-check:checked'));
+    if (checkedBoxes.length === 0) {
+      alert('削除するイベントの「削除」チェックを入れてから実行してください。');
       return;
     }
-    var msg = '表示中のイベント ' + visibleRows.length + ' 件を一括削除します。\n'
-      + 'この操作は取り消せません。よろしいですか？';
+    var msg = '選択したイベント ' + checkedBoxes.length + ' 件を削除します。\nこの操作は取り消せません。よろしいですか？';
     if (!confirm(msg)) return;
-
     var form = document.getElementById('bulkEventForm');
-    if (!form) return;
-    // 各行の delete_X チェックボックスを ON にして送信
-    visibleRows.forEach(function(r) {
-      var tid = r.dataset.taskId;
-      var cb = form.querySelector('input[name="delete_' + tid + '"]');
-      if (cb) {
-        cb.checked = true;
-      } else {
-        var h = document.createElement('input');
-        h.type = 'hidden';
-        h.name = 'delete_' + tid;
-        h.value = '1';
-        form.appendChild(h);
-      }
-    });
-    form.submit();
+    if (form) form.submit();
   });
-})();
 
-/* ── イベント一覧: 開始/終了時刻→工数自動計算 ── */
-function calcEvHoursEdit(tid) {
-  var st = document.querySelector('.ev-start-time[data-tid="' + tid + '"]');
-  var et = document.querySelector('.ev-end-time[data-tid="' + tid + '"]');
-  var ph = document.getElementById('ev-ph-' + tid);
-  if (!st || !et || !ph) return;
-  if (!st.value || !et.value) { ph.value = 0; return; }
-  var diff = (timeToMin(et.value) - timeToMin(st.value)) / 60;
-  if (diff < 0) diff = 0;
-  ph.value = Math.round(diff * 10) / 10;
-}
-
-/* 定例作業選択 → subcategory_name / default_hours を hidden に転写 */
-function fillRoutineSubcat(sel) {
-  var opt = sel.options[sel.selectedIndex];
-  var sc = document.getElementById('routineSubcat');
-  var hr = document.getElementById('routineHours');
-  if (sc) sc.value = opt ? (opt.dataset.subcat || '') : '';
-  if (hr) hr.value = opt ? (opt.dataset.hours || '0') : '0';
-}
-
-/* 削除チェックで行を赤くハイライト */
-document.addEventListener('DOMContentLoaded', function () {
-  document.querySelectorAll('.delete-check').forEach(function (cb) {
+  // 削除チェックで行を赤くハイライト＋選択件数表示を更新
+  document.querySelectorAll('#eventTable tbody .delete-check').forEach(function (cb) {
     cb.addEventListener('change', function () {
       var row = cb.closest('tr');
       if (row) row.classList.toggle('table-danger', cb.checked);
+      applyEventFilter();
     });
   });
-
-});
-
-function timeToMin(t) {
-  var parts = t.split(':');
-  return parseInt(parts[0]) * 60 + parseInt(parts[1]);
-}
+})();
 </script>
 {% endblock %}

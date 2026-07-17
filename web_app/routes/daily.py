@@ -19,12 +19,14 @@ from ..models import (
     get_active_tasks_for_user,
     get_all_project_tasks,
     get_all_users,
+    get_comments_in_range,
     get_daily_comment,
     get_daily_result,
     get_daily_result_meta,
     get_events_for_user_date,
     get_pending_carryovers,
     get_task_master,
+    get_task_plan_vs_actual,
     get_user_by_id,
     get_weekly_leave,
     get_weekly_schedule,
@@ -326,6 +328,11 @@ def daily_view(date_str: str) -> Any:
         day_events=day_events,
         project_tasks_json=_build_project_tasks_json(target_user_id),
         active_project_tasks=get_active_tasks_for_user(target_user_id),
+        # 進捗（予定 vs 実績）は「本日時点」の指標のため、当日を表示している時のみ算出する。
+        task_progress_json=json.dumps(
+            get_task_plan_vs_actual(target_user_id) if target_date == date.today() else {},
+            ensure_ascii=False,
+        ),
     )
 
 
@@ -573,4 +580,71 @@ def daily_save_admin_comment() -> Any:
         return redirect(url_for("daily_bp.daily_view", date_str=date_str))
     return redirect(
         url_for("daily_bp.daily_view", date_str=date_str) + f"?user_id={target_user_id}"
+    )
+
+
+@daily_bp.route("/daily/comments-review")
+def comments_review() -> Any:
+    """配下メンバーの振り返りコメントを期間横断で一覧する（管理職・所属長・システム管理者）。
+
+    今日1日分しか見られなかった上長コメント確認を、週／任意期間で俯瞰できるようにする。
+    上長コメント未入力の行を強調し、フィードバック漏れを防ぐ。
+
+    クエリ: ?start=YYYY-MM-DD&end=YYYY-MM-DD（省略時は今週の月〜日）
+
+    Returns:
+        Any: コメントレビュー画面のHTML、権限がなければ403。
+    """
+    login_role = session.get("user_role", "")
+    if not is_privileged(login_role):
+        abort(403)
+
+    login_id = int(session["user_id"])
+    login_dept = session.get("user_dept", "")
+
+    # 期間（既定＝今週 月〜日）
+    today = date.today()
+    default_start = today - timedelta(days=today.weekday())
+    default_end = default_start + timedelta(days=6)
+
+    def _parse(qs: str, fallback: date) -> date:
+        try:
+            return date.fromisoformat(qs) if qs else fallback
+        except ValueError:
+            return fallback
+
+    start_d = _parse(request.args.get("start", ""), default_start)
+    end_d = _parse(request.args.get("end", ""), default_end)
+    if end_d < start_d:
+        start_d, end_d = end_d, start_d
+
+    # 閲覧可能な配下ユーザー（システム管理者の所属切替・所属長の担当所属に連動）
+    members = get_accessible_users(login_id, login_role, login_dept)
+    member_map = {u["id"]: u for u in members}
+    member_ids = list(member_map.keys())
+
+    # 期間内のコメントを取得し、ユーザー名を添える
+    raw = get_comments_in_range(member_ids, start_d.isoformat(), end_d.isoformat())
+    comments: list[dict] = []
+    for c in raw:
+        u = member_map.get(c["user_id"], {})
+        comments.append({
+            **c,
+            "name": u.get("name", "?"),
+            "dept": u.get("dept", ""),
+            "needs_admin_comment": not (c.get("admin_comment") or "").strip(),
+        })
+
+    pending_count = sum(1 for c in comments if c["needs_admin_comment"])
+
+    return render_template(
+        "comments_review.html",
+        comments=comments,
+        start_date=start_d.isoformat(),
+        end_date=end_d.isoformat(),
+        prev_week=(start_d - timedelta(days=7)).isoformat(),
+        next_week=(start_d + timedelta(days=7)).isoformat(),
+        this_week=default_start.isoformat(),
+        pending_count=pending_count,
+        total_count=len(comments),
     )

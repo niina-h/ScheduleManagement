@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}振り返りレビュー - 予定管理システム{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+  <h4 class="mb-0 fw-bold">💬 配下の振り返りレビュー</h4>
+  <div class="d-flex align-items-center gap-2">
+    {% if pending_count > 0 %}
+    <span class="badge bg-danger">上長コメント未入力 {{ pending_count }} 件</span>
+    {% else %}
+    <span class="badge bg-success">未入力なし</span>
+    {% endif %}
+    <span class="text-muted small">全 {{ total_count }} 件</span>
+  </div>
+</div>
+
+{# ── 期間ナビ ── #}
+<form method="get" action="{{ url_for('daily_bp.comments_review') }}" class="card card-body shadow-sm mb-3 py-2">
+  <div class="d-flex align-items-end gap-2 flex-wrap">
+    <div class="btn-group btn-group-sm">
+      <a class="btn btn-outline-secondary" href="?start={{ prev_week }}">◀ 前週</a>
+      <a class="btn btn-outline-secondary" href="?start={{ this_week }}">今週</a>
+      <a class="btn btn-outline-secondary" href="?start={{ next_week }}">次週 ▶</a>
+    </div>
+    <div>
+      <label class="form-label small mb-0">開始日</label>
+      <input type="date" name="start" value="{{ start_date }}" class="form-control form-control-sm" style="width:150px;">
+    </div>
+    <div>
+      <label class="form-label small mb-0">終了日</label>
+      <input type="date" name="end" value="{{ end_date }}" class="form-control form-control-sm" style="width:150px;">
+    </div>
+    <button type="submit" class="btn btn-primary btn-sm">表示</button>
+  </div>
+</form>
+
+{# ── コメント一覧 ── #}
+{% if comments %}
+<div class="d-flex flex-column gap-2">
+  {% for c in comments %}
+  <div class="card shadow-sm {% if c.needs_admin_comment %}border-danger{% endif %}">
+    <div class="card-body py-2">
+      <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+        <span class="fw-bold">{{ c.name }}</span>
+        {% if c.dept %}<span class="text-muted small">{{ c.dept }}</span>{% endif %}
+        <span class="badge bg-light text-dark border">{{ c.date }}</span>
+        {% if c.needs_admin_comment %}
+        <span class="badge bg-danger">要コメント</span>
+        {% else %}
+        <span class="badge bg-success">コメント済</span>
+        {% endif %}
+        <a class="btn btn-outline-primary btn-sm py-0 ms-auto"
+           href="{{ url_for('daily_bp.daily_view', date_str=c.date) }}?user_id={{ c.user_id }}">
+          この日の実績を開く →
+        </a>
+      </div>
+      <div class="row g-2">
+        <div class="col-md-6">
+          <div class="small text-muted">振り返り</div>
+          <div class="small" style="white-space:pre-wrap;">{{ c.reflection or '（未記入）' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="small text-muted">今後の対策・懸念</div>
+          <div class="small" style="white-space:pre-wrap;">{{ c.action or '（未記入）' }}</div>
+        </div>
+      </div>
+      {% if c.admin_comment %}
+      <div class="mt-2 p-2 rounded" style="background:#eef4ff;">
+        <div class="small text-muted">上長コメント</div>
+        <div class="small" style="white-space:pre-wrap;">{{ c.admin_comment }}</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="alert alert-light border text-center text-muted">
+  この期間に配下メンバーの振り返りコメントはありません。
+</div>
+{% endif %}
+{% endblock %}
