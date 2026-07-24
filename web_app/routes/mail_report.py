@@ -11,9 +11,7 @@ from flask import Blueprint, Response, abort, redirect, render_template, request
 from ..auth_helpers import is_privileged, is_master
 from ..models import (
     get_accessible_users,
-    get_all_categories,
     get_all_project_tasks,
-    get_all_subcategories,
     get_daily_result,
     get_daily_comment,
     get_events_for_user_date,
@@ -410,10 +408,6 @@ def _build_master_body(
     else:
         plan_rate = sudden_rate = resc_rate = jisseki_rate = 0
 
-    def _fmt_h(h: float) -> str:
-        """時間を整数 or 小数1桁で表示する。"""
-        return str(int(h)) if h == int(h) else f"{h:.1f}"
-
     # 業務内容セクション（project_task の登録タスクを表示）
     # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ、イベント除外）。
     # 当日以前に完了したタスクは過去の業務報告で既に表示済みなので本文から除外する。
@@ -427,94 +421,58 @@ def _build_master_body(
             and (t.get("end_date") or "") <= target_date_str
         )
     ]
-    all_cats = get_all_categories()
-    all_subcats = get_all_subcategories()
-    cat_id_name: dict[int, str] = {c["id"]: c["name"] for c in all_cats}
-    cat_order: list[str] = [c["name"] for c in all_cats]
-    cat_subcats_ordered: dict[str, list[str]] = {c["name"]: [] for c in all_cats}
-    for s in all_subcats:
-        cname = cat_id_name.get(s["category_id"], "")
-        if cname and cname in cat_subcats_ordered:
-            cat_subcats_ordered[cname].append(s["name"])
-
-    # project_task を (cat_name, subcat_name) でグループ化（ステータス付き）
-    pt_by_subcat: dict[tuple[str, str], list[dict]] = {}
+    # タスクを重複除去しつつ (大区分, 中区分, 状態) 付きで平坦化する
+    # （画面の絞り込みと同じスコープ＝担当メンバーのタスクのみ、既に project_tasks で確定済み）。
+    seen_task_names: set[str] = set()
+    flat_tasks: list[dict] = []
     for pt in project_tasks:
-        cname = pt.get("category_name") or "その他"
-        sname = pt.get("subcategory_name") or ""
-        key = (cname, sname)
         tname = pt["task_name"]
-        status = pt.get("status", "")
-        if key not in pt_by_subcat:
-            pt_by_subcat[key] = []
-        # 重複チェック
-        if not any(p["name"] == tname for p in pt_by_subcat[key]):
-            pt_by_subcat[key].append({"name": tname, "status": status})
-
-    def _format_task_list(task_items: list[dict]) -> str:
-        """タスク一覧を状態先頭文字付きで整形し、100文字超で改行する。"""
-        parts: list[str] = []
-        for t in task_items:
-            prefix = f"【{t['status'][:1]}】" if t["status"] else ""
-            parts.append(f"{prefix}{t['name']}")
-        # 結合して100文字超で改行+インデント
-        joined = "、".join(parts)
-        if len(joined) <= 100:
-            return joined
-        lines: list[str] = []
-        current = ""
-        for i, p in enumerate(parts):
-            candidate = (current + "、" + p) if current else p
-            if len(candidate) > 100 and current:
-                lines.append(current + "、")
-                current = p
-            else:
-                current = candidate
-        if current:
-            lines.append(current)
-        return ("\n" + "　　　　　").join(lines)
-
-    # 中区分名の最大幅を計算（全角1文字=2, 半角1文字=1）
-    def _width(s: str) -> int:
-        """文字列の表示幅を概算する（全角=2, 半角=1）。"""
-        w = 0
-        for ch in s:
-            w += 2 if ord(ch) > 0x7F else 1
-        return w
-
-    def _pad(s: str, width: int) -> str:
-        """文字列を指定幅に全角スペースでパディングする。"""
-        diff = width - _width(s)
-        if diff <= 0:
-            return s
-        return s + "　" * (diff // 2) + " " * (diff % 2)
-
-    max_sub_width: int = 0
-    for cat_name in cat_order:
-        for sn in cat_subcats_ordered.get(cat_name, []):
-            if pt_by_subcat.get((cat_name, sn)):
-                max_sub_width = max(max_sub_width, _width(sn))
-    if max_sub_width < 10:
-        max_sub_width = 10
-
-    content_lines: list[str] = ["業務内容\t対応内容"]
-    for cat_name in cat_order:
-        subcats = cat_subcats_ordered.get(cat_name, [])
-        has_tasks = any(pt_by_subcat.get((cat_name, sn)) for sn in subcats)
-        if not has_tasks:
+        if tname in seen_task_names:
             continue
-        content_lines.append(f"・{cat_name}")
-        # 改行時のインデント幅: "　　" + 中区分パディング幅 + 余白
-        indent = "　　" + "　" * ((max_sub_width + 2) // 2)
-        for sub_name in subcats:
-            task_items = pt_by_subcat.get((cat_name, sub_name), [])
-            if not task_items:
-                continue
-            padded_sub = _pad(sub_name, max_sub_width)
-            task_str = _format_task_list(task_items)
-            # 改行がある場合はインデントを揃える
-            task_str = task_str.replace("\n" + "　　　　　", "\n" + indent)
-            content_lines.append(f"　　{padded_sub} {task_str}")
+        seen_task_names.add(tname)
+        flat_tasks.append({
+            "name": tname,
+            "status": pt.get("status", ""),
+            "cat_name": pt.get("category_name") or "",
+            "sub_name": pt.get("subcategory_name") or "",
+        })
+
+    # 状態別に件数を集計し、遅れが目立つ順（遅れ→着手→未着手→順調→完了→停止）に並べる。
+    # 「どのくらい作業があって、何が遅れているか」を先頭のサマリー行で即座に把握できるようにする。
+    _STATUS_ORDER = ["遅れ", "着手", "未着手", "順調", "完了", "停止"]
+    tasks_by_status: dict[str, list[dict]] = {s: [] for s in _STATUS_ORDER}
+    for t in flat_tasks:
+        tasks_by_status.setdefault(t["status"] or "未着手", []).append(t)
+
+    status_counts = {s: len(tasks_by_status.get(s, [])) for s in _STATUS_ORDER}
+    total_count = len(flat_tasks)
+    delay_count = status_counts.get("遅れ", 0)
+
+    def _format_task_line(t: dict) -> str:
+        """1タスクを「タスク名（大区分／中区分）」形式の1行に整形する。
+
+        区分が未設定（大区分・中区分ともに空）の場合は括弧書きを省略する。
+        """
+        cat_label = t["cat_name"]
+        if t["sub_name"]:
+            cat_label = f"{cat_label}／{t['sub_name']}" if cat_label else t["sub_name"]
+        if not cat_label:
+            return f"　・{t['name']}"
+        return f"　・{t['name']}（{cat_label}）"
+
+    content_lines: list[str] = []
+    content_lines.append(
+        f"全{total_count}件（遅れ{status_counts.get('遅れ', 0)}／着手{status_counts.get('着手', 0)}／"
+        f"未着手{status_counts.get('未着手', 0)}／順調{status_counts.get('順調', 0)}／"
+        f"完了{status_counts.get('完了', 0)}／停止{status_counts.get('停止', 0)}）"
+    )
+    for status in _STATUS_ORDER:
+        items = tasks_by_status.get(status, [])
+        if not items:
+            continue
+        content_lines.append(f"【{status}】{len(items)}件")
+        for t in items:
+            content_lines.append(_format_task_line(t))
 
     # メンバー AM/PM サマリ
     # 除外条件: 定例作業（大区分「定例」or 中区分「定例作業」）、AM1行目(idx=0)、PM最終行(idx=4)
@@ -589,36 +547,40 @@ def _build_master_body(
 
     master_comment = get_daily_comment(login_id, date_str)
     reflection = _wrap_text(master_comment.get("reflection", "").strip() or "（未入力）")
-    # ＜開発状況＞: 大区分「開発」に紐づく作業を、中区分・タスク別に
-    # 「誰が何時間したか」で表示する。
-    #   形式: 「  中区分　タスク名　（氏名：時間h、…）」
-    dev_contrib: dict[tuple[str, str], dict[str, float]] = {}  # (中区分, task) -> {氏名: 時間}
-    dev_order: list[tuple[str, str]] = []
-    for md in member_data:
-        name = md["member"]["name"]
-        for slot in ("am", "pm"):
-            for item in md["result"].get(slot, []):
-                task = item.get("task_name", "").strip()
-                hours = float(item.get("hours", 0.0))
-                if not task or hours == 0.0:
-                    continue
-                cat_info = md["task_cat_map"].get(task, {})
-                if cat_info.get("category_name", "") != "開発":
-                    continue
-                # ラベルは中区分（例:「AI開発」）。未設定時は大区分名で代替
-                label = cat_info.get("subcategory_name", "").strip() or "開発"
-                key = (label, task)
-                if key not in dev_contrib:
-                    dev_contrib[key] = {}
-                    dev_order.append(key)
-                dev_contrib[key][name] = dev_contrib[key].get(name, 0.0) + hours
+
+    # ＜開発状況＞: 大区分「開発」の project_task を対象に、誰が何を対応しているかを
+    # 進捗率・状態とあわせて表示する。
+    # （日次実績の自由入力タスク名はタスクマスタに区分登録されていないことが多く、
+    #   実績ベースの集計では常に空になりがちなため、大区分が確実に設定されている
+    #   project_task を情報源にする。）
+    #   形式: 「  中区分　タスク名　（氏名：進捗X%、状態）」
+    user_name_by_id: dict[int, str] = {m["id"]: m["name"] for m in members}
+
+    def _dev_assignee_names(pt: dict) -> str:
+        """タスクの担当者名（親ならメンバー、子なら担当者1・2）を「、」区切りで返す。"""
+        member_ids_raw = (pt.get("member_ids") or "").strip()
+        if member_ids_raw:
+            names = [
+                user_name_by_id[int(s)] for s in member_ids_raw.split(",")
+                if s.strip().isdigit() and int(s) in user_name_by_id
+            ]
+            return "、".join(names) if names else "担当者未設定"
+        names = []
+        if pt.get("assigned_name"):
+            names.append(pt.get("assigned_last_name") or pt.get("assigned_name"))
+        if pt.get("assigned_name_2"):
+            names.append(pt.get("assigned_last_name_2") or pt.get("assigned_name_2"))
+        return "、".join(names) if names else "担当者未設定"
+
+    dev_tasks = [pt for pt in project_tasks if (pt.get("category_name") or "") == "開発"]
     ai_lines: list[str] = []
-    for label, task in dev_order:
-        contribs = "、".join(
-            f"{n}：{_fmt_h(h)}h" for n, h in dev_contrib[(label, task)].items()
-        )
-        ai_lines.append(f"  {label}　{task}　（{contribs}）")
-    ai_section = "\n".join(ai_lines) if ai_lines else "  （開発作業なし）"
+    for pt in dev_tasks:
+        label = (pt.get("subcategory_name") or "").strip() or "開発"
+        assignees = _dev_assignee_names(pt)
+        status = pt.get("status", "") or "未着手"
+        progress = pt.get("progress", 0) or 0
+        ai_lines.append(f"  {label}　{pt['task_name']}　（{assignees}：進捗{progress}%、{status}）")
+    ai_section = "\n".join(ai_lines) if ai_lines else "  （開発中のタスクなし）"
 
     # ＜次回予定＞: マスタ自身の翌営業日予定（定例作業は除外）
     # 土日・会社休日・本人の休暇設定をスキップして、実際に出勤する日の予定を表示する
