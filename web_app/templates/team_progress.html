@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}部下の予定・実績振り返り - 予定管理システム{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+  <h4 class="mb-0 fw-bold">📆 部下の予定・実績振り返り</h4>
+  <div class="d-flex align-items-center gap-2">
+    {% if behind_count > 0 %}
+    <span class="badge bg-danger">遅れ {{ behind_count }} 件</span>
+    {% else %}
+    <span class="badge bg-success">遅れなし</span>
+    {% endif %}
+    <span class="text-muted small">全 {{ total_count }} 名</span>
+  </div>
+</div>
+
+{# ── 日付ナビ ── #}
+<form method="get" action="{{ url_for('daily_bp.team_progress') }}" class="card card-body shadow-sm mb-3 py-2">
+  <div class="d-flex align-items-end gap-2 flex-wrap">
+    <div class="btn-group btn-group-sm">
+      <a class="btn btn-outline-secondary" href="?date={{ prev_date }}">◀ 前日</a>
+      <a class="btn btn-outline-secondary" href="?date={{ today }}">今日</a>
+      <a class="btn btn-outline-secondary" href="?date={{ next_date }}">翌日 ▶</a>
+    </div>
+    <div>
+      <label class="form-label small mb-0">対象日</label>
+      <input type="date" name="date" value="{{ date_str }}" class="form-control form-control-sm" style="width:150px;">
+    </div>
+    <button type="submit" class="btn btn-primary btn-sm">表示</button>
+  </div>
+</form>
+
+{# ── メンバー一覧（遅れが大きい順） ── #}
+{% if members %}
+<div class="table-responsive">
+  <table class="table table-sm table-bordered bg-white shadow-sm mb-0">
+    <thead class="table-light">
+      <tr>
+        <th>氏名</th>
+        <th class="text-center" style="width:110px;">予定合計</th>
+        <th class="text-center" style="width:110px;">実績合計</th>
+        <th class="text-center" style="width:140px;">差分</th>
+        <th class="text-center" style="width:90px;"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in members %}
+      <tr class="{% if m.state == 'behind' %}table-danger{% elif m.state == 'ahead' %}table-success{% endif %}">
+        <td>
+          <span class="fw-bold">{{ m.name }}</span>
+          {% if m.dept %}<span class="text-muted small ms-1">{{ m.dept }}</span>{% endif %}
+        </td>
+        <td class="text-center">{{ m.planned_hours }}h</td>
+        <td class="text-center">{{ m.actual_hours }}h</td>
+        <td class="text-center fw-bold">
+          {% if m.state == 'behind' %}
+          <span class="text-danger">{{ m.diff_hours }}h（遅れ）</span>
+          {% elif m.state == 'ahead' %}
+          <span class="text-success">+{{ m.diff_hours }}h（前倒し）</span>
+          {% else %}
+          <span class="text-muted">予定通り</span>
+          {% endif %}
+        </td>
+        <td class="text-center">
+          <a class="btn btn-outline-primary btn-sm py-0"
+             href="{{ url_for('daily_bp.daily_view', date_str=date_str) }}?user_id={{ m.user_id }}">
+            詳細 →
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="alert alert-light border text-center text-muted">
+  閲覧できる配下メンバーがいません。
+</div>
+{% endif %}
+{% endblock %}

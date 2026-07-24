@@ -109,7 +109,11 @@
               {# 予定合計 #}
               <tr class="day-total-row">
                 <td colspan="3" class="text-center fw-bold">予定合計</td>
-                <td class="text-center fw-bold">
+                <td class="text-center fw-bold" id="schedule-total"
+                    data-total="{{ '%.2f'|format(
+                      (schedule_am | sum(attribute='hours') if schedule_am else 0)
+                      + (schedule_pm | sum(attribute='hours') if schedule_pm else 0)
+                    ) }}">
                   {% set total = namespace(v=0) %}
                   {% if schedule_am %}{% for c in schedule_am %}{% set total.v = total.v + (c.hours or 0) %}{% endfor %}{% endif %}
                   {% if schedule_pm %}{% for c in schedule_pm %}{% set total.v = total.v + (c.hours or 0) %}{% endfor %}{% endif %}
@@ -300,6 +304,13 @@
                 <td colspan="3" class="text-center fw-bold">実績合計</td>
                 <td class="text-center fw-bold" id="result-total">—</td>
               </tr>
+              {# 予定との差分（本日時点のみ意味を持つため当日以外は非表示） #}
+              {% if date_str == today %}
+              <tr class="day-total-row">
+                <td colspan="3" class="text-center fw-bold">予定との差分</td>
+                <td class="text-center fw-bold" id="plan-diff">—</td>
+              </tr>
+              {% endif %}
             </tbody>
           </table>
         </div>
@@ -638,6 +649,27 @@ function updateResultTotal() {
         } else {
             cell.classList.remove('text-danger');
         }
+    }
+    updatePlanDiff(total);
+}
+
+// 予定合計と実績合計の差分を表示する（本日のみ）
+function updatePlanDiff(resultTotal) {
+    const diffCell = document.getElementById('plan-diff');
+    if (!diffCell) return;
+    const scheduleCell = document.getElementById('schedule-total');
+    const planTotal = scheduleCell ? parseFloat(scheduleCell.dataset.total || 0) : 0;
+    const diff = parseFloat((resultTotal - planTotal).toFixed(2));
+    diffCell.classList.remove('text-danger', 'text-success', 'text-muted');
+    if (diff === 0) {
+        diffCell.textContent = '予定通り';
+        diffCell.classList.add('text-muted');
+    } else if (diff > 0) {
+        diffCell.textContent = `+${diff}h（前倒し）`;
+        diffCell.classList.add('text-success');
+    } else {
+        diffCell.textContent = `${diff}h（遅れ）`;
+        diffCell.classList.add('text-danger');
     }
 }
 

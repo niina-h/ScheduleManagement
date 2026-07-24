@@ -271,6 +271,7 @@ def weekly() -> Any:
         task_map_json=task_map_json,
         has_data=has_data,
         today=date.today().isoformat(),
+        today_monday=_get_monday(date.today()).isoformat(),
         leave_data=leave_data,
         schedule_meta=schedule_meta,
         is_admin_view=is_admin_view,
@@ -574,7 +575,33 @@ def import_tasks_and_events() -> Any:
     is_admin_view: bool = (target_user_id != int(login_user_id))
     updated_by: str = session.get("user_name", "")
 
-    # タスク取込（担当者が一致し週と期間が重なるタスクを自動検索）
+    # 当週は運用中の予定を壊さないよう、ガントチャート反映を禁止する
+    # （実績入力・進行中の作業がある当週の全消去を防ぐ。フロント側でもボタンを無効化済み）。
+    current_monday = _get_monday(date.today()).isoformat()
+    if week_start == current_monday:
+        flash("当週はガントチャート反映を使用できません。前週・次週以降で実行してください", "warning")
+        redirect_url = url_for("schedule.weekly") + f"?week={week_start}"
+        if is_admin_view:
+            redirect_url += f"&user_id={target_user_id}"
+        return redirect(redirect_url)
+
+    # 反映のたびに対象週の全スロットを一旦クリアしてから再構築する
+    # （手動入力分を含め、定例→タスク→イベントの順で最新状態を組み直す）
+    from ..database import get_db as _get_db
+    _db = _get_db()
+    _db.execute(
+        "DELETE FROM weekly_schedule WHERE user_id=? AND week_start=?",
+        (target_user_id, week_start),
+    )
+    _db.commit()
+
+    # 定例スケジュールを先に空きスロットへ詰めて配置する。
+    # （定例が先に埋めたスロットは、後続のタスク・イベント配置で自然に回避される）
+    routine_count = len(get_routine_schedules(target_user_id))
+    apply_routine_to_week(target_user_id, week_start, updated_by)
+
+    # ガントチャートに登録された期間のタスクを取込
+    # （担当者が一致し、対象週と登録期間が重なるタスクを自動検索して配置）
     task_count = import_tasks_to_weekly_schedule(
         target_user_id, week_start, updated_by,
     )
@@ -583,10 +610,6 @@ def import_tasks_and_events() -> Any:
     event_count = import_events_to_weekly_schedule(
         target_user_id, week_start, updated_by,
     )
-
-    # 定例スケジュールを空き行に適用（反映後に定例行を補完）
-    routine_count = len(get_routine_schedules(target_user_id))
-    apply_routine_to_week(target_user_id, week_start, updated_by)
 
     msgs = []
     if task_count > 0:

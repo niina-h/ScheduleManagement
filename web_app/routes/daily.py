@@ -21,6 +21,7 @@ from ..models import (
     get_all_users,
     get_comments_in_range,
     get_daily_comment,
+    get_daily_plan_vs_actual_for_users,
     get_daily_result,
     get_daily_result_meta,
     get_events_for_user_date,
@@ -647,4 +648,61 @@ def comments_review() -> Any:
         this_week=default_start.isoformat(),
         pending_count=pending_count,
         total_count=len(comments),
+    )
+
+
+@daily_bp.route("/daily/team-progress")
+def team_progress() -> Any:
+    """配下メンバー全員の当日の予定 vs 実績の差分を一覧する（管理職・所属長・システム管理者）。
+
+    振り返り機能：本人の日次画面（daily.html）で1人ずつ見ていた予定/実績差分を、
+    所属長・管理職が部下全員分まとめて俯瞰できるようにする。
+
+    クエリ: ?date=YYYY-MM-DD（省略時は当日）
+
+    Returns:
+        Any: 部下状況一覧画面のHTML、権限がなければ403。
+    """
+    login_role = session.get("user_role", "")
+    if not is_privileged(login_role):
+        abort(403)
+
+    login_id = int(session["user_id"])
+    login_dept = session.get("user_dept", "")
+
+    raw_date = request.args.get("date", "").strip()
+    try:
+        target_date = date.fromisoformat(raw_date) if raw_date else date.today()
+    except ValueError:
+        target_date = date.today()
+    date_str = target_date.isoformat()
+
+    # 閲覧可能な配下ユーザー（システム管理者の所属切替・所属長の担当所属に連動）
+    members = get_accessible_users(login_id, login_role, login_dept)
+    member_map = {u["id"]: u for u in members}
+    member_ids = list(member_map.keys())
+
+    diffs = get_daily_plan_vs_actual_for_users(member_ids, date_str)
+    members_view: list[dict] = []
+    for d in diffs:
+        u = member_map.get(d["user_id"], {})
+        members_view.append({
+            **d,
+            "name": u.get("name", "?"),
+            "dept": u.get("dept", ""),
+        })
+    # 遅れが大きい順に並べて、要注意のメンバーを目立たせる
+    members_view.sort(key=lambda m: m["diff_hours"])
+
+    behind_count = sum(1 for m in members_view if m["state"] == "behind")
+
+    return render_template(
+        "team_progress.html",
+        members=members_view,
+        date_str=date_str,
+        prev_date=(target_date - timedelta(days=1)).isoformat(),
+        next_date=(target_date + timedelta(days=1)).isoformat(),
+        today=date.today().isoformat(),
+        behind_count=behind_count,
+        total_count=len(members_view),
     )

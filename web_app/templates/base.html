@@ -59,6 +59,7 @@
             {# 管理職以上: 振り返りレビュー・管理画面 #}
             {% if role_is_privileged %}
             <li><a class="dropdown-item" href="{{ url_for('daily_bp.comments_review') }}">💬 振り返りレビュー</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('daily_bp.team_progress') }}">📆 部下の予定・実績振り返り</a></li>
             <li><a class="dropdown-item" href="{{ url_for('admin_bp.dashboard') }}">⚙ 管理画面</a></li>
             {% endif %}
 

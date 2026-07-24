@@ -54,10 +54,6 @@
   .g-name .tree { flex: 0 0 auto; color: #a855f7; font-size: .72rem; width: 12px; text-align: center; }
   .g-name .nm-txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; }
   .g-name .nm-txt.parent { font-weight: 700; }
-  /* 旧ガントの大区分バッジ（親子化の手動グルーピングの目安） */
-  .g-name .cat-badge { flex: 0 0 auto; font-size: .6rem; color: #7a4fb0; background: #efe8f7;
-    border-radius: 4px; padding: 0 4px; margin-right: 3px; max-width: 72px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
   .g-name input.nm { font-size: .76rem; padding: 1px 4px; border: 1px solid #a5b4fc; border-radius: 4px; flex: 1 1 auto; min-width: 0; }
   /* 担当者選択ボタン（人マーク＋人数、ホバーで氏名） */
   .asgn-btn { flex: 0 0 auto; border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; border-radius: 4px;
@@ -154,9 +150,28 @@
      href="{{ url_for('planner_bp.export', start=range_start, user_id=(selected_user_id if selected_user_id else None)) }}">📥 Excel出力</a>
   <a class="btn btn-danger btn-sm"
      href="{{ url_for('planner_bp.export_pdf', start=range_start, user_id=(selected_user_id if selected_user_id else None)) }}">📄 PDF出力</a>
+  {% if is_master %}
+  <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#importExcelForm"
+          title="タスク管理一覧画面の「タスク移行Excel出力」で出力したファイルを取り込みます">
+    📤 Excel取込
+  </button>
+  {% endif %}
   <button id="saveBtn" class="btn btn-primary btn-sm">💾 保存</button>
   <span id="saveMsg" class="small"></span>
 </div>
+
+{% if is_master %}
+<div class="collapse mb-2" id="importExcelForm">
+  <div class="card card-body py-2">
+    <form method="post" action="{{ url_for('planner_bp.import_excel') }}" enctype="multipart/form-data" class="d-flex align-items-center gap-2 flex-wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <span class="small text-muted">移行用Excel（タスク管理一覧の「タスク移行Excel出力」で出力したファイル）を選択してください。</span>
+      <input type="file" name="migration_file" accept=".xlsx" class="form-control form-control-sm" style="width:auto;" required>
+      <button type="submit" class="btn btn-primary btn-sm">取込実行</button>
+    </form>
+  </div>
+</div>
+{% endif %}
 
 <div class="gantt-scroll">
   <div class="gantt" id="gantt">
@@ -470,14 +485,6 @@
         : (DEFAULT_ASSIGNEE && DEFAULT_ASSIGNEE.id ? [{ id: DEFAULT_ASSIGNEE.id, name: DEFAULT_ASSIGNEE.name }] : []);
       row._people = opts.people ? opts.people.slice() : def;
     } else {
-      // 旧ガントの大区分を補助バッジ表示（親子化の手動グルーピングの目安）。
-      if (opts.category) {
-        var catb = document.createElement('span');
-        catb.className = 'cat-badge';
-        catb.textContent = opts.category;
-        catb.title = '大区分: ' + opts.category;
-        name.appendChild(catb);
-      }
       var sp = document.createElement('span'); sp.className = 'nm-txt'; sp.textContent = opts.name || ''; sp.title = opts.name || '';
       name.appendChild(sp);
       row._people = opts.people ? opts.people.slice() : [];
@@ -708,12 +715,15 @@
     return r;
   }
 
-  // 末尾に常に空の入力行を保つ
+  // 末尾に常に空の入力行を保つ（トップレベル固定：親の折りたたみで隠れないようにする）
   function ensureTrailing(focus) {
     var last = rowsEl.lastElementChild;
-    if (!last || !last.dataset.new || last.dataset.start || (last.querySelector('input.nm') && last.querySelector('input.nm').value.trim())) {
-      var lv = last ? parseInt(last.dataset.level) : 0;
-      var r = makeRow({ isNew: true, level: lv });
+    var needNew = !last || !last.dataset.new || last.dataset.start
+      || +last.dataset.level !== 0
+      || (last.querySelector('input.nm') && last.querySelector('input.nm').value.trim());
+    if (needNew) {
+      var r = makeRow({ isNew: true, level: 0 });
+      // 折りたたみ中の親の直後に置かれても必ず見えるよう、末尾のトップレベル行として保つ
       if (focus) r.querySelector('input.nm').focus();
     } else if (focus) { last.querySelector('input.nm').focus(); }
   }
@@ -846,7 +856,7 @@
   });
 
   // 初期描画
-  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable, category: t.category }); });
+  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable }); });
   ensureTrailing(false);  // 末尾に入力行
   // 前回の折りたたみ状態を復元（保存済みIDを collapsed=1 に）。
   var _collapsed = loadCollapsedSet();

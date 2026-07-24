@@ -2201,6 +2201,64 @@ def get_task_plan_vs_actual(user_id: int) -> dict[int, dict]:
     return result
 
 
+def get_daily_plan_vs_actual_for_users(user_ids: list[int], date_str: str) -> list[dict]:
+    """複数ユーザーの指定日について、予定時間合計・実績時間合計・差分をまとめて返す。
+
+    振り返り画面（管理職・所属長向け）で、配下メンバー全員の当日の
+    予定/実績乖離を一覧するために使う。差分は 実績 − 予定 の時間（h）。
+
+    Args:
+        user_ids: 対象ユーザーIDのリスト。空なら空リストを返す。
+        date_str: 対象日（'YYYY-MM-DD'形式）。
+
+    Returns:
+        list[dict]: [{"user_id": int, "planned_hours": float, "actual_hours": float,
+                      "diff_hours": float, "state": str}, ...]。
+                      state は 'ahead'（前倒し）/'ontrack'（予定通り）/'behind'（遅れ）。
+    """
+    if not user_ids:
+        return []
+    db = get_db()
+    target_date = date.fromisoformat(date_str)
+    week_start = (target_date - timedelta(days=target_date.weekday())).isoformat()
+    day_of_week = target_date.weekday()
+
+    placeholders = ",".join("?" * len(user_ids))
+
+    plan_rows = db.execute(
+        f"SELECT user_id, SUM(hours) AS total FROM weekly_schedule "
+        f"WHERE user_id IN ({placeholders}) AND week_start = ? AND day_of_week = ? "
+        f"GROUP BY user_id",
+        (*user_ids, week_start, day_of_week),
+    ).fetchall()
+    planned_map: dict[int, float] = {r["user_id"]: float(r["total"] or 0) for r in plan_rows}
+
+    actual_rows = db.execute(
+        f"SELECT user_id, SUM(hours) AS total FROM daily_result "
+        f"WHERE user_id IN ({placeholders}) AND date = ? "
+        f"GROUP BY user_id",
+        (*user_ids, date_str),
+    ).fetchall()
+    actual_map: dict[int, float] = {r["user_id"]: float(r["total"] or 0) for r in actual_rows}
+
+    result: list[dict] = []
+    for uid in user_ids:
+        planned = round(planned_map.get(uid, 0.0), 2)
+        actual = round(actual_map.get(uid, 0.0), 2)
+        diff = round(actual - planned, 2)
+        if diff <= -1.0:
+            state = "behind"
+        elif diff >= 1.0:
+            state = "ahead"
+        else:
+            state = "ontrack"
+        result.append({
+            "user_id": uid, "planned_hours": planned, "actual_hours": actual,
+            "diff_hours": diff, "state": state,
+        })
+    return result
+
+
 def _calc_progress_by_date(start_date: str, end_date: str) -> int:
     """開始日・終了日・今日の日付から進捗率を自動計算する。
 
@@ -2647,8 +2705,16 @@ def import_tasks_to_weekly_schedule(
     # 取込対象タスクの task_name と一致する手動入力スロットもクリア
     # （過去に手動でタスク名を入力したスロットが「空き」とみなされず、
     #   後ろに並んだタスクが配置できなくなる事象を防ぐ）
+    # ただし定例スケジュールと同名のスロットはクリアしない
+    # （定例は先に配置済みのため、タスク名一致で誤って消さないよう除外する）
     if rows:
-        target_names: set[str] = {r["task_name"] for r in rows if r["task_name"]}
+        routine_names: set[str] = {
+            (r.get("task_name") or "") for r in get_routine_schedules(user_id)
+        }
+        target_names: set[str] = {
+            r["task_name"] for r in rows
+            if r["task_name"] and r["task_name"] not in routine_names
+        }
         if target_names:
             name_placeholders = ",".join("?" * len(target_names))
             clear_params: list = [now, updated_by, user_id, week_start]
@@ -2668,10 +2734,11 @@ def import_tasks_to_weekly_schedule(
         db.commit()
         return 0
 
-    # 定例予約行を除外
-    reserved = get_reserved_row_numbers(user_id)
-    reserved_am = {r - 1 for r in reserved if 1 <= r <= 5}
-    reserved_pm = {r - 6 for r in reserved if 6 <= r <= 10}
+    # 定例は固定行ではなく「空きを上から詰める」方式に変更したため、
+    # タスク側で定例行を予約回避する必要はなくなった（定例が先に配置済みの
+    # スロットは task_name が埋まっているため、下の空きスロット探索で自然に除外される）。
+    reserved_am: set[int] = set()
+    reserved_pm: set[int] = set()
 
     # 休日判定用キャッシュ（同一週は1回のみクエリ）
     holiday_dates: set[str] = {h["holiday_date"] for h in get_company_holidays()}
@@ -2804,17 +2871,10 @@ def import_events_to_weekly_schedule(
                 hour = 9
             time_slot = "pm" if hour >= 12 else "am"
 
-            # 定例予約行をスキップ
-            reserved = get_reserved_row_numbers(user_id)
-            if time_slot == "am":
-                reserved_slots = {r - 1 for r in reserved if 1 <= r <= 5}
-            else:
-                reserved_slots = {r - 6 for r in reserved if 6 <= r <= 10}
-
-            # 該当スロットの空き枠を探す（定例行は除く）
+            # 定例は固定行ではなく空きを上から詰める方式に変更したため、
+            # 予約行スキップは不要（定例が埋めたスロットは task_name が入り自然に除外される）。
+            # 該当スロットの空き枠を上から探す
             for idx in range(5):
-                if idx in reserved_slots:
-                    continue
                 row = db.execute(
                     "SELECT task_name FROM weekly_schedule "
                     "WHERE user_id = ? AND week_start = ? AND day_of_week = ? "
@@ -3178,6 +3238,193 @@ def import_brabio_excel(
             result["imported"] += 1
         except Exception as exc:
             result["errors"].append(f"行{r}「{title}」: {exc}")
+
+    return result
+
+
+def import_migration_excel(
+    file_path: str,
+    login_user_id: int,
+    updated_by: str,
+) -> dict:
+    """移行用フラットExcelから project_task へタスクをインポートする（親子ツリー対応）。
+
+    id 列が既存 project_task.id と一致すればそのレコードを更新し、
+    空欄なら新規追加する。parent_task_id 列で親子関係（ツリー）を設定し、
+    親には member_ids、子には assigned_to/assigned_to_2 を設定する。
+    2パス処理で行う：Pass1で全行のadd/updateを確定して実IDを得た後、
+    Pass2でparent_task_id列を実IDに解決してset_project_task_parentを呼ぶ。
+
+    Args:
+        file_path: アップロードされたExcelファイルパス。
+        login_user_id: インポート実行者のユーザーID（新規作成の created_by に使用）。
+        updated_by: 更新者名（updated_by 列に記録）。
+
+    Returns:
+        dict: {"imported": int, "updated": int, "errors": list[str]}
+    """
+    import openpyxl as _openpyxl
+
+    result: dict = {"imported": 0, "updated": 0, "errors": []}
+
+    try:
+        wb = _openpyxl.load_workbook(file_path, data_only=True)
+    except Exception as exc:
+        result["errors"].append(f"ファイルを開けませんでした: {exc}")
+        return result
+
+    ws = wb.worksheets[0]
+    all_users = get_all_users()
+
+    def _resolve_name(raw: str) -> int | None:
+        """氏名文字列からユーザーIDを解決する（空文字は None）。"""
+        raw = (raw or "").strip()
+        if not raw:
+            return None
+        return _find_user_by_partial_name(raw, all_users)
+
+    def _resolve_member_ids(raw: str) -> str:
+        """カンマ区切りの氏名文字列をIDのカンマ区切り文字列に変換する。"""
+        names = [n.strip() for n in (raw or "").split(",") if n.strip()]
+        ids: list[int] = []
+        for n in names:
+            uid = _find_user_by_partial_name(n, all_users)
+            if uid is not None:
+                ids.append(uid)
+            else:
+                result["errors"].append(f"メンバー「{n}」が見つかりません")
+        return ",".join(str(i) for i in ids)
+
+    # ── Pass 1: 全行の新規追加/更新を確定し、実IDを取得する ──
+    # row_map: Excel行番号 -> {"real_id": int, "parent_raw": str, "is_parent": bool}
+    row_map: dict[int, dict] = {}
+
+    for r in range(2, ws.max_row + 1):
+        id_raw = ws.cell(r, 1).value
+        parent_raw = str(ws.cell(r, 2).value or "").strip()
+        task_name = str(ws.cell(r, 3).value or "").strip()
+        assignee1_raw = str(ws.cell(r, 4).value or "").strip()
+        assignee2_raw = str(ws.cell(r, 5).value or "").strip()
+        start_raw = str(ws.cell(r, 6).value or "").strip()
+        end_raw = str(ws.cell(r, 7).value or "").strip()
+        status_raw = str(ws.cell(r, 8).value or "").strip()
+        progress_raw = ws.cell(r, 9).value
+        member_raw = str(ws.cell(r, 10).value or "").strip()
+
+        if not task_name:
+            continue
+
+        # 日付バリデーション
+        start_date = start_raw.replace("/", "-")
+        end_date = end_raw.replace("/", "-")
+        try:
+            s_d = date.fromisoformat(start_date)
+            e_d = date.fromisoformat(end_date)
+        except ValueError:
+            result["errors"].append(f"行{r}「{task_name}」: 日付が不正です")
+            continue
+        if e_d < s_d:
+            result["errors"].append(f"行{r}「{task_name}」: 開始日が終了日より後です")
+            continue
+
+        # 状態・進捗のバリデーション
+        status = status_raw if status_raw in PROJECT_TASK_STATUSES else "未着手"
+        try:
+            progress = max(0, min(int(progress_raw), 100)) if progress_raw not in (None, "") else 0
+        except (ValueError, TypeError):
+            progress = 0
+
+        is_parent = bool(member_raw.strip())
+        member_ids_str = _resolve_member_ids(member_raw) if is_parent else ""
+        assigned_to = _resolve_name(assignee1_raw) if not is_parent else None
+        assigned_to_2 = _resolve_name(assignee2_raw) if not is_parent else None
+        if assignee1_raw and assigned_to is None and not is_parent:
+            result["errors"].append(f"行{r}「{task_name}」: 担当者1「{assignee1_raw}」が見つかりません")
+        if assignee2_raw and assigned_to_2 is None and not is_parent:
+            result["errors"].append(f"行{r}「{task_name}」: 担当者2「{assignee2_raw}」が見つかりません")
+
+        # id列が既存タスクと一致すれば更新、空欄なら新規追加
+        try:
+            id_val = int(id_raw) if id_raw not in (None, "") else None
+        except (ValueError, TypeError):
+            id_val = None
+
+        existing = get_project_task_by_id(id_val) if id_val is not None else None
+        if existing is not None:
+            update_project_task(
+                task_id=id_val,
+                category_id=existing.get("category_id"),
+                subcategory_id=existing.get("subcategory_id"),
+                task_name=task_name,
+                description=existing.get("description", "") or "",
+                start_date=start_date,
+                end_date=end_date,
+                status=status,
+                progress=progress,
+                delay_days=existing.get("delay_days", 0) or 0,
+                updated_by=updated_by,
+                assigned_to=assigned_to,
+                assigned_to_2=assigned_to_2,
+                is_milestone=existing.get("is_milestone", 0) or 0,
+            )
+            if is_parent:
+                set_project_task_members(id_val, member_ids_str)
+            real_id = id_val
+            result["updated"] += 1
+        else:
+            real_id = add_project_task(
+                category_id=None,
+                subcategory_id=None,
+                task_name=task_name,
+                description="",
+                start_date=start_date,
+                end_date=end_date,
+                status=status,
+                progress=progress,
+                delay_days=0,
+                created_by=login_user_id,
+                updated_by=updated_by,
+                assigned_to=assigned_to,
+                assigned_to_2=assigned_to_2,
+                member_ids=member_ids_str,
+            )
+            result["imported"] += 1
+
+        row_map[r] = {"real_id": real_id, "parent_raw": parent_raw}
+
+    # ── Pass 2: 親子関係（parent_task_id）を解決する ──
+    def _has_cycle(child_id: int, parent_id: int) -> bool:
+        """parent_id から祖先を辿り、child_id に戻ってしまうか判定する。"""
+        visited: set[int] = set()
+        current: int | None = parent_id
+        while current is not None:
+            if current == child_id:
+                return True
+            if current in visited:
+                break
+            visited.add(current)
+            t = get_project_task_by_id(current)
+            current = t.get("parent_task_id") if t else None
+        return False
+
+    for r, info in row_map.items():
+        parent_raw = info["parent_raw"]
+        real_id = info["real_id"]
+        if not parent_raw:
+            continue
+        try:
+            parent_id = int(parent_raw)
+        except (ValueError, TypeError):
+            result["errors"].append(f"行{r}: 親タスクID「{parent_raw}」が不正です")
+            continue
+        parent_task = get_project_task_by_id(parent_id)
+        if parent_task is None:
+            result["errors"].append(f"行{r}: 親タスクID {parent_id} が見つかりません")
+            continue
+        if _has_cycle(real_id, parent_id):
+            result["errors"].append(f"行{r}: 親タスクID {parent_id} は循環参照のため設定をスキップしました")
+            continue
+        set_project_task_parent(real_id, parent_id)
 
     return result
 
@@ -3688,7 +3935,8 @@ def get_routine_schedules(user_id: int) -> list[dict]:
     rows = db.execute(
         "SELECT rs.id, rs.user_id, rs.task_name, rs.subcategory_name,"
         " COALESCE(tm.default_hours, rs.default_hours, 0.0) AS default_hours,"
-        " rs.row_number, rs.days"
+        " rs.row_number, rs.days,"
+        " COALESCE(rs.fill_direction, 'top') AS fill_direction"
         " FROM routine_schedule rs"
         " LEFT JOIN task_master tm"
         "   ON tm.user_id = rs.user_id AND tm.task_name = rs.task_name"
@@ -3706,6 +3954,7 @@ def save_routine_task(
     default_hours: float,
     row_number: int,
     days: str = "1,1,1,1,1",
+    fill_direction: str = "top",
 ) -> bool:
     """定例スケジュールを登録（または上書き）する。
 
@@ -3718,24 +3967,28 @@ def save_routine_task(
         default_hours: デフォルト工数
         row_number: 行番号（1〜10）
         days: 曜日フラグ（"1,1,1,1,1" = 月〜金すべて）
+        fill_direction: 空きスロットへの詰め方向（'top'=上から / 'bottom'=下から）
 
     Returns:
         bool: 成功時 True
     """
     if not 1 <= row_number <= 10:
         return False
+    if fill_direction not in ("top", "bottom"):
+        fill_direction = "top"
     db = get_db()
     try:
         db.execute(
             "INSERT INTO routine_schedule"
-            " (user_id, task_name, subcategory_name, default_hours, row_number, days)"
-            " VALUES (?, ?, ?, ?, ?, ?)"
+            " (user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(user_id, row_number) DO UPDATE SET"
             "   task_name=excluded.task_name,"
             "   subcategory_name=excluded.subcategory_name,"
             "   default_hours=excluded.default_hours,"
-            "   days=excluded.days",
-            (user_id, task_name, subcategory_name, default_hours, row_number, days),
+            "   days=excluded.days,"
+            "   fill_direction=excluded.fill_direction",
+            (user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction),
         )
         db.commit()
         return True
@@ -3778,10 +4031,12 @@ def get_reserved_row_numbers(user_id: int) -> set[int]:
 
 
 def apply_routine_to_week(user_id: int, week_start: str, updated_by: str = "") -> None:
-    """定例スケジュールを週間予定の空き行に適用する。
+    """定例スケジュールを週間予定の空きスロットに詰めて適用する。
 
-    定例スケジュールの row_number (1〜10) を AM(1-5) / PM(6-10) に変換し、
-    当該スロットが空の場合のみ書き込む。
+    定例は row_number（1〜3=AM区分／6〜8=PM区分）で区分を判定し、AM区分の定例は
+    AMスロットへ、PM区分の定例はPMスロットへのみ配置する。定例ごとに
+    fill_direction（'top'=上から／'bottom'=下から）を設定でき、区分内の空き
+    スロットをその方向から順に詰めて配置する。
 
     Args:
         user_id: ユーザーID
@@ -3795,35 +4050,50 @@ def apply_routine_to_week(user_id: int, week_start: str, updated_by: str = "") -
     db = get_db()
     now = datetime.now().isoformat()
 
-    for r in routines:
-        row_num = r["row_number"]  # 1-10
-        if row_num <= 5:
-            time_slot = "am"
-            slot_index = row_num - 1
-        else:
-            time_slot = "pm"
-            slot_index = row_num - 6
-
-        # 曜日フィルタ（"1,1,1,1,1" = 月〜金すべて）
-        days_str = r.get("days") or "1,1,1,1,1"
-        day_flags = [x.strip() == "1" for x in days_str.split(",")]
-
-        for day_idx in range(5):
-            if day_idx < len(day_flags) and not day_flags[day_idx]:
-                continue  # この曜日は対象外
+    def _free_slots(day_idx: int, slot: str) -> list[int]:
+        free = []
+        for idx in range(5):
             existing = db.execute(
                 "SELECT task_name FROM weekly_schedule"
                 " WHERE user_id=? AND week_start=? AND day_of_week=?"
                 "   AND time_slot=? AND slot_index=?",
-                (user_id, week_start, day_idx, time_slot, slot_index),
+                (user_id, week_start, day_idx, slot, idx),
             ).fetchone()
             if existing is None or not (existing["task_name"] or "").strip():
+                free.append(idx)
+        return free
+
+    for day_idx in range(5):
+        # この曜日に配置対象となる定例を row_number 昇順（区分内の配置順）で抽出
+        day_routines = []
+        for r in routines:
+            days_str = r.get("days") or "1,1,1,1,1"
+            day_flags = [x.strip() == "1" for x in days_str.split(",")]
+            if day_idx < len(day_flags) and not day_flags[day_idx]:
+                continue  # この曜日は対象外
+            day_routines.append(r)
+        if not day_routines:
+            continue
+
+        # AM区分（row_number 1-5）とPM区分（6-10）に分けて、区分内でのみ配置する
+        am_routines = [r for r in day_routines if r["row_number"] <= 5]
+        pm_routines = [r for r in day_routines if r["row_number"] > 5]
+
+        for slot, slot_routines in (("am", am_routines), ("pm", pm_routines)):
+            if not slot_routines:
+                continue
+            free = _free_slots(day_idx, slot)
+            for r in slot_routines:
+                if not free:
+                    break
+                direction = r.get("fill_direction") or "top"
+                slot_index = free.pop(0) if direction != "bottom" else free.pop()
                 db.execute(
                     "INSERT OR REPLACE INTO weekly_schedule"
                     " (user_id, week_start, day_of_week, time_slot, slot_index,"
                     "  task_name, hours, subcategory_name, updated_at, updated_by)"
                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (user_id, week_start, day_idx, time_slot, slot_index,
+                    (user_id, week_start, day_idx, slot, slot_index,
                      r["task_name"], r["default_hours"],
                      r["subcategory_name"] or "", now, updated_by),
                 )

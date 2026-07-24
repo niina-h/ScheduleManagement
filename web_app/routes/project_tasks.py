@@ -18,7 +18,7 @@ from flask import (
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from ..auth_helpers import is_master, is_privileged
+from ..auth_helpers import can_access_user, is_master, is_privileged
 from ..models import (
     PROJECT_TASK_STATUSES,
     add_project_task,
@@ -123,6 +123,40 @@ def _user_can_edit_event(task: dict, user_id: int) -> bool:
     )
 
 
+def _can_touch_gantt_task(task: dict) -> bool:
+    """ガントチャート画面（gantt/update-dates 等）でログインユーザーが対象タスクを
+    操作できるか判定する。
+
+    マスタは常に可。それ以外は、タスクの担当者（assigned_to/assigned_to_2）に
+    自分が含まれるか、または管理職・所属長が can_access_user で担当者にアクセス
+    可能な場合のみ許可する。
+
+    Args:
+        task: project_task の辞書。
+
+    Returns:
+        bool: 操作可能なら True。
+    """
+    login_role = session.get("user_role", "")
+    login_id = int(session["user_id"])
+    if is_master(login_role):
+        return True
+    related_ids = {task.get("assigned_to"), task.get("assigned_to_2")}
+    related_ids.discard(None)
+    if login_id in related_ids:
+        return True
+    if not is_privileged(login_role):
+        return False
+    login_user_dict = {
+        "id": login_id, "role": login_role, "dept": session.get("user_dept", ""),
+    }
+    for uid in related_ids:
+        u = get_user_by_id(uid)
+        if u and can_access_user(login_user_dict, u):
+            return True
+    return False
+
+
 @project_tasks_bp.before_request
 def _check_login() -> object | None:
     """未ログインならログイン画面へリダイレクトする。"""
@@ -207,24 +241,29 @@ def _render_task_page(only_tab: str | None) -> str:
     target_user_id: int = login_id
     selectable_users: list[dict] = []
     if is_events:
-        # イベント画面は実効所属のメンバーを切り替えて閲覧できる。
-        # 切替先が自分と無関係なイベントは閲覧のみ（編集はサーバー/画面で can_edit 制御）。
-        selectable_users = _scoped_users()
-        allowed_ids = {u["id"] for u in selectable_users} | {login_id}
-        req_uid = request.args.get("user_id", "").strip()
-        if req_uid:
-            try:
-                cand = int(req_uid)
-            except ValueError:
-                cand = login_id
-            # 権限外ユーザーのタスクを URL 直打ちで覗けないよう、許可範囲に照合する。
-            target_user_id = cand if (cand in allowed_ids or cand == 0) else login_id
+        # イベント画面：所属長・管理職・マスタは配下（実効所属）メンバー全員または
+        # 個別メンバーを切替閲覧できる（既定＝全員）。一般ユーザーは自分自身のみで
+        # 切替プルダウン自体を出さない（selectable_users を空のままにする）。
+        if privileged:
+            selectable_users = _scoped_users()
+            allowed_ids = {u["id"] for u in selectable_users} | {login_id}
+            req_uid = request.args.get("user_id", "").strip()
+            if req_uid:
+                try:
+                    cand = int(req_uid)
+                except ValueError:
+                    cand = 0
+                # 権限外ユーザーのタスクを URL 直打ちで覗けないよう、許可範囲に照合する。
+                target_user_id = cand if (cand in allowed_ids or cand == 0) else 0
+            else:
+                target_user_id = 0  # 既定は全員（配下・実効所属メンバー）
+            if target_user_id == 0:
+                member_ids = [u["id"] for u in selectable_users]
+                tasks = get_all_project_tasks(user_ids=member_ids)
+            else:
+                tasks = get_all_project_tasks(assigned_to=target_user_id)
         else:
-            target_user_id = login_id  # 既定は自分の関係イベント
-        if target_user_id == 0:
-            member_ids = [u["id"] for u in selectable_users]
-            tasks = get_all_project_tasks(user_ids=member_ids)
-        else:
+            target_user_id = login_id  # 一般ユーザーは自分の関係イベントのみ
             tasks = get_all_project_tasks(assigned_to=target_user_id)
     elif is_master(login_role):
         selectable_users = get_accessible_users(login_id, login_role, login_dept)
@@ -286,7 +325,7 @@ def _render_task_page(only_tab: str | None) -> str:
         categories=categories,
         subcategories=subcategories,
         statuses=PROJECT_TASK_STATUSES,
-        privileged=True,
+        privileged=privileged,
         users=users,
         assign_users=assign_users,
         assign_users_js=assign_users_js,
@@ -803,7 +842,14 @@ def save_routine() -> object:
         days_list.append("1" if request.form.get(f"day_{di}") else "0")
     days = ",".join(days_list)
 
-    ok = save_routine_task(user_id, task_name, subcategory_name, default_hours, row_number, days)
+    # 詰め方向（空きスロットへの割当を上から/下からのどちらにするか）
+    fill_direction = request.form.get("fill_direction", "top").strip()
+    if fill_direction not in ("top", "bottom"):
+        fill_direction = "top"
+
+    ok = save_routine_task(
+        user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction
+    )
     flash("定例スケジュールを登録しました。" if ok else "登録に失敗しました（行番号重複の可能性）。",
           "success" if ok else "warning")
     return redirect(redirect_url)
@@ -1093,9 +1139,15 @@ def gantt_update_dates(task_id: int) -> tuple:
     if csrf != session.get("csrf_token"):
         abort(400)
 
+    # 管理職・マスタのみ使用可能（docstring通りの権限制限）。
+    if not is_privileged(session.get("user_role", "")):
+        return jsonify({"error": "権限がありません"}), 403
+
     existing = get_project_task_by_id(task_id)
     if not existing:
         abort(404)
+    if not _can_touch_gantt_task(existing):
+        return jsonify({"error": "権限がありません"}), 403
 
     data = request.get_json(silent=True)
     if not data:
@@ -1146,6 +1198,8 @@ def gantt_update_dates(task_id: int) -> tuple:
             ct = get_project_task_by_id(int(cid))
             if not ct:
                 continue
+            if not _can_touch_gantt_task(ct):
+                continue
             try:
                 cs = date.fromisoformat(ct["start_date"])
                 ce = date.fromisoformat(ct["end_date"])
@@ -1192,6 +1246,8 @@ def gantt_update_fields(task_id: int) -> tuple:
     existing = get_project_task_by_id(task_id)
     if not existing:
         abort(404)
+    if not _can_touch_gantt_task(existing):
+        return jsonify({"error": "権限がありません"}), 403
 
     data = request.get_json(silent=True)
     if not data:
@@ -1265,6 +1321,11 @@ def gantt_reorder() -> tuple:
             ids: list[int] = [int(x) for x in order_list]
         except (TypeError, ValueError):
             return jsonify({"error": "不正なID形式"}), 400
+
+        for tid in ids:
+            t = get_project_task_by_id(tid)
+            if t and not _can_touch_gantt_task(t):
+                return jsonify({"error": "権限がありません"}), 403
 
         from ..database import get_db
         db = get_db()
@@ -1406,7 +1467,7 @@ def gantt() -> str:
     return render_template(
         "project_tasks_gantt.html",
         gantt_json=json.dumps(gantt_data, ensure_ascii=False),
-        privileged=True,
+        privileged=privileged,
         csrf_token=session.get("csrf_token", ""),
         subcat_options=subcat_options,
         initial_subcat=initial_subcat,
@@ -1803,6 +1864,75 @@ def _build_gantt_excel(
     ws.oddHeader.left.size = 10
     ws.oddHeader.right.text = f"出力日：{today_d.strftime('%Y/%m/%d')}"
     ws.oddHeader.right.size = 9
+
+    return wb
+
+
+def _build_flat_excel_for_migration(tasks: list[dict]) -> "openpyxl.Workbook":
+    """全プロジェクトタスクを移行用フラットExcelとして出力する。
+
+    新ガントチャート画面（planner.py）のインポート機能で読み込む前提の
+    フォーマット。親子ツリー（parent_task_id）・メンバー（member_ids）を
+    そのまま列として書き出す。
+
+    Args:
+        tasks: get_all_project_tasks() の全件（絞り込みなし）。
+
+    Returns:
+        openpyxl.Workbook: 生成済みワークブック。
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "タスク移行"
+
+    header_fill = PatternFill("solid", fgColor="334155")
+    header_font = Font(bold=True, color="FFFFFF", size=10, name="游ゴシック")
+    body_font = Font(size=10, name="游ゴシック")
+    thin_border = Border(
+        left=Side(style="thin", color="CCCCCC"), right=Side(style="thin", color="CCCCCC"),
+        top=Side(style="thin", color="CCCCCC"), bottom=Side(style="thin", color="CCCCCC"),
+    )
+    center_align = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center")
+
+    headers = ["id", "parent_task_id", "task_name", "担当者1", "担当者2",
+               "開始日", "終了日", "状態", "進捗%", "メンバー"]
+    col_widths = [6, 14, 32, 10, 10, 12, 12, 8, 8, 20]
+
+    user_name_map: dict[int, str] = {
+        u["id"]: (u.get("last_name") or u.get("name") or "").strip() for u in get_all_users()
+    }
+
+    def _member_names(raw: str) -> str:
+        ids = [int(s) for s in (raw or "").split(",") if s.strip().isdigit()]
+        return ",".join(user_name_map.get(i, "") for i in ids if user_name_map.get(i))
+
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(1, ci, h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.border = thin_border
+        ws.column_dimensions[get_column_letter(ci)].width = col_widths[ci - 1]
+
+    for ri, t in enumerate(tasks, 2):
+        values = [
+            t["id"],
+            t.get("parent_task_id") or "",
+            t.get("task_name", ""),
+            user_name_map.get(t.get("assigned_to"), ""),
+            user_name_map.get(t.get("assigned_to_2"), ""),
+            t.get("start_date", ""),
+            t.get("end_date", ""),
+            t.get("status", ""),
+            t.get("progress", 0),
+            _member_names(t.get("member_ids", "")),
+        ]
+        for ci, v in enumerate(values, 1):
+            cell = ws.cell(ri, ci, v)
+            cell.font = body_font
+            cell.border = thin_border
+            cell.alignment = center_align if ci in (1, 2, 9) else left_align
 
     return wb
 
@@ -2228,6 +2358,32 @@ def _build_gantt_pdf_by_tree(
     c.save()
     buf.seek(0)
     return buf
+
+
+@project_tasks_bp.route("/export-migration")
+def export_migration() -> object:
+    """全タスクを移行用フラットExcelとして出力する（システム管理者のみ）。
+
+    新ガントチャート画面（planner.py）へのデータ移行のために、
+    全プロジェクトタスクを親子ツリー情報付きのフラット一覧で出力する。
+
+    Returns:
+        object: Excelファイルのダウンロードレスポンス。権限がなければ403。
+    """
+    if not is_master(session.get("user_role", "")):
+        abort(403)
+
+    tasks = get_all_project_tasks()
+    wb = _build_flat_excel_for_migration(tasks)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    today_str = date.today().isoformat()
+    return send_file(
+        buf, as_attachment=True, download_name=f"タスク移行_{today_str}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @project_tasks_bp.route("/gantt/export")

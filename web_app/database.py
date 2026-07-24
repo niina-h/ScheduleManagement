@@ -531,6 +531,19 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         )
         logger.info("マスタ用メール設定を新しい挨拶文テンプレートに更新しました。")
 
+    # routine_schedule に days（曜日フラグ）を追加（なければ）。
+    rs_cols = {row[1] for row in db.execute("PRAGMA table_info(routine_schedule)").fetchall()}
+    if "days" not in rs_cols:
+        db.execute("ALTER TABLE routine_schedule ADD COLUMN days TEXT DEFAULT '1,1,1,1,1'")
+        logger.info("routine_schedule.days カラムを追加しました。")
+        rs_cols.add("days")
+
+    # routine_schedule に fill_direction（空きスロットへの詰め方向）を追加（なければ）。
+    # 'top'=上から詰める（既定） / 'bottom'=下から詰める。
+    if "fill_direction" not in rs_cols:
+        db.execute("ALTER TABLE routine_schedule ADD COLUMN fill_direction TEXT DEFAULT 'top'")
+        logger.info("routine_schedule.fill_direction カラムを追加しました。")
+
     db.commit()
 
 

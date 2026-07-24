@@ -1,7 +1,4 @@
-"""ガント入力（試作）ルート。
-
-現行の「タスク管理」「ガントチャート」画面には一切変更を加えず、独立した
-検証用ページとして追加するモジュール。
+"""ガントチャート入力ルート（視覚的にバーを描いてタスクを登録する方式）。
 
 コンセプト:
 - ガント風のタイムライン上で、タスクを入力し「バーをドラッグで描いて」追加する。
@@ -9,17 +6,22 @@
 - 既存バーは中央ドラッグで移動、左右端ドラッグで期間伸縮。
 - 保存で project_task に反映（新規は add_project_task、日付変更は update_project_task を流用）。
 
-安全設計:
-- 対象は本人のタスク。管理職・マスタは権限内メンバーを選択して代理入力可能。
-- 既存の関数を呼び出すのみで、既存ロジックは改変しない。
+権限:
+- 一般ユーザーは自分自身が担当者/メンバーのタスクのみ閲覧・操作できる。
+- 管理職・所属長は auth_helpers.can_access_user が許可する配下ユーザーの範囲まで操作できる。
+- システム管理者（マスタ）は全ユーザーを対象にできる。
+- 親（レベル0）タスクの作成・編集・削除は管理職以上のみ可能。
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Any
 
 from flask import (
     Blueprint,
+    abort,
+    flash,
     jsonify,
     redirect,
     render_template,
@@ -28,7 +30,7 @@ from flask import (
     url_for,
 )
 
-from ..auth_helpers import is_master
+from ..auth_helpers import can_access_user, is_master, is_privileged
 from ..models import (
     add_project_task,
     delete_project_task,
@@ -38,6 +40,7 @@ from ..models import (
     get_company_holidays,
     get_project_task_by_id,
     get_user_by_id,
+    import_migration_excel,
     reassign_project_task_order,
     set_project_task_members,
     set_project_task_parent,
@@ -45,6 +48,7 @@ from ..models import (
 )
 
 planner_bp = Blueprint("planner_bp", __name__, url_prefix="/planner")
+logger = logging.getLogger(__name__)
 
 _WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
 _DISPLAY_DAYS = 63  # 画面表示日数（約9週）
@@ -156,9 +160,10 @@ def _require_login() -> Any:
 def _resolve_target(login_user_id: int) -> int:
     """?user_id= から対象ユーザーIDを決定する。
 
-    - 戻り値 0 は「全員」を表す。
+    - 戻り値 0 は「全員」を表す（マスタのみ許可）。
     - 既定値はマスタなら全員(0)、それ以外は本人。
-    - 試作画面のため、いずれの役職も任意のユーザー／全員を選択できる。
+    - 権限外のユーザーが指定された場合は既定値へフォールバックする
+      （一般は自分自身のみ、管理職・所属長は can_access_user が許可する範囲のみ）。
     """
     login_role = session.get("user_role", "")
     default = 0 if is_master(login_role) else login_user_id
@@ -170,8 +175,18 @@ def _resolve_target(login_user_id: int) -> int:
     except ValueError:
         return default
     if cand == 0:
-        return 0
-    return cand if get_user_by_id(cand) else default
+        return 0 if is_master(login_role) else default
+    if cand == login_user_id:
+        return cand
+    if not is_privileged(login_role):
+        return default
+    target = get_user_by_id(cand)
+    if not target:
+        return default
+    login_user_dict = {
+        "id": login_user_id, "role": login_role, "dept": session.get("user_dept", ""),
+    }
+    return cand if can_access_user(login_user_dict, target) else default
 
 
 @planner_bp.route("/")
@@ -281,9 +296,10 @@ def planner() -> Any:
         return result
 
     def _emit(t: dict, level: int) -> None:
-        is_parent = level == 0
-        # 一般ユーザーは親（レベル0）を編集不可（子のみ）。
-        editable = privileged or not is_parent
+        # 「親」は level ではなく「実際に子を持つか」で判定する（保存側と統一）。
+        is_parent = bool(children.get(t["id"]))
+        # 一般ユーザーは最上位の親タスクを編集不可（子・単独タスクは可）。
+        editable = privileged or not (is_parent and level == 0)
         tasks.append({
             "id": t["id"],
             "task_name": t.get("task_name", ""),
@@ -292,13 +308,11 @@ def planner() -> Any:
             "status": t.get("status") or "",
             "progress": t.get("progress") or 0,
             "delay_days": t.get("delay_days") or 0,
-            # 親はメンバー（関係ユーザー）、子は担当者を people として渡す。
+            # 親（子持ち）はメンバー、それ以外（単独・末端）は担当者を people として渡す。
             "people": _people_list(_members(t)) if is_parent else _assignees(t),
             "level": level,
             "parent_id": t.get("parent_task_id") or None,
             "editable": editable,
-            # 旧ガントの大区分。親子化の手動グルーピングの目安として画面に補助表示する。
-            "category": (t.get("category_name") or "").strip(),
         })
         for c in sorted(children.get(t["id"], []), key=_sortkey):
             _emit(c, level + 1)
@@ -341,6 +355,7 @@ def planner() -> Any:
         show_selector=master,
         can_parent=privileged,
         role=login_role,
+        is_master=master,
         display_days=_DISPLAY_DAYS,
         csrf_token=session.get("csrf_token", ""),
     )
@@ -426,10 +441,12 @@ def save() -> Any:
         return jsonify({"ok": False, "error": "CSRFトークン不正"}), 400
 
     login_user_id = int(session["user_id"])
+    login_role = session.get("user_role", "")
     payload = request.get_json(silent=True) or {}
 
-    # 対象ユーザー。0（全員）や任意ユーザーを許可（試作画面のため役職制限なし）。
-    # 新規タスクの既定担当者に使うため、全員モードでは操作者本人にフォールバックする。
+    # 対象ユーザー。0（全員）はマスタのみ許可。他人を指定できるのは
+    # can_access_user が許可する範囲（管理職・所属長は配下、マスタは全員）のみで、
+    # 一般ユーザーは自分自身以外を指定できない。
     target_user_id = login_user_id
     req_uid = payload.get("user_id")
     if req_uid not in (None, ""):
@@ -438,11 +455,21 @@ def save() -> Any:
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "ユーザー指定が不正です"}), 400
         if cand == 0:
+            if not is_master(login_role):
+                return jsonify({"ok": False, "error": "権限がありません"}), 403
             target_user_id = 0
-        elif get_user_by_id(cand):
+        elif cand == login_user_id:
             target_user_id = cand
         else:
-            return jsonify({"ok": False, "error": "ユーザーが見つかりません"}), 400
+            target = get_user_by_id(cand)
+            if not target:
+                return jsonify({"ok": False, "error": "ユーザーが見つかりません"}), 400
+            login_user_dict = {
+                "id": login_user_id, "role": login_role, "dept": session.get("user_dept", ""),
+            }
+            if not is_privileged(login_role) or not can_access_user(login_user_dict, target):
+                return jsonify({"ok": False, "error": "権限がありません"}), 403
+            target_user_id = cand
     default_owner = target_user_id if target_user_id else login_user_id
 
     def _valid_date(v: Any) -> str | None:
@@ -479,8 +506,34 @@ def save() -> Any:
         return result
 
     # 役職による権限：親（レベル0）の作成・編集は管理職/マスタのみ。
-    login_role = session.get("user_role", "")
     privileged = is_master(login_role) or login_role == "管理職"
+
+    login_user_dict = {
+        "id": login_user_id, "role": login_role, "dept": session.get("user_dept", ""),
+    }
+
+    def _can_touch_existing(existing: dict) -> bool:
+        """既存タスクの更新・削除をログインユーザーが行えるか判定する。
+
+        マスタは常に可。それ以外は、タスクの担当者・メンバーに自分が含まれるか、
+        またはそのいずれかに can_access_user でアクセス可能な場合のみ許可する。
+        """
+        if is_master(login_role):
+            return True
+        related_ids = set(_parse_ids(existing.get("member_ids")))
+        for key in ("assigned_to", "assigned_to_2"):
+            v = existing.get(key)
+            if v:
+                related_ids.add(v)
+        if login_user_id in related_ids:
+            return True
+        if not is_privileged(login_role):
+            return False
+        for uid in related_ids:
+            u = get_user_by_id(uid)
+            if u and can_access_user(login_user_dict, u):
+                return True
+        return False
 
     created = 0
     updated = 0
@@ -488,17 +541,34 @@ def save() -> Any:
     ordered_ids: list[int] = []    # DOM順（保存対象の実タスクID）— 表示順の再割当に使う
 
     # rows は親→子の順（DOM順）で受け取る。親IDは既存ID or 一時ID で参照。
-    for row in payload.get("rows", []) or []:
+    src_rows: list[dict] = payload.get("rows", []) or []
+
+    # 「親」判定は level==0 ではなく「実際に子を持つか」で行う。
+    # DOM順のため、次以降で自分よりレベルが大きい行が現れれば子を持つ親とみなす
+    # （同レベル以下が先に現れたら子はいない）。子を持たない最上位行は担当タスクとして扱い、
+    # 担当者を設定して週間予定へ反映できるようにする。
+    def _has_children(idx: int) -> bool:
+        lv = _parse_int(src_rows[idx].get("level"), 0)
+        for j in range(idx + 1, len(src_rows)):
+            nxt_lv = _parse_int(src_rows[j].get("level"), 0)
+            if nxt_lv > lv:
+                return True
+            if nxt_lv <= lv:
+                return False
+        return False
+
+    for row_idx, row in enumerate(src_rows):
         name = str(row.get("name", "") or "").strip()
         s = _valid_date(row.get("start"))
         e = _valid_date(row.get("end"))
         if s and e and e < s:
             s, e = e, s
         level = _parse_int(row.get("level"), 0)
-        is_parent = level == 0
+        # 子を持つ行のみ「親（メンバーのみ・担当なし）」。それ以外は担当タスク。
+        is_parent = _has_children(row_idx)
 
-        # 一般ユーザーは親（レベル0）を作成・編集できない。
-        if is_parent and not privileged:
+        # 一般ユーザーは最上位（レベル0）の親タスクを作成・編集できない。
+        if is_parent and level == 0 and not privileged:
             continue
 
         # 親IDの解決（既存 parent_id 優先、なければ一時ID）
@@ -558,6 +628,8 @@ def save() -> Any:
             ordered_ids.append(tid)
             if not row.get("dirty"):
                 continue
+            if not _can_touch_existing(existing):
+                continue
             if is_parent:
                 # 親：メンバーを更新。担当者は変更しない。
                 set_project_task_members(tid, ",".join(str(i) for i in _parse_people(row)))
@@ -601,6 +673,8 @@ def save() -> Any:
             continue
         if not existing.get("parent_task_id") and not privileged:
             continue  # 親タスクは一般ユーザー削除不可
+        if not _can_touch_existing(existing):
+            continue
         delete_project_task(did)
         deleted += 1
 
@@ -608,3 +682,53 @@ def save() -> Any:
     reassign_project_task_order(ordered_ids)
 
     return jsonify({"ok": True, "created": created, "updated": updated, "deleted": deleted})
+
+
+@planner_bp.route("/import-excel", methods=["POST"])
+def import_excel() -> Any:
+    """移行用フラットExcelをアップロードし project_task へ取り込む（システム管理者のみ）。
+
+    タスク管理一覧画面の「タスク移行Excel出力」で出力したファイルを想定する。
+    id列が既存タスクと一致すれば更新、空欄なら新規追加し、parent_task_id列で
+    親子関係（新ガントのツリー構造）を設定する。
+
+    Returns:
+        Any: ガントチャート画面へのリダイレクト。
+    """
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    if not is_master(session.get("user_role", "")):
+        flash("この操作にはシステム管理者権限が必要です", "danger")
+        return redirect(url_for("planner_bp.planner"))
+
+    uploaded = request.files.get("migration_file")
+    if not uploaded or not uploaded.filename:
+        flash("ファイルを選択してください", "warning")
+        return redirect(url_for("planner_bp.planner"))
+    if not uploaded.filename.endswith(".xlsx"):
+        flash(".xlsx形式のファイルを選択してください", "warning")
+        return redirect(url_for("planner_bp.planner"))
+
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    uploaded.save(tmp.name)
+
+    result = import_migration_excel(
+        file_path=tmp.name,
+        login_user_id=int(session["user_id"]),
+        updated_by=session.get("user_name", ""),
+    )
+
+    parts = []
+    if result["imported"]:
+        parts.append(f"{result['imported']}件追加")
+    if result["updated"]:
+        parts.append(f"{result['updated']}件更新")
+    msg = f"インポート完了: {' / '.join(parts) if parts else '変更なし'}"
+    if result["errors"]:
+        msg += f" / {len(result['errors'])}件エラー"
+        for e in result["errors"]:
+            logger.warning("移行Excelインポートエラー: %s", e)
+    flash(msg, "success" if (result["imported"] > 0 or result["updated"] > 0) else "info")
+    return redirect(url_for("planner_bp.planner"))
