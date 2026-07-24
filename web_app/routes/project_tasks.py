@@ -491,9 +491,14 @@ def update_task(task_id: int) -> object:
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
+    if not is_privileged(session.get("user_role", "")):
+        abort(403)
+
     existing = get_project_task_by_id(task_id)
     if not existing:
         abort(404)
+    if not _can_touch_gantt_task(existing):
+        abort(403)
 
     cat_id = request.form.get("category_id", "")
     subcat_id = request.form.get("subcategory_id", "")
@@ -581,6 +586,9 @@ def bulk_update_tasks() -> object:
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
+    if not is_privileged(session.get("user_role", "")):
+        abort(403)
+
     login_id = int(session["user_id"])
     task_ids_raw = request.form.getlist("task_id")
     updated_count = 0
@@ -599,6 +607,9 @@ def bulk_update_tasks() -> object:
         # イベントは関係者（編集可能）以外による更新・削除を拒否する。
         # 画面上は閲覧のみ行としてフォームに含めないが、直接POSTへの防御も行う。
         if existing.get("is_event") and not _user_can_edit_event(existing, login_id):
+            continue
+        # 通常タスクは、担当者本人か can_access_user が許可する範囲のみ操作可能。
+        if not existing.get("is_event") and not _can_touch_gantt_task(existing):
             continue
 
         # 削除チェックボックスが ON の場合は削除して次へ
@@ -793,6 +804,15 @@ def delete_task(task_id: int) -> object:
     """
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
+
+    if not is_privileged(session.get("user_role", "")):
+        abort(403)
+
+    existing = get_project_task_by_id(task_id)
+    if not existing:
+        abort(404)
+    if not _can_touch_gantt_task(existing):
+        abort(403)
 
     delete_project_task(task_id)
     flash("タスクを削除しました。", "success")

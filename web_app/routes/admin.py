@@ -752,7 +752,7 @@ def export_master_csv(table_key: str) -> Response:
         buf,
         as_attachment=True,
         download_name=filename,
-        mimetype="text/csv; charset=utf-8",
+        mimetype="text/csv",
     )
 
 
@@ -790,7 +790,7 @@ def export_all_master_csv() -> Response:
         result,
         as_attachment=True,
         download_name=filename,
-        mimetype="text/csv; charset=utf-8",
+        mimetype="text/csv",
     )
 
 
