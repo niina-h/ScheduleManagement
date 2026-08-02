@@ -316,7 +316,7 @@ def swap_order():
 
 
 def _require_privileged() -> None:
-    """管理職またはマスタ権限かどうかを確認する。
+    """管理職以上（管理職・所属長・システム管理者）の権限かどうかを確認する。
 
     未ログインまたは権限不足の場合は 403 を返す。
 
@@ -324,7 +324,7 @@ def _require_privileged() -> None:
         None
     """
     role: str = session.get("user_role", "")
-    if role not in ("管理職", "マスタ"):
+    if not is_privileged(role):
         abort(403)
 
 

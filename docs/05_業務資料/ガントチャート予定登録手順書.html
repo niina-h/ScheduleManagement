@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>ガントチャート予定登録手順書</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --surface-alt: #eef1f5;
+    --ink: #1c2430;
+    --ink-soft: #5b6472;
+    --line: #dde1e7;
+    --navy: #1f3864;
+    --navy-soft: #e8edf5;
+    --accent: #4338ca;
+    --ok: #1e8a5f;
+    --ok-bg: #e7f6ee;
+    --warn: #b5720f;
+    --warn-bg: #fbf1de;
+    --danger: #b91c1c;
+    --danger-bg: #fdecec;
+    --font-display: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    --font-body: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181e; --surface: #1b212b; --surface-alt: #232a35;
+    --ink: #e7ebf1; --ink-soft: #9aa5b3; --line: #313a47;
+    --navy: #7fa2d6; --navy-soft: #202c3d; --accent: #8b93f0;
+    --ok: #6fcda3; --ok-bg: #16281f;
+    --warn: #e0ab5c; --warn-bg: #2f2410;
+    --danger: #f08a8a; --danger-bg: #341c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181e; --surface: #1b212b; --surface-alt: #232a35;
+      --ink: #e7ebf1; --ink-soft: #9aa5b3; --line: #313a47;
+      --navy: #7fa2d6; --navy-soft: #202c3d; --accent: #8b93f0;
+      --ok: #6fcda3; --ok-bg: #16281f;
+      --warn: #e0ab5c; --warn-bg: #2f2410;
+      --danger: #f08a8a; --danger-bg: #341c1c;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); -webkit-font-smoothing: antialiased; }
+  body { padding: 32px 20px 80px; }
+  .page { max-width: 940px; margin: 0 auto; }
+
+  .masthead { background: var(--navy); color: #fff; border-radius: 12px; padding: 26px 30px; margin-bottom: 28px; }
+  .masthead .eyebrow { font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; opacity: .8; margin-bottom: 6px; }
+  .masthead h1 { font-family: var(--font-display); font-size: 1.6rem; font-weight: 700; margin: 0 0 8px; text-wrap: balance; }
+  .masthead p { margin: 0; font-size: .86rem; opacity: .92; line-height: 1.7; max-width: 68ch; }
+
+  .flow { display: flex; align-items: stretch; gap: 8px; margin-bottom: 32px; flex-wrap: wrap; }
+  .flow .step { flex: 1 1 200px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; position: relative; }
+  .flow .step .num { font-family: var(--font-display); font-weight: 700; font-size: .72rem; color: var(--accent); background: var(--navy-soft); display: inline-block; border-radius: 100px; padding: 2px 10px; margin-bottom: 8px; }
+  .flow .step .ttl { font-weight: 700; font-size: .92rem; margin-bottom: 6px; }
+  .flow .step .desc { font-size: .78rem; color: var(--ink-soft); line-height: 1.6; }
+  .flow .arrow { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; color: var(--ink-soft); font-size: 1.3rem; padding: 0 2px; }
+  @media (max-width: 760px) { .flow .arrow { transform: rotate(90deg); } }
+
+  section.sec { margin-bottom: 40px; }
+  .sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; border-bottom: 2px solid var(--navy); padding-bottom: 8px; }
+  .sec-head .n { font-family: var(--font-display); font-weight: 700; color: #fff; background: var(--navy); border-radius: 6px; padding: 2px 10px; font-size: .9rem; }
+  .sec-head h2 { font-size: 1.1rem; margin: 0; font-family: var(--font-display); }
+
+  .step-list { display: flex; flex-direction: column; gap: 14px; }
+  .step-row { display: flex; gap: 14px; align-items: flex-start; }
+  .step-row .bullet { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 100px; background: var(--navy-soft); color: var(--navy); font-weight: 700; font-size: .8rem; display: flex; align-items: center; justify-content: center; }
+  .step-row .body { flex: 1 1 auto; font-size: .88rem; line-height: 1.75; padding-top: 2px; }
+  .step-row .body b { color: var(--ink); }
+
+  .note-box { background: var(--warn-bg); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: .8rem; color: var(--ink-soft); line-height: 1.7; margin-top: 10px; }
+  .note-box strong { color: var(--ink); }
+  .danger-box { background: var(--danger-bg); border-left: 3px solid var(--danger); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: .8rem; color: var(--ink-soft); line-height: 1.7; margin-top: 10px; }
+  .danger-box strong { color: var(--danger); }
+
+  /* ── 画面モックアップ共通 ── */
+  .mock { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 16px 0; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .mock-label { font-size: .68rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 8px; }
+
+  /* ── ガントチャート画面モック ── */
+  .g-mock { border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; font-size: .72rem; background: #fff; color: #1c2430; }
+  .g-mock .g-head { display: flex; background: #eef2ff; border-bottom: 1px solid #cbd5e1; }
+  .g-mock .g-namehead { width: 190px; flex: 0 0 190px; font-weight: 700; padding: 8px; border-right: 1px solid #cbd5e1; display: flex; align-items: center; }
+  .g-mock .g-days { flex: 1 1 auto; display: flex; }
+  .g-mock .g-day { flex: 1 1 0; text-align: center; padding: 6px 2px; color: #475569; font-size: .64rem; border-right: 1px solid #eef2f7; }
+  .g-mock .g-day.today { background: #dbeafe; font-weight: 700; color: #1e3a8a; }
+  .g-mock .g-day.weekend { background: #fdeef2; color: #b91c1c; }
+  .g-mock .g-row { display: flex; border-bottom: 1px solid #f1f5f9; align-items: stretch; min-height: 34px; }
+  .g-mock .g-row.parent .g-name { background: #eef4ff; font-weight: 700; }
+  .g-mock .g-name { width: 190px; flex: 0 0 190px; border-right: 1px solid #cbd5e1; display: flex; align-items: center; gap: 6px; padding: 4px 8px; }
+  .g-mock .g-name .indent { width: 14px; flex: 0 0 auto; color: #a855f7; text-align: center; }
+  .g-mock .g-name .lbl { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .g-mock .g-name .people { flex: 0 0 auto; font-size: .62rem; background: #eef2ff; border: 1px solid #c7d2fe; color: #4338ca; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+  .g-mock .g-track { flex: 1 1 auto; position: relative; display: flex; }
+  .g-mock .g-track .cell { flex: 1 1 0; border-right: 1px solid #f5f7fa; }
+  .g-mock .g-track .cell.today { background: #dbeafe; }
+  .g-mock .g-track .cell.weekend { background: #fdeef2; }
+  .g-mock .bar { position: absolute; top: 5px; bottom: 5px; border-radius: 5px; border: 1px solid #3b82f6;
+    background: linear-gradient(180deg,#bfdbfe,#60a5fa); display: flex; align-items: center; justify-content: center;
+    font-size: .6rem; font-weight: 700; color: #1e3a8a; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+  .g-mock .bar.new { outline: 2px solid #f59e0b; }
+  .g-mock .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(180deg,#6ee7b7,#10b981); z-index: 0; }
+  .g-mock .bar span { position: relative; z-index: 1; }
+  .g-mock .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface-alt); border-bottom: 1px solid var(--line); font-size: .74rem; flex-wrap: wrap; }
+  .g-mock .toolbar .title { font-weight: 700; margin-right: auto; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; border-radius: 100px; padding: 3px 10px; font-size: .68rem; }
+  .chip.ghost { background: var(--surface); color: var(--ink-soft); border-color: var(--line); }
+  .btn-mock { display: inline-flex; align-items: center; gap: 4px; background: var(--navy); color: #fff; border-radius: 6px; padding: 4px 12px; font-size: .72rem; font-weight: 700; }
+  .btn-mock.outline { background: var(--surface); color: var(--navy); border: 1px solid var(--navy); }
+  .btn-mock.disabled { background: var(--surface-alt); color: var(--ink-soft); border: 1px solid var(--line); }
+
+  /* 入力欄モック */
+  .input-mock { display: inline-flex; align-items: center; border: 1px solid #a5b4fc; border-radius: 4px; padding: 3px 8px; background: #fff; font-size: .74rem; color: #1c2430; }
+  .input-mock .caret { display: inline-block; width: 1px; height: 12px; background: #4338ca; margin-left: 2px; animation: blink 1s step-end infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* 週間予定モーダルモック */
+  .modal-mock { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); max-width: 480px; box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+  .modal-mock .m-head { background: var(--navy-soft); color: var(--navy); font-weight: 700; padding: 10px 16px; font-size: .88rem; display: flex; justify-content: space-between; align-items: center; }
+  .modal-mock .m-body { padding: 14px 16px; font-size: .78rem; line-height: 1.7; color: var(--ink); }
+  .modal-mock .m-body ul { margin: 6px 0 0; padding-left: 18px; color: var(--ink-soft); }
+  .modal-mock .m-foot { padding: 10px 16px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); }
+
+  .qa-list { display: flex; flex-direction: column; gap: 8px; }
+  .qa-item { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; font-size: .82rem; }
+  .qa-item .q { font-weight: 700; color: var(--navy); }
+  .qa-item .a { color: var(--ink-soft); margin-top: 4px; }
+
+  /* 強調ボックス（最重要注意） */
+  .emphasis-box { background: var(--danger-bg); border: 2px solid var(--danger); border-radius: 10px; padding: 14px 18px; margin: 16px 0; }
+  .emphasis-box .em-head { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--danger); font-size: .92rem; margin-bottom: 8px; }
+  .emphasis-box .em-body { font-size: .86rem; line-height: 1.8; color: var(--ink); }
+  .emphasis-box .em-body strong { color: var(--danger); }
+
+  /* 行の操作ボタン群モック（⠿ ＜ ＞ ＋ ×） */
+  .g-mock .g-name .op { flex: 0 0 auto; display: flex; gap: 2px; align-items: center; }
+  .g-mock .g-name .op .drag { color: #94a3b8; font-size: .8rem; cursor: grab; padding-right: 2px; }
+  .g-mock .g-name .op button { border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; min-width: 17px; height: 16px; border-radius: 3px; font-size: .58rem; line-height: 1; padding: 0; }
+  .g-mock .g-name .op button.del { border-color: #fecaca; background: #fef2f2; color: #dc2626; }
+  .g-mock .g-name .op button.hl { outline: 2px solid #f59e0b; outline-offset: 1px; }
+
+  /* 状態バッジ */
+  .status-badge { display: inline-flex; align-items: center; gap: 5px; font-size: .78rem; font-weight: 700; padding: 3px 10px; border-radius: 100px; }
+  .status-badge .dot { width: 8px; height: 8px; border-radius: 100px; }
+  .status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; margin: 12px 0; }
+  .status-grid .item { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: .78rem; line-height: 1.6; }
+  .status-grid .item .desc { color: var(--ink-soft); margin-top: 4px; }
+
+  /* 詳細編集モーダルモック */
+  .detail-mock { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); max-width: 420px; box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+  .detail-mock .d-head { background: var(--navy-soft); color: var(--navy); font-weight: 700; padding: 10px 16px; font-size: .86rem; }
+  .detail-mock .d-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .detail-mock .d-fld { display: flex; align-items: center; gap: 8px; font-size: .76rem; }
+  .detail-mock .d-fld label { flex: 0 0 78px; color: var(--ink-soft); }
+  .detail-mock .d-fld .val { flex: 1 1 auto; border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; background: var(--bg); color: var(--ink); }
+  .detail-mock .d-fld .val.danger-btn { border-color: var(--danger); color: var(--danger); background: var(--danger-bg); text-align: center; cursor: pointer; }
+  .detail-mock .d-foot { padding: 10px 16px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); }
+
+  /* 移動・グループ化の説明図 */
+  .move-diagram { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+  .move-diagram .tree-box { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: .78rem; line-height: 1.9; min-width: 200px; }
+  .move-diagram .tree-box .lv0 { font-weight: 700; }
+  .move-diagram .tree-box .lv1 { padding-left: 16px; color: var(--ink-soft); }
+  .move-diagram .tree-box .lv1.moved { color: var(--accent); font-weight: 700; }
+  .move-diagram .diagram-arrow { font-size: 1.4rem; color: var(--ink-soft); }
+
+  /* 定例作業・イベントタブのモック */
+  .tab-mock-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #6d4c41; color: #fff; border-radius: 8px 8px 0 0; font-size: .82rem; font-weight: 700; }
+  .tab-mock-head.event { background: var(--navy); }
+  .tab-mock-head .tag { font-size: .68rem; font-weight: 400; background: rgba(255,255,255,.18); border-radius: 100px; padding: 2px 8px; }
+  .tab-mock-body { border: 1px solid var(--line); border-top: none; border-radius: 0 0 8px 8px; background: var(--surface); overflow-x: auto; }
+  .tab-mock-body table { width: 100%; border-collapse: collapse; font-size: .76rem; }
+  .tab-mock-body th { background: var(--surface-alt); color: var(--ink-soft); text-align: left; padding: 6px 10px; font-weight: 700; white-space: nowrap; }
+  .tab-mock-body td { padding: 6px 10px; border-top: 1px solid var(--line); white-space: nowrap; }
+  .tab-mock-body tr.milestone { background: var(--warn-bg); }
+  .beta-tag { display: inline-flex; align-items: center; gap: 4px; font-size: .68rem; font-weight: 700; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); border-radius: 100px; padding: 2px 10px; }
+
+  .footnote { font-size: .74rem; color: var(--ink-soft); border-top: 1px solid var(--line); padding-top: 16px; margin-top: 8px; line-height: 1.8; }
+
+  @media (max-width: 640px) {
+    .g-mock .g-namehead, .g-mock .g-name { width: 130px; flex-basis: 130px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="masthead">
+    <div class="eyebrow">操作手順書</div>
+    <h1>ガントチャートで予定を立てる手順書</h1>
+    <p>予定管理システムの新しいガントチャート画面を使って、自分のタスクを登録し、週間予定に反映するまでの手順をまとめました。実際の画面イメージを見ながら操作を確認できます。</p>
+  </div>
+
+  <!-- ================= 1. 全体の流れ ================= -->
+  <section class="sec">
+    <div class="sec-head"><span class="n">1</span><h2>全体の流れ</h2></div>
+    <div class="flow">
+      <div class="step">
+        <div class="num">STEP 1</div>
+        <div class="ttl">🌳 ガントチャートで登録</div>
+        <div class="desc">タスクにバー（期間）を描き、担当者・状態・進捗を設定して保存する。</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="num">STEP 2</div>
+        <div class="ttl">📊 ガントチャート反映</div>
+        <div class="desc">週間予定画面のボタン1つで、登録したタスクを自動で週間予定に配置する。</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="num">STEP 3</div>
+        <div class="ttl">📅 週間予定が完成</div>
+        <div class="desc">タスク・定例作業・イベントが自動配分された状態で1週間分の予定ができあがる。</div>
+      </div>
+    </div>
+    <div class="note-box"><strong>ポイント：</strong> 登録場所は「ガントチャート」、日々の実績・当日の作業配分は「週間予定」と役割が分かれています。まずガントチャートに登録してから、週間予定へ反映する順番を覚えておくと迷いません。</div>
+  </section>
+
+  <!-- ================= 2. ガントチャート画面を開く ================= -->
+  <section class="sec">
+    <div class="sec-head"><span class="n">2</span><h2>ガントチャート画面を開く</h2></div>
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body">メニューから <b>「ガントチャート」</b> を選択する。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body">画面上部のプルダウンで、<b>自分の名前が選択されている</b>ことを確認する（管理職・システム管理者は他の人に切り替え可能）。</div></div>
+      <div class="step-row"><div class="bullet">3</div><div class="body">画面左側に<b>タスクの一覧（親子ツリー）</b>、右側に<b>日付ごとのタイムライン</b>が表示される。</div></div>
+    </div>
+
+    <div class="mock">
+      <div class="mock-label">画面イメージ</div>
+      <div class="g-mock">
+        <div class="toolbar">
+          <span class="title">🌳 ガントチャート</span>
+          <span class="chip">👤 新名 洋幸 ▾</span>
+          <span class="btn-mock outline">◀ 前週</span>
+          <span class="btn-mock outline">今日基準</span>
+          <span class="btn-mock outline">次週 ▶</span>
+          <span class="chip ghost">☐ 完了案件も表示</span>
+          <span class="btn-mock">💾 保存</span>
+        </div>
+        <div class="g-head">
+          <div class="g-namehead">タスク（親子ツリー）／担当</div>
+          <div class="g-days">
+            <div class="g-day">28<br>火</div>
+            <div class="g-day weekend">29<br>水</div>
+            <div class="g-day">30<br>木</div>
+            <div class="g-day today">31<br>金</div>
+            <div class="g-day weekend">1<br>土</div>
+            <div class="g-day weekend">2<br>日</div>
+            <div class="g-day">3<br>月</div>
+          </div>
+        </div>
+        <div class="g-row parent">
+          <div class="g-name"><span class="indent">▾</span><span class="lbl">配筋システム開発</span><span class="people">👤4</span></div>
+          <div class="g-track">
+            <div class="cell"></div><div class="cell weekend"></div><div class="cell"></div><div class="cell today"></div><div class="cell weekend"></div><div class="cell weekend"></div><div class="cell"></div>
+          </div>
+        </div>
+        <div class="g-row">
+          <div class="g-name"><span class="indent">└</span><span class="lbl">開口補強ルール追加</span><span class="people">👤1</span></div>
+          <div class="g-track">
+            <div class="cell"></div><div class="cell weekend"></div><div class="cell"></div><div class="cell today"></div><div class="cell weekend"></div><div class="cell weekend"></div><div class="cell"></div>
+            <div class="bar new" style="left: calc(14.28% * 2); width: calc(14.28% * 4);"><div class="fill" style="width:35%"></div><span>着手 35%</span></div>
+          </div>
+        </div>
+        <div class="g-row">
+          <div class="g-name"><span class="indent">└</span><span class="lbl">動作検証・調整</span><span class="people">👤1</span></div>
+          <div class="g-track">
+            <div class="cell"></div><div class="cell weekend"></div><div class="cell"></div><div class="cell today"></div><div class="cell weekend"></div><div class="cell weekend"></div><div class="cell"></div>
+          </div>
+        </div>
+        <div class="g-row">
+          <div class="g-name"><span class="indent"></span><span class="lbl" style="color:#94a3b8;">（ここに入力して Enter）</span></div>
+          <div class="g-track">
+            <div class="cell"></div><div class="cell weekend"></div><div class="cell"></div><div class="cell today"></div><div class="cell weekend"></div><div class="cell weekend"></div><div class="cell"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 3. 新しいタスクを追加する ================= -->
+  <section class="sec">
+    <div class="sec-head"><span class="n">3</span><h2>新しいタスクを追加する</h2></div>
+
+    <div class="emphasis-box">
+      <div class="em-head">⚠ 親タスク（大項目）の新規追加について</div>
+      <div class="em-body"><strong>親タスク（大項目）の新規追加は管理職以上のみ可能です。</strong>一般の担当者は、既存の親タスクの下に子タスクを追加する形で登録してください。新しい親を追加してほしい場合は、上司・管理職に依頼してください。</div>
+    </div>
+    <div class="emphasis-box">
+      <div class="em-head">⚠ 保存を忘れずに</div>
+      <div class="em-body">担当者・状態・進捗の設定を終えたら、<strong>必ず画面上部の 💾 保存 ボタンを押してください。</strong>オレンジ色の枠が付いている行は「未保存」の状態です。保存し忘れたまま画面を閉じようとすると警告が表示されます。</div>
+    </div>
+
+    <h3 style="font-size:.94rem;margin:0 0 10px;">3-1. ＋ボタンで追加する（推奨）</h3>
+    <p style="font-size:.86rem;color:var(--ink-soft);line-height:1.7;margin-top:-4px;">一番下まで探しに行かなくても、<b>既存のどの行からでも「＋」ボタンで、その行のすぐ下に新しいタスクを挿入</b>できます。子タスクを1件だけ追加したい、途中に差し込みたい、というときに便利です。</p>
+
+    <div class="mock">
+      <div class="mock-label">画面イメージ（行の操作ボタン）</div>
+      <div class="g-mock">
+        <div class="g-row">
+          <div class="g-name">
+            <span class="op"><span class="drag">⠿</span><button>＜</button><button>＞</button><button class="hl">＋</button><button class="del">×</button></span>
+            <span class="indent">└</span><span class="lbl">開口補強ルール追加</span><span class="people">👤1</span>
+          </div>
+          <div class="g-track"><div class="cell"></div><div class="cell weekend"></div><div class="cell"></div><div class="cell today"></div><div class="cell weekend"></div><div class="cell weekend"></div><div class="cell"></div></div>
+        </div>
+        <div class="g-row">
+          <div class="g-name" style="background:#fffbeb;">
+            <span class="op"><span class="drag">⠿</span><button>＜</button><button>＞</button><button>＋</button><button class="del">×</button></span>
+            <span class="indent">└</span><span class="input-mock">（新しい行が挿入される）<span class="caret"></span></span>
+          </div>
+          <div class="g-track"><div class="cell"></div><div class="cell weekend"></div><div class="cell"></div><div class="cell today"></div><div class="cell weekend"></div><div class="cell weekend"></div><div class="cell"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="note-box">＋ボタンで追加した行は、<strong>クリックした行と同じ階層（レベル）</strong>で挿入されます。子タスクの並びの途中に差し込んだ場合も、その子タスクの兄弟として追加されます。</div>
+
+    <h3 style="font-size:.94rem;margin:24px 0 10px;">3-2. 一番下の空欄から追加する</h3>
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body">既存の親タスク（大項目）の配下にある、<b>一番下の空欄行</b>を探す。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body"><b>タスク名を入力</b>して <b>Enter</b> を押す。入力した行の直後に、新しい空欄行が自動で用意される。</div></div>
+      <div class="step-row"><div class="bullet">3</div><div class="body">右側のタイムライン上で、開始日の位置から終了日の位置まで<b>左→右にドラッグ</b>してバーを描く。</div></div>
+      <div class="step-row"><div class="bullet">4</div><div class="body"><b>👤（人のマーク）</b>ボタンで担当者にチェックを入れる。</div></div>
+    </div>
+
+    <div class="mock">
+      <div class="mock-label">画面イメージ（タスク名を入力している状態）</div>
+      <div class="g-mock">
+        <div class="g-row">
+          <div class="g-name"><span class="indent">└</span><span class="input-mock">断面図・加工図出力調整<span class="caret"></span></span></div>
+          <div class="g-track">
+            <div class="cell"></div><div class="cell weekend"></div><div class="cell"></div><div class="cell today"></div><div class="cell weekend"></div><div class="cell weekend"></div><div class="cell"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mock">
+      <div class="mock-label">画面イメージ（ドラッグでバーを描いた直後）</div>
+      <div class="g-mock">
+        <div class="g-row">
+          <div class="g-name"><span class="indent">└</span><span class="lbl">断面図・加工図出力調整</span><span class="people none" style="background:#f8fafc;color:#94a3b8;border-color:#e2e8f0;">👤0</span></div>
+          <div class="g-track">
+            <div class="cell"></div><div class="cell weekend"></div><div class="cell"></div><div class="cell today"></div><div class="cell weekend"></div><div class="cell weekend"></div><div class="cell"></div>
+            <div class="bar new" style="left: calc(14.28% * 3); width: calc(14.28% * 3);"><span>未着手 0%</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="font-size:.94rem;margin:24px 0 10px;">3-3. タスクの移動（順番の入れ替え）</h3>
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body">行左の <b>⠿</b> を<b>上下にドラッグ</b>すると、その行を好きな位置へ移動できる。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body">移動中は、移動先の位置に薄い挿入ラインが表示される。</div></div>
+      <div class="step-row"><div class="bullet">3</div><div class="body">マウスを離すと、その位置に移動が確定する。</div></div>
+    </div>
+    <div class="emphasis-box">
+      <div class="em-head">⚠ 移動時の注意点</div>
+      <div class="em-body">
+        <strong>親タスクを移動すると、その配下の子タスクもまとめて一緒に移動します。</strong>子タスクだけを個別に切り離して移動することはできません。<br><br>
+        また、<strong>移動先によっては、階層（親子関係）が自動的に変わる（グループ化される）</strong>ことがあります。移動した行の階層は「移動先の直前の行」を基準に決まるため、ある親タスクのすぐ下に移動すると、そのまま<strong>その親の子タスクとして扱われます。</strong>移動後は、階層がおかしくなっていないか必ず確認してください。
+      </div>
+    </div>
+    <div class="move-diagram">
+      <div class="tree-box">
+        <div class="lv0">▾ 配筋システム開発</div>
+        <div class="lv1">└ 開口補強ルール追加</div>
+        <div class="lv1">└ 動作検証・調整</div>
+        <div class="lv0">▾ ITインフラ</div>
+        <div class="lv1 moved">└ 3辺桝（移動前：単独タスク）</div>
+      </div>
+      <div class="diagram-arrow">⠿ 移動 →</div>
+      <div class="tree-box">
+        <div class="lv0">▾ 配筋システム開発</div>
+        <div class="lv1">└ 開口補強ルール追加</div>
+        <div class="lv1">└ 動作検証・調整</div>
+        <div class="lv1 moved">└ 3辺桝（移動後：配筋システム開発の子に）</div>
+        <div class="lv0">▾ ITインフラ</div>
+      </div>
+    </div>
+
+    <h3 style="font-size:.94rem;margin:24px 0 10px;">3-4. タスクの削除</h3>
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body">削除したい行の <b>×</b> ボタンをクリックする。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body">内容が入っている行の場合、確認ダイアログが表示されるので「OK」を押す。</div></div>
+    </div>
+    <div class="emphasis-box">
+      <div class="em-head">⚠ 削除時の注意点</div>
+      <div class="em-body"><strong>子タスクを持つ行（親）を削除すると、配下の子タスクもすべて一緒に削除されます。</strong>「このタスクと子タスクを削除しますか？」という確認メッセージが出た場合は、子タスクも道連れになることを意味します。子タスクだけ残したい場合は、先に子タスクを別の親の下へ移動してから削除してください。</div>
+    </div>
+
+    <h3 style="font-size:.94rem;margin:24px 0 10px;">3-5. タスクの子の設定と世代（階層）</h3>
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body"><b>＞</b> ボタンで、<b>1つ上の行の子タスク</b>にする（字下げ）。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body"><b>＜</b> ボタンで、<b>親レベルに戻す</b>（字上げ）。</div></div>
+      <div class="step-row"><div class="bullet">3</div><div class="body">階層は最大4世代まで作成できる。</div></div>
+    </div>
+    <div class="status-grid">
+      <div class="item"><b>第1世代（親）</b><div class="desc">大項目。管理職以上のみ作成・編集可。担当者ではなく「メンバー（関係者）」を設定する。</div></div>
+      <div class="item"><b>第2世代（子）</b><div class="desc">実際の作業単位。担当者（1〜2名以上）を設定してバーを描く、一般的な入力対象。</div></div>
+      <div class="item"><b>第3世代（孫）</b><div class="desc">子タスクをさらに細分化したい場合に使用。</div></div>
+      <div class="item"><b>第4世代（曾孫）</b><div class="desc">最も細かい階層。通常はここまで分ける必要は少ない。</div></div>
+    </div>
+    <div class="note-box">＜／＞ボタンは、<b>直前の行より深い階層にはできない</b>（いきなり孫を作ることはできず、必ず1段階ずつ字下げする）ようになっています。ボタンが押せない（灰色）場合は、それ以上字下げ・字上げできないことを意味します。</div>
+
+    <h3 style="font-size:.94rem;margin:24px 0 10px;">3-6. タスク詳細の説明</h3>
+    <p style="font-size:.86rem;color:var(--ink-soft);line-height:1.7;margin-top:-4px;">タスク行の右側（状態・進捗の表示部分）をクリックすると、詳細編集画面が開きます。</p>
+    <div class="mock">
+      <div class="mock-label">画面イメージ（タスク詳細・編集）</div>
+      <div class="detail-mock">
+        <div class="d-head">タスクの詳細・編集</div>
+        <div class="d-body">
+          <div class="d-fld"><label>タスク名</label><div class="val">開口補強ルール追加</div></div>
+          <div class="d-fld"><label>担当/メンバー</label><div class="val">早田</div></div>
+          <div class="d-fld"><label>開始日</label><div class="val">2026-07-28</div></div>
+          <div class="d-fld"><label>終了日</label><div class="val">2026-08-05</div></div>
+          <div class="d-fld"><label></label><div class="val danger-btn">ガントバーを削除</div></div>
+          <div class="d-fld"><label>状態</label><div class="val">着手</div></div>
+          <div class="d-fld"><label>進捗</label><div class="val">35 %</div></div>
+        </div>
+        <div class="d-foot"><span class="btn-mock outline">閉じる</span><span class="btn-mock">保存</span></div>
+      </div>
+    </div>
+    <p style="font-size:.86rem;color:var(--ink-soft);line-height:1.7;">この画面では、<b>タスクバーの削除・タスク名の変更・状態の変更・進捗の手入力・遅延日数の入力</b>を一括で行えます。「担当/メンバー」欄は表示のみで、変更はタスク行の👤ボタンから行います。</p>
+
+    <h3 style="font-size:.94rem;margin:24px 0 10px;">3-7. タスクバーの削除・タスク名変更・状態変更</h3>
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body"><b>タスクバーの削除</b>：詳細編集画面の「ガントバーを削除」ボタンを押すか、開始日・終了日を両方空にして保存する。バーが消え、状態・進捗は自動的に「未着手・0%」に揃う。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body"><b>タスク名の変更</b>：詳細編集画面の「タスク名」欄、またはタスク行の入力欄を直接書き換える。</div></div>
+      <div class="step-row"><div class="bullet">3</div><div class="body"><b>状態の変更</b>：詳細編集画面の「状態」プルダウンから選択する。</div></div>
+    </div>
+
+    <h3 style="font-size:.94rem;margin:24px 0 10px;">3-8. 状態の意味</h3>
+    <div class="status-grid">
+      <div class="item"><span class="status-badge" style="background:#f1f5f9;color:#475569;"><span class="dot" style="background:#9ca3af;"></span>未着手</span><div class="desc">進捗は 0% 固定。まだ手を付けていない状態。</div></div>
+      <div class="item"><span class="status-badge" style="background:#eff6ff;color:#1d4ed8;"><span class="dot" style="background:#60a5fa;"></span>着手</span><div class="desc">進捗（%）を手入力する。バードラッグでの調整もこの状態になる。</div></div>
+      <div class="item"><span class="status-badge" style="background:#ecfdf5;color:#047857;"><span class="dot" style="background:#34d399;"></span>順調</span><div class="desc">進捗は経過日数から自動計算される（期間の何%が経過したか）。</div></div>
+      <div class="item"><span class="status-badge" style="background:#fef2f2;color:#b91c1c;"><span class="dot" style="background:#f87171;"></span>遅れ</span><div class="desc">遅延日数を入力すると、経過日数から遅延分を差し引いて進捗を自動計算する。</div></div>
+      <div class="item"><span class="status-badge" style="background:#ecfdf5;color:#047857;"><span class="dot" style="background:#10b981;"></span>完了</span><div class="desc">進捗は 100% 固定。通常表示では一覧から自動的に消える。</div></div>
+      <div class="item"><span class="status-badge" style="background:#f1f5f9;color:#475569;"><span class="dot" style="background:#9ca3af;"></span>停止</span><div class="desc">進捗（%）を手入力できる。作業を一時中断している状態。</div></div>
+    </div>
+
+    <h3 style="font-size:.94rem;margin:24px 0 10px;">3-9. ドラッグで直接進捗調整</h3>
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body">タスクバーの<b>右端付近にカーソルを合わせ、左右にドラッグ</b>すると、進捗（塗りつぶし部分）を直接調整できる。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body">ドラッグで進捗を調整すると、状態は自動的に<b>「着手」</b>に切り替わる（「停止」の場合は「停止」のまま）。</div></div>
+      <div class="step-row"><div class="bullet">3</div><div class="body">以後、この行は入力した進捗値が優先され、経過日数からの自動計算には戻らない。</div></div>
+    </div>
+    <div class="mock">
+      <div class="mock-label">画面イメージ（進捗バーをドラッグ調整）</div>
+      <div class="g-mock">
+        <div class="g-row">
+          <div class="g-name"><span class="indent">└</span><span class="lbl">開口補強ルール追加</span><span class="people">👤1</span></div>
+          <div class="g-track">
+            <div class="cell"></div><div class="cell weekend"></div><div class="cell"></div><div class="cell today"></div><div class="cell weekend"></div><div class="cell weekend"></div><div class="cell"></div>
+            <div class="bar" style="left: calc(14.28% * 0); width: calc(14.28% * 7);"><div class="fill" style="width:60%"></div><span>着手 60%</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ================= 4. 定例作業・イベントを登録する ================= -->
+  <section class="sec">
+    <div class="sec-head"><span class="n">4</span><h2>定例作業・イベントを登録する</h2></div>
+    <p style="font-size:.86rem;color:var(--ink-soft);line-height:1.7;margin-top:-6px;">「タスク管理」画面の <b>「定例作業」タブ</b> と <b>「イベント」タブ</b> も、新しいガントチャートの導入に合わせて新しくなりました。ガントチャート画面とは別の画面ですが、あわせて登録しておくと週間予定への反映がより正確になります。</p>
+
+    <h3 style="font-size:.94rem;margin:20px 0 10px;">4-1. 定例作業</h3>
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body">メニューの「タスク管理」から <b>「定例作業」</b> タブを開く。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body"><b>「＋ 定例追加」</b>ボタンを押し、作業名・工数（時間）・区分（午前／午後）・曜日・詰め方向を入力して登録する。</div></div>
+      <div class="step-row"><div class="bullet">3</div><div class="body">登録した定例作業は一覧に表示される。不要になったら行右端の「✕」で削除する。</div></div>
+    </div>
+    <div class="mock">
+      <div class="mock-label">画面イメージ（定例作業タブ）</div>
+      <div class="tab-mock-head">🔁 定例 <span class="tag">ガントチャート対象外・反映で定例行をキープ</span></div>
+      <div class="tab-mock-body">
+        <table>
+          <tr><th>行</th><th>作業名</th><th>曜日</th><th>工数h</th><th>詰め方向</th><th></th></tr>
+          <tr><td>AM1</td><td>朝礼・メール確認</td><td>月 火 水 木 金</td><td>0.5h</td><td>上から</td><td>✕</td></tr>
+          <tr><td>PM5</td><td>日報作成</td><td>月 火 水 木 金</td><td>0.5h</td><td>下から</td><td>✕</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="note-box">定例作業は<strong>ガントチャートの対象外</strong>です。週間予定への「ガントチャート反映」を行っても、登録した定例作業の行はクリアされずそのまま残ります（優先的に空きスロットへ配置されます）。</div>
+
+    <h3 style="font-size:.94rem;margin:24px 0 10px;">4-2. イベント <span class="beta-tag">⚠ 検証不十分</span></h3>
+    <div class="emphasis-box">
+      <div class="em-head">⚠ イベント登録機能は現在検証が十分ではありません</div>
+      <div class="em-body">画面としては用意されていますが、動作の確認がまだ十分にできていません。<strong>会議・打合せなど日時の決まった予定は、当面は今まで通りの方法（週間予定への直接入力など）で管理してください。</strong>不具合や想定と違う動きに気づいた場合は、担当（新名）まで連絡してください。</div>
+    </div>
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body">メニューの「タスク管理」から <b>「イベント」</b> タブを開く。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body">イベント名を入力し、カレンダーで開催日を選択する（複数日にまたがる場合は「複数日」にチェック）。</div></div>
+      <div class="step-row"><div class="bullet">3</div><div class="body">関係者・開始時刻・所要時間（30分／1h／1.5h／2h／半日ボタン）・終了時刻を設定する。</div></div>
+      <div class="step-row"><div class="bullet">4</div><div class="body">時刻を指定しない「マイルストーン（MS）」として登録することもできる。</div></div>
+      <div class="step-row"><div class="bullet">5</div><div class="body">「追加」ボタンで登録する。一覧から自分が関係者になっているイベントのみ編集・削除できる。</div></div>
+    </div>
+    <div class="mock">
+      <div class="mock-label">画面イメージ（イベントタブ）</div>
+      <div class="tab-mock-head event">📅 イベント <span class="tag">β・検証中</span></div>
+      <div class="tab-mock-body">
+        <table>
+          <tr><th>イベント名</th><th>関係者</th><th>開始日</th><th>終了日</th><th>MS</th><th>開始時刻</th><th>終了時刻</th><th></th></tr>
+          <tr><td>月次会議</td><td>👤3</td><td>2026-08-03</td><td>2026-08-03</td><td></td><td>10:00</td><td>11:00</td><td>✕</td></tr>
+          <tr class="milestone"><td>納品期限</td><td>👤1</td><td>2026-08-07</td><td>2026-08-07</td><td>✓</td><td>--</td><td>--</td><td>✕</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 5. 週間予定へ反映する ================= -->
+  <section class="sec">
+    <div class="sec-head"><span class="n">5</span><h2>週間予定へ反映する（ガントチャート反映）</h2></div>
+    <p style="font-size:.86rem;color:var(--ink-soft);line-height:1.7;margin-top:-6px;">ガントチャートに登録しただけでは、日々の週間予定（実績入力画面）には自動で反映されません。反映するには以下の操作が必要です。</p>
+
+    <div class="step-list">
+      <div class="step-row"><div class="bullet">1</div><div class="body">メニューから <b>「週間予定」</b> を開く。</div></div>
+      <div class="step-row"><div class="bullet">2</div><div class="body">反映したい週（<b>前週・次週など、当週以外</b>）を表示する。</div></div>
+      <div class="step-row"><div class="bullet">3</div><div class="body"><b>「📊 ガントチャート反映」</b>ボタンを押す。</div></div>
+      <div class="step-row"><div class="bullet">4</div><div class="body">確認ダイアログの内容を確認し、<b>「反映」</b>を押す。</div></div>
+    </div>
+
+    <div class="mock">
+      <div class="mock-label">画面イメージ（週間予定画面のボタン）</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;padding:10px;background:#fff;border:1px solid #cbd5e1;border-radius:6px;">
+        <span class="btn-mock outline">◀ 前週</span>
+        <span class="btn-mock outline">次週 ▶</span>
+        <span class="btn-mock">📊 ガントチャート反映</span>
+        <span class="btn-mock disabled" title="当週は使用不可">📊 ガントチャート反映（当週は使用不可）</span>
+      </div>
+    </div>
+
+    <div class="mock">
+      <div class="mock-label">画面イメージ（確認ダイアログ）</div>
+      <div class="modal-mock">
+        <div class="m-head"><span>ガントチャート反映</span><span>✕</span></div>
+        <div class="m-body">
+          ガントチャートに登録した期間をもとに自動取込します。
+          <ul>
+            <li>担当者（1または2）にログインユーザーが設定されているタスク</li>
+            <li>ガントの登録期間（開始日〜終了日）が対象週と重なるもの（完了・停止除く）</li>
+            <li>定例作業を空きスロットへ上から詰めて先に配置</li>
+            <li>残りの空きにタスクをAM／PMへ均等配分</li>
+            <li>イベントも対象週のものを自動配置</li>
+            <li>新規登録タスクほど優先配置（ID 降順）</li>
+          </ul>
+          <div class="danger-box" style="margin-top:10px;">
+            <strong>⚠ 既存の取込タスク配置はクリアされ、最新タスクで再配置されます。</strong><br>
+            （手動入力したタスクには影響しません）
+          </div>
+        </div>
+        <div class="m-foot">
+          <span class="btn-mock outline">キャンセル</span>
+          <span class="btn-mock">反映</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="danger-box">
+      <strong>当週はガントチャート反映を使用できません。</strong> 実績入力中・進行中の作業を壊さないための保護です。前週分の見直しや、来週以降の予定を立てるときに使ってください。
+    </div>
+    <div class="note-box">
+      反映すると、その週の「ガントチャート由来」の配置は一旦クリアされ、最新の内容で組み直されます。<strong>手動で直接入力したタスク（週間予定画面で直接書いたもの）には影響しません。</strong>反映後に時間配分を変えたい場合は、週間予定画面で直接編集できます。
+    </div>
+  </section>
+
+  <div class="footnote">
+    本資料は予定管理システムの新ガントチャート画面（親子ツリー方式）を対象にした操作手順書です。画面イメージは実際のレイアウトを再現した簡易モックアップです。不明点は上司または担当者（新名）まで確認してください。
+  </div>
+
+</div>
+</body>
+</html>

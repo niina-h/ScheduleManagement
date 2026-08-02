@@ -34,17 +34,26 @@
       </form>
 
       <div class="mt-3 text-center">
-        <a href="#" class="small text-secondary" id="show-init-pw-link">🔑 初回パスワードを設定する</a>
+        <a href="#" class="small text-secondary" id="show-init-pw-link">🔑 パスワードを設定する</a>
       </div>
 
-      {# ── 初回パスワード設定（未設定ユーザー向け） ── #}
+      {# ── パスワード設定（新規設定・変更の両方に対応） ── #}
       <div id="init-pw-section" style="display:none;" class="mt-3 border-top pt-3">
-        <p class="small text-muted mb-2">初めて利用する方は、ここでパスワードを設定してログインします。</p>
-        <form method="post" action="{{ url_for('auth.reset_password_and_login') }}" id="init-form">
+        <p class="small text-muted mb-2">
+          初めて利用する方はそのまま新しいパスワードを設定できます。<br>
+          既にパスワードを設定済みの方は、現在のパスワードも入力してください。
+        </p>
+        <div id="init-form-error" class="alert alert-danger py-2 small" style="display:none;"></div>
+        <form id="init-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <div class="mb-2">
             <input type="text" class="form-control form-control-sm" name="login_id"
                    id="init_login_id" placeholder="ログインID" autocomplete="username" required>
+          </div>
+          <div class="mb-2">
+            <input type="password" class="form-control form-control-sm" name="current_password"
+                   id="current_password" placeholder="現在のパスワード（未設定の方は空欄でOK）"
+                   maxlength="4" inputmode="numeric" pattern="[0-9]{4}" autocomplete="current-password">
           </div>
           <div class="mb-2">
             <input type="password" class="form-control form-control-sm" name="new_password"
@@ -88,6 +97,35 @@
     initSection.style.display = 'none';
     loginForm.style.display = '';
     showLink.parentElement.style.display = '';
+  });
+
+  // パスワード設定フォーム: エラー時は画面遷移せず、その場にメッセージを表示する。
+  var initForm = document.getElementById('init-form');
+  var initFormError = document.getElementById('init-form-error');
+  initForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    initFormError.style.display = 'none';
+    var submitBtn = initForm.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    fetch("{{ url_for('auth.reset_password_and_login') }}", {
+      method: 'POST',
+      body: new FormData(initForm),
+    })
+      .then(function (r) { return r.json().then(function (data) { return { status: r.status, data: data }; }); })
+      .then(function (result) {
+        if (result.data && result.data.ok) {
+          window.location = result.data.redirect;
+        } else {
+          initFormError.textContent = (result.data && result.data.error) || '設定に失敗しました';
+          initFormError.style.display = '';
+          submitBtn.disabled = false;
+        }
+      })
+      .catch(function () {
+        initFormError.textContent = '通信エラーが発生しました。もう一度お試しください';
+        initFormError.style.display = '';
+        submitBtn.disabled = false;
+      });
   });
 })();
 </script>

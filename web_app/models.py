@@ -1087,6 +1087,42 @@ def get_daily_comment(user_id: int, date_str: str) -> dict:
     return {"reflection": "", "action": "", "admin_comment": "", "updated_at": "", "updated_by": ""}
 
 
+def get_latest_daily_comment(user_id: int, on_or_before: str) -> dict:
+    """指定日以前で、本人が振り返り・懸念事項を入力した直近の日次コメントを取得する。
+
+    週間予定画面などで「常に最新の実績入力日の振り返り」を表示するために使う。
+    reflection・action のどちらかが入力されている最新の日付のレコードを返す。
+    上長コメント（admin_comment）は、その日付に実際に入力されていなければ空文字のままにする
+    （振り返りは直近日を遡って拾うが、上長コメントは「その日」限定で見せるため）。
+
+    Args:
+        user_id: ユーザーID。
+        on_or_before: この日付（'YYYY-MM-DD'）以前を対象にする。通常は今日の日付。
+
+    Returns:
+        dict: {'date': str, 'reflection': str, 'action': str, 'admin_comment': str,
+               'updated_at': str, 'updated_by': str}。該当なしは date が空文字。
+    """
+    db = get_db()
+    row = db.execute(
+        "SELECT date, reflection, action, admin_comment, updated_at, updated_by "
+        "FROM daily_comment "
+        "WHERE user_id = ? AND date <= ? AND (reflection != '' OR action != '') "
+        "ORDER BY date DESC LIMIT 1",
+        (user_id, on_or_before),
+    ).fetchone()
+    if row:
+        return {
+            "date": row["date"],
+            "reflection": row["reflection"] or "",
+            "action": row["action"] or "",
+            "admin_comment": row["admin_comment"] or "",
+            "updated_at": row["updated_at"] or "",
+            "updated_by": row["updated_by"] or "",
+        }
+    return {"date": "", "reflection": "", "action": "", "admin_comment": "", "updated_at": "", "updated_by": ""}
+
+
 def get_comments_in_range(
     user_ids: list[int], start_date: str, end_date: str
 ) -> list[dict]:
@@ -2127,14 +2163,15 @@ def _normalize_progress(
     """状態に応じた進捗率の正規化。
 
     未着手→0、完了→100 のみ強制。
-    「順調」の場合は開始日・終了日・今日の日付から自動計算する。
-    それ以外はユーザー入力値をそのまま返す。
+    「順調」「着手」は開始日・終了日・今日の日付から自動計算する
+    （予定工数（planned_hours）が未設定のタスクでも進捗が0%のまま
+    止まらないようにするため）。それ以外（遅れ・停止）はユーザー入力値をそのまま返す。
 
     Args:
         status: タスク状態
         progress: ユーザーが入力した進捗率
-        start_date: 開始日（YYYY-MM-DD）。順調時の自動計算に使用。
-        end_date: 終了日（YYYY-MM-DD）。順調時の自動計算に使用。
+        start_date: 開始日（YYYY-MM-DD）。順調・着手時の自動計算に使用。
+        end_date: 終了日（YYYY-MM-DD）。順調・着手時の自動計算に使用。
 
     Returns:
         int: 正規化された進捗率
@@ -2143,7 +2180,7 @@ def _normalize_progress(
         return 0
     if status == "完了":
         return 100
-    if status == "順調" and start_date and end_date:
+    if status in ("順調", "着手") and start_date and end_date:
         return _calc_progress_by_date(start_date, end_date)
     return max(0, progress)
 
@@ -2321,6 +2358,10 @@ def get_all_project_tasks(
     event_member_match = (
         "(pt.is_event = 1 AND ',' || pt.event_member_ids || ',' LIKE '%,' || ? || ',%')"
     )
+    # 親タスク（担当者は持たず member_ids でメンバーを管理）も、そのメンバーに
+    # 該当ユーザーが含まれていれば可視対象とする（user_ids によるスコープ絞り込み時のみ。
+    # assigned_to 単体指定は「自分の担当タスク一覧」用途のため対象外とする）。
+    member_match = "(',' || pt.member_ids || ',' LIKE '%,' || ? || ',%')"
     params: tuple = ()
     if assigned_to is not None:
         query += f"WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ? OR {event_member_match}) "
@@ -2328,13 +2369,14 @@ def get_all_project_tasks(
     elif user_ids is not None and len(user_ids) > 0:
         placeholders = ",".join("?" * len(user_ids))
         event_member_conds = " OR ".join([event_member_match] * len(user_ids))
+        member_conds = " OR ".join([member_match] * len(user_ids))
         query += (
             f"WHERE (pt.assigned_to IN ({placeholders})"
             f" OR pt.assigned_to_2 IN ({placeholders})"
             f" OR ({event_member_conds})"
-            f" OR pt.assigned_to IS NULL) "
+            f" OR ({member_conds})) "
         )
-        params = tuple(user_ids) * 2 + tuple(user_ids)
+        params = tuple(user_ids) * 2 + tuple(user_ids) + tuple(user_ids)
     query += "ORDER BY tc.display_order, tc.name, ts.display_order, ts.name, pt.display_order, pt.task_name"
     rows = db.execute(query, params).fetchall()
     return [dict(r) for r in rows]
@@ -2366,6 +2408,25 @@ def set_project_task_members(task_id: int, member_ids: str) -> None:
     db.execute(
         "UPDATE project_task SET member_ids = ? WHERE id = ?",
         (member_ids, task_id),
+    )
+    db.commit()
+
+
+def clear_project_task_assigned_to(task_id: int) -> None:
+    """タスクの担当者（assigned_to/assigned_to_2/assigned_ids）をクリアする。
+
+    単独タスクとして作成された後、子タスクの追加によって事後的に親化した
+    タスクに残存する担当者情報を、そのタスク自体を dirty 更新することなく
+    クリアするための専用処理（親はメンバーのみで担当者を持たない仕様のため）。
+
+    Args:
+        task_id: 対象タスクID。
+    """
+    db = get_db()
+    db.execute(
+        "UPDATE project_task SET assigned_to = NULL, assigned_to_2 = NULL, assigned_ids = '' "
+        "WHERE id = ?",
+        (task_id,),
     )
     db.commit()
 
@@ -2455,6 +2516,7 @@ def add_project_task(
     import_to_schedule_2: int = 1,
     event_member_ids: str = "",
     member_ids: str = "",
+    assigned_ids: str = "",
 ) -> int:
     """プロジェクトタスクを追加する。
 
@@ -2470,13 +2532,14 @@ def add_project_task(
         delay_days: 遅延日数
         created_by: 作成者ユーザーID
         updated_by: 更新者名
-        assigned_to: 担当者1ユーザーID
-        assigned_to_2: 担当者2ユーザーID
+        assigned_to: 担当者1ユーザーID（先頭2名の互換フィールド、assigned_idsと併用）
+        assigned_to_2: 担当者2ユーザーID（先頭2名の互換フィールド、assigned_idsと併用）
         is_milestone: マイルストーンフラグ（1=マイルストーン）
         is_event: イベントフラグ（1=イベント/会議）
         event_start_time: イベント開始時刻（HH:MM形式）
         event_end_time: イベント終了時刻（HH:MM形式）
         planned_hours: 予定工数（時間）
+        assigned_ids: 子タスクの担当者（2名以上対応、カンマ区切りユーザーID）
 
     Returns:
         int: 新規タスクID
@@ -2493,13 +2556,13 @@ def add_project_task(
         " is_milestone, start_date, end_date, status, delay_days, progress, "
         " display_order, created_by, updated_by, "
         " is_event, event_start_time, event_end_time, planned_hours, "
-        " import_to_schedule_1, import_to_schedule_2, event_member_ids, member_ids) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " import_to_schedule_1, import_to_schedule_2, event_member_ids, member_ids, assigned_ids) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (category_id, subcategory_id, task_name, description, assigned_to, assigned_to_2,
          is_milestone, start_date, end_date, status, delay_days, calc_progress,
          max_order + 1, created_by, updated_by,
          is_event, event_start_time, event_end_time, planned_hours,
-         import_to_schedule_1, import_to_schedule_2, event_member_ids, member_ids),
+         import_to_schedule_1, import_to_schedule_2, event_member_ids, member_ids, assigned_ids),
     )
     db.commit()
     return cur.lastrowid
@@ -2527,6 +2590,7 @@ def update_project_task(
     import_to_schedule_1: int = 1,
     import_to_schedule_2: int = 1,
     event_member_ids: str = "",
+    assigned_ids: str | None = None,
 ) -> None:
     """プロジェクトタスクを更新する。
 
@@ -2542,32 +2606,52 @@ def update_project_task(
         progress: 進捗率（手動指定時）
         delay_days: 遅延日数
         updated_by: 更新者名
-        assigned_to: 担当者1ユーザーID
-        assigned_to_2: 担当者2ユーザーID
+        assigned_to: 担当者1ユーザーID（先頭2名の互換フィールド、assigned_idsと併用）
+        assigned_to_2: 担当者2ユーザーID（先頭2名の互換フィールド、assigned_idsと併用）
         is_milestone: マイルストーンフラグ（1=マイルストーン）
         is_event: イベントフラグ（1=イベント/会議）
         event_start_time: イベント開始時刻（HH:MM形式）
         event_end_time: イベント終了時刻（HH:MM形式）
         planned_hours: 予定工数（時間）
+        assigned_ids: 子タスクの担当者（2名以上対応、カンマ区切りユーザーID）。
+            None の場合は既存値を変更しない（呼び出し元の大半が未対応のため）。
     """
     db = get_db()
     calc_progress = _normalize_progress(status, progress, start_date, end_date)
-    db.execute(
-        "UPDATE project_task SET "
-        "category_id=?, subcategory_id=?, task_name=?, description=?, "
-        "assigned_to=?, assigned_to_2=?, is_milestone=?, start_date=?, end_date=?, "
-        "status=?, delay_days=?, progress=?, "
-        "is_event=?, event_start_time=?, event_end_time=?, planned_hours=?, "
-        "import_to_schedule_1=?, import_to_schedule_2=?, event_member_ids=?, "
-        "updated_at=datetime('now','localtime'), updated_by=? "
-        "WHERE id=?",
-        (category_id, subcategory_id, task_name, description,
-         assigned_to, assigned_to_2, is_milestone, start_date, end_date,
-         status, delay_days, calc_progress,
-         is_event, event_start_time, event_end_time, planned_hours,
-         import_to_schedule_1, import_to_schedule_2, event_member_ids,
-         updated_by, task_id),
-    )
+    if assigned_ids is None:
+        db.execute(
+            "UPDATE project_task SET "
+            "category_id=?, subcategory_id=?, task_name=?, description=?, "
+            "assigned_to=?, assigned_to_2=?, is_milestone=?, start_date=?, end_date=?, "
+            "status=?, delay_days=?, progress=?, "
+            "is_event=?, event_start_time=?, event_end_time=?, planned_hours=?, "
+            "import_to_schedule_1=?, import_to_schedule_2=?, event_member_ids=?, "
+            "updated_at=datetime('now','localtime'), updated_by=? "
+            "WHERE id=?",
+            (category_id, subcategory_id, task_name, description,
+             assigned_to, assigned_to_2, is_milestone, start_date, end_date,
+             status, delay_days, calc_progress,
+             is_event, event_start_time, event_end_time, planned_hours,
+             import_to_schedule_1, import_to_schedule_2, event_member_ids,
+             updated_by, task_id),
+        )
+    else:
+        db.execute(
+            "UPDATE project_task SET "
+            "category_id=?, subcategory_id=?, task_name=?, description=?, "
+            "assigned_to=?, assigned_to_2=?, is_milestone=?, start_date=?, end_date=?, "
+            "status=?, delay_days=?, progress=?, "
+            "is_event=?, event_start_time=?, event_end_time=?, planned_hours=?, "
+            "import_to_schedule_1=?, import_to_schedule_2=?, event_member_ids=?, assigned_ids=?, "
+            "updated_at=datetime('now','localtime'), updated_by=? "
+            "WHERE id=?",
+            (category_id, subcategory_id, task_name, description,
+             assigned_to, assigned_to_2, is_milestone, start_date, end_date,
+             status, delay_days, calc_progress,
+             is_event, event_start_time, event_end_time, planned_hours,
+             import_to_schedule_1, import_to_schedule_2, event_member_ids, assigned_ids,
+             updated_by, task_id),
+        )
     db.commit()
 
 
@@ -2657,6 +2741,10 @@ def import_tasks_to_weekly_schedule(
     各曜日（月〜金）について、その日を含む期間のタスクをAM/PMに均等配分して配置する。
     定例予約行はスキップする。配置順は ID 降順（新規登録タスクほど優先）。
 
+    子タスクに直接の親（parent_task_id）が設定されている場合、週間予定に表示する
+    タスク名は「親タスク名　子タスク名」の形式にする（どの大項目の作業か一目で
+    わかるようにするため）。親を持たない単独タスクは子タスク名のみ。
+
     Args:
         user_id: ユーザーID
         week_start: 週開始日（YYYY-MM-DD形式）
@@ -2688,11 +2776,12 @@ def import_tasks_to_weekly_schedule(
     # 担当者ごとの「予定反映」フラグ (import_to_schedule_1 / import_to_schedule_2) を考慮:
     #   担当1としての対象は import_to_schedule_1=1 のとき
     #   担当2としての対象は import_to_schedule_2=1 のとき
-    rows = db.execute(
+    raw_rows = db.execute(
         "SELECT pt.id, pt.task_name, COALESCE(ts.name,'') AS subcategory_name,"
-        "       pt.start_date, pt.end_date "
+        "       pt.start_date, pt.end_date, pp.task_name AS parent_task_name "
         "FROM project_task pt "
         "LEFT JOIN task_subcategory ts ON ts.id = pt.subcategory_id "
+        "LEFT JOIN project_task pp ON pp.id = pt.parent_task_id "
         "WHERE ((pt.assigned_to = ? AND pt.import_to_schedule_1 = 1)"
         "    OR (pt.assigned_to_2 = ? AND pt.import_to_schedule_2 = 1)) "
         "  AND pt.is_event = 0 "
@@ -2701,10 +2790,24 @@ def import_tasks_to_weekly_schedule(
         "ORDER BY pt.id DESC",
         (user_id, user_id, week_end, week_start),
     ).fetchall()
+    # 週間予定に表示するタスク名は「親タスク名　子タスク名」の形式にする
+    # （直接の親のみを前置きし、どの大項目の作業か一目でわかるようにする）。
+    # 元の子タスク名（親名を付ける前）は、旧形式で手動入力されたスロットの
+    # クリア判定にも使うため別途保持する。
+    rows = []
+    original_names: set[str] = set()
+    for r in raw_rows:
+        row = dict(r)
+        original_names.add(row["task_name"])
+        parent_name = row.pop("parent_task_name", None)
+        if parent_name:
+            row["task_name"] = f"{parent_name}　{row['task_name']}"
+        rows.append(row)
 
     # 取込対象タスクの task_name と一致する手動入力スロットもクリア
     # （過去に手動でタスク名を入力したスロットが「空き」とみなされず、
-    #   後ろに並んだタスクが配置できなくなる事象を防ぐ）
+    #   後ろに並んだタスクが配置できなくなる事象を防ぐ）。新形式（親名付き）・
+    #   旧形式（子タスク名のみ）の両方をクリア対象にする。
     # ただし定例スケジュールと同名のスロットはクリアしない
     # （定例は先に配置済みのため、タスク名一致で誤って消さないよう除外する）
     if rows:
@@ -2714,6 +2817,9 @@ def import_tasks_to_weekly_schedule(
         target_names: set[str] = {
             r["task_name"] for r in rows
             if r["task_name"] and r["task_name"] not in routine_names
+        }
+        target_names |= {
+            n for n in original_names if n and n not in routine_names
         }
         if target_names:
             name_placeholders = ",".join("?" * len(target_names))
@@ -3435,10 +3541,13 @@ def import_migration_excel(
 
 
 def get_task_progress_summary(user_id: int | None = None) -> dict:
-    """指定ユーザーのプロジェクトタスク進捗サマリーを取得する。
+    """指定ユーザーのプロジェクトタスク進捗サマリーを取得する（新ガント構造の親基準で並び替え）。
 
     既存の get_all_project_tasks を利用してタスクを取得し、
     Python 側でステータス別件数・遅延件数・平均進捗率を集計する。
+    タスク一覧（tasks）は、新ガントチャートの親タスク（parent_task_id）の
+    表示順（display_order）でグルーピングし、同じ親配下の子タスクをまとめて
+    並べる（メール本文の親子ツリー表示と同じ考え方）。
 
     Args:
         user_id: 集計対象のユーザーID。None の場合は全タスクを集計する。
@@ -3450,13 +3559,34 @@ def get_task_progress_summary(user_id: int | None = None) -> dict:
             - delayed_count (int): 遅延タスク数（status=="遅れ" or delay_days>0）
             - avg_progress (float): 平均進捗率（0.0〜100.0）
             - status_breakdown (dict[str, int]): ステータス別件数
-            - tasks (list[dict]): 個別タスク情報
+            - tasks (list[dict]): 個別タスク情報（親タスク基準で並び替え済み）
     """
     all_tasks: list[dict] = get_all_project_tasks(assigned_to=user_id)
     # イベント・マイルストーンを除外
     tasks: list[dict] = [
         t for t in all_tasks if not t.get("is_event", 0) and not t.get("is_milestone", 0)
     ]
+
+    # 親タスク（parent_task_id）の表示順を解決するため、親情報を別途取得する。
+    # user_id 絞り込みで親自身（担当者を持たない）は tasks に含まれないため、
+    # 全タスクから親の display_order・id のみを引く。
+    parent_ids: set[int] = {t["parent_task_id"] for t in tasks if t.get("parent_task_id")}
+    parent_order_map: dict[int, tuple] = {}
+    if parent_ids:
+        all_for_order: list[dict] = get_all_project_tasks()
+        for t in all_for_order:
+            if t["id"] in parent_ids:
+                parent_order_map[t["id"]] = (t.get("display_order") or 0, t["id"])
+
+    def _sortkey(t: dict) -> tuple:
+        pid = t.get("parent_task_id")
+        if pid and pid in parent_order_map:
+            # 同じ親配下は「親の表示順」でグルーピングし、親内では自分の表示順で並べる。
+            return parent_order_map[pid] + ((t.get("display_order") or 0), t["id"])
+        # 親を持たない（単独）タスクは自分の表示順そのまま。
+        return ((t.get("display_order") or 0), t["id"]) + (0, 0)
+
+    tasks.sort(key=_sortkey)
 
     # ステータス別件数を全ステータスキーで初期化
     status_breakdown: dict[str, int] = {s: 0 for s in PROJECT_TASK_STATUSES}
@@ -3493,88 +3623,233 @@ def get_task_progress_summary(user_id: int | None = None) -> dict:
     }
 
 
-def get_task_overview_summary() -> dict:
-    """管理者向けタスク全体俯瞰サマリーを取得する。
+def resolve_parent_progress(parent: dict, children: list[dict]) -> float:
+    """親タスク（新ガント構造）の進捗率を決定する。
 
-    全タスクを対象に、ステータス別件数・カテゴリ別集計・担当者別集計を生成する。
+    親自身にバー（start_date・end_date）が設定されていればその進捗値を優先し、
+    未設定なら配下の子タスクの進捗率の単純平均を使う（子も無ければ0）。
+
+    Args:
+        parent: 親タスク（project_task）の辞書。
+        children: 親に紐づく子タスクの一覧。
+
+    Returns:
+        float: 決定した進捗率（0〜100）。
+    """
+    has_bar: bool = bool((parent.get("start_date") or "").strip()
+                         and (parent.get("end_date") or "").strip())
+    if has_bar:
+        return float(parent.get("progress", 0) or 0)
+    if not children:
+        return 0.0
+    total = sum(float(c.get("progress", 0) or 0) for c in children)
+    return round(total / len(children), 1)
+
+
+def resolve_parent_status(parent: dict, children: list[dict]) -> str:
+    """親タスク（新ガント構造）の状態（バッジ表示）を決定する。
+
+    親自身にバー（start_date・end_date）が設定されていればその状態値を優先する。
+    未設定（見出し行のみ）の場合、子タスクの進捗を反映せず「未着手」に固定されて
+    しまう不具合を避けるため、配下の子タスクの状態から自動判定する。
+    優先順位：子に「遅れ」が1つでもあれば「遅れ」／全子が「完了」なら「完了」／
+    子に進捗>0または未着手以外の状態が1つでもあれば「着手」／それ以外は「未着手」。
+
+    Args:
+        parent: 親タスク（project_task）の辞書。
+        children: 親に紐づく子タスクの一覧。
+
+    Returns:
+        str: 決定した状態文字列。
+    """
+    has_bar: bool = bool((parent.get("start_date") or "").strip()
+                         and (parent.get("end_date") or "").strip())
+    if has_bar:
+        return parent.get("status") or "未着手"
+    if not children:
+        return parent.get("status") or "未着手"
+    child_statuses = [c.get("status") or "未着手" for c in children]
+    if any(s == "遅れ" for s in child_statuses):
+        return "遅れ"
+    if all(s == "完了" for s in child_statuses):
+        return "完了"
+    if any(s != "未着手" or float(c.get("progress", 0) or 0) > 0
+           for s, c in zip(child_statuses, children)):
+        return "着手"
+    return "未着手"
+
+
+def get_task_overview_summary() -> dict:
+    """管理者向けタスク全体俯瞰サマリーを取得する（新ガント構造ベース）。
+
+    新ガントチャートの親タスク（parent_task_id が無く、実際に子を持つタスク）を
+    「カテゴリー」の単位として集計する。子を持たない単独タスクは「その他」に
+    まとめる。親の進捗は、親自身にバー（開始日・終了日）が設定されていればその値、
+    未設定なら配下の子タスクの進捗率の単純平均を使う。
     管理職・マスタ向けダッシュボードで使用。
 
     Returns:
         dict: 以下のキーを持つ辞書。
-            - total_count (int): タスク総数
+            - total_count (int): タスク総数（親カテゴリー＋その他の単独タスク）
             - completed_count (int): 完了タスク数
             - delayed_count (int): 遅延タスク数
             - avg_progress (float): 平均進捗率
             - status_breakdown (dict[str, int]): ステータス別件数
-            - category_summary (list[dict]): カテゴリ別の件数・平均進捗
+            - category_summary (list[dict]): 親タスク（カテゴリー）別の件数・平均進捗
             - user_summary (list[dict]): 担当者別の件数・平均進捗
-            - tasks (list[dict]): 全タスク情報
+            - tasks (list[dict]): 全タスク情報（一覧表示用、親基準で並び替え済み）
     """
     all_tasks: list[dict] = get_all_project_tasks()
     # イベント・マイルストーンを除外（通常タスクのみ集計）
     tasks: list[dict] = [
         t for t in all_tasks if not t.get("is_event", 0) and not t.get("is_milestone", 0)
     ]
+    by_id: dict[int, dict] = {t["id"]: t for t in tasks}
+    children_map: dict[int, list[dict]] = {}
+    for t in tasks:
+        pid = t.get("parent_task_id")
+        if pid and pid in by_id:
+            children_map.setdefault(pid, []).append(t)
+
+    def _sortkey(t: dict) -> tuple:
+        return (t.get("display_order") or 0, (t.get("start_date") or "9999-99-99"), t["id"])
+
+    # ルート（親を持たないタスク）を「実際に子を持つか」で親カテゴリー／単独タスクに分ける。
+    roots: list[dict] = [t for t in tasks if not (t.get("parent_task_id") in by_id)]
+    parent_roots: list[dict] = [r for r in roots if children_map.get(r["id"])]
+    solo_roots: list[dict] = [r for r in roots if not children_map.get(r["id"])]
 
     status_breakdown: dict[str, int] = {s: 0 for s in PROJECT_TASK_STATUSES}
     completed_count: int = 0
     delayed_count: int = 0
     total_progress: float = 0.0
 
-    # カテゴリ別集計用
+    # カテゴリ別集計用（親タスク単位＋「その他」）
     cat_data: dict[str, dict] = {}
-    # 担当者別集計用
+    # 担当者別集計用（子・単独タスクの担当者ベース、親はメンバー全員に按分せず対象外）
     user_data: dict[str, dict] = {}
+    # 一覧表示用（親→子の順に並べ替えたタスク一覧）
+    ordered_tasks: list[dict] = []
 
-    for task in tasks:
-        status: str = task.get("status", "")
+    for parent in sorted(parent_roots, key=_sortkey):
+        kids = sorted(children_map.get(parent["id"], []), key=_sortkey)
+        cat_name = parent.get("task_name") or "（未分類）"
+        prog = resolve_parent_progress(parent, kids)
+        status = resolve_parent_status(parent, kids)
+        delay_days = parent.get("delay_days", 0) or 0
+
         if status in status_breakdown:
             status_breakdown[status] += 1
         if status == "完了":
             completed_count += 1
-        delay_days: int = task.get("delay_days", 0) or 0
         if status == "遅れ" or delay_days > 0:
             delayed_count += 1
-        prog: float = float(task.get("progress", 0) or 0)
         total_progress += prog
 
-        # カテゴリ別
-        cat_name: str = task.get("category_name") or "（未分類）"
-        if cat_name not in cat_data:
-            cat_data[cat_name] = {"name": cat_name, "count": 0, "progress_sum": 0.0,
-                                  "completed": 0, "delayed": 0}
-        cat_data[cat_name]["count"] += 1
-        cat_data[cat_name]["progress_sum"] += prog
+        cd = cat_data.setdefault(cat_name, {"name": cat_name, "count": 0, "progress_sum": 0.0,
+                                            "completed": 0, "delayed": 0})
+        cd["count"] += 1
+        cd["progress_sum"] += prog
         if status == "完了":
-            cat_data[cat_name]["completed"] += 1
+            cd["completed"] += 1
         if status == "遅れ" or delay_days > 0:
-            cat_data[cat_name]["delayed"] += 1
+            cd["delayed"] += 1
 
-        # 担当者別
-        user_name: str = task.get("assigned_name") or "（未割当）"
-        user_id_val: int | None = task.get("assigned_to")
-        if user_name not in user_data:
-            user_data[user_name] = {"name": user_name, "user_id": user_id_val,
-                                    "count": 0, "progress_sum": 0.0,
-                                    "completed": 0, "delayed": 0}
-        user_data[user_name]["count"] += 1
-        user_data[user_name]["progress_sum"] += prog
-        if status == "完了":
-            user_data[user_name]["completed"] += 1
-        if status == "遅れ" or delay_days > 0:
-            user_data[user_name]["delayed"] += 1
+        parent_row = dict(parent)
+        parent_row["progress"] = prog
+        parent_row["status"] = status
+        parent_row["category_name"] = cat_name
+        ordered_tasks.append(parent_row)
 
-    total_count: int = len(tasks)
+        for child in kids:
+            c_status: str = child.get("status", "")
+            c_delay: int = child.get("delay_days", 0) or 0
+            c_prog: float = float(child.get("progress", 0) or 0)
+
+            if c_status in status_breakdown:
+                status_breakdown[c_status] += 1
+            if c_status == "完了":
+                completed_count += 1
+            if c_status == "遅れ" or c_delay > 0:
+                delayed_count += 1
+            total_progress += c_prog
+
+            cd["count"] += 1
+            cd["progress_sum"] += c_prog
+            if c_status == "完了":
+                cd["completed"] += 1
+            if c_status == "遅れ" or c_delay > 0:
+                cd["delayed"] += 1
+
+            user_name: str = child.get("assigned_name") or "（未割当）"
+            user_id_val: int | None = child.get("assigned_to")
+            ud = user_data.setdefault(user_name, {"name": user_name, "user_id": user_id_val,
+                                                   "count": 0, "progress_sum": 0.0,
+                                                   "completed": 0, "delayed": 0})
+            ud["count"] += 1
+            ud["progress_sum"] += c_prog
+            if c_status == "完了":
+                ud["completed"] += 1
+            if c_status == "遅れ" or c_delay > 0:
+                ud["delayed"] += 1
+
+            child_row = dict(child)
+            child_row["category_name"] = cat_name
+            ordered_tasks.append(child_row)
+
+    if solo_roots:
+        cat_name = "その他"
+        cd = cat_data.setdefault(cat_name, {"name": cat_name, "count": 0, "progress_sum": 0.0,
+                                            "completed": 0, "delayed": 0})
+        for solo in sorted(solo_roots, key=_sortkey):
+            status = solo.get("status", "")
+            delay_days = solo.get("delay_days", 0) or 0
+            prog = float(solo.get("progress", 0) or 0)
+
+            if status in status_breakdown:
+                status_breakdown[status] += 1
+            if status == "完了":
+                completed_count += 1
+            if status == "遅れ" or delay_days > 0:
+                delayed_count += 1
+            total_progress += prog
+
+            cd["count"] += 1
+            cd["progress_sum"] += prog
+            if status == "完了":
+                cd["completed"] += 1
+            if status == "遅れ" or delay_days > 0:
+                cd["delayed"] += 1
+
+            user_name = solo.get("assigned_name") or "（未割当）"
+            user_id_val = solo.get("assigned_to")
+            ud = user_data.setdefault(user_name, {"name": user_name, "user_id": user_id_val,
+                                                   "count": 0, "progress_sum": 0.0,
+                                                   "completed": 0, "delayed": 0})
+            ud["count"] += 1
+            ud["progress_sum"] += prog
+            if status == "完了":
+                ud["completed"] += 1
+            if status == "遅れ" or delay_days > 0:
+                ud["delayed"] += 1
+
+            solo_row = dict(solo)
+            solo_row["category_name"] = cat_name
+            ordered_tasks.append(solo_row)
+
+    total_count: int = len(ordered_tasks)
     avg_progress: float = round(total_progress / total_count, 1) if total_count > 0 else 0.0
 
-    # カテゴリ別平均進捗を計算
+    # カテゴリ（親タスク）はガントチャートと同じ表示順（display_order）で並べる。
+    # cat_data は parent_roots を display_order 順にループして構築しているため、
+    # 辞書の挿入順（Python 3.7+ で保持される）がそのままガント表示順になる。
+    # 「その他」は単独タスクをまとめた特別枠のため常に末尾に固定する。
     category_summary: list[dict] = []
     for cd in cat_data.values():
         cd["avg_progress"] = round(cd["progress_sum"] / cd["count"], 1) if cd["count"] > 0 else 0.0
         category_summary.append(cd)
-    category_summary.sort(key=lambda x: x["name"])
+    category_summary.sort(key=lambda x: (x["name"] == "その他", ))
 
-    # 担当者別平均進捗を計算
     user_summary: list[dict] = []
     for ud in user_data.values():
         ud["avg_progress"] = round(ud["progress_sum"] / ud["count"], 1) if ud["count"] > 0 else 0.0
@@ -3589,7 +3864,7 @@ def get_task_overview_summary() -> dict:
         "status_breakdown": status_breakdown,
         "category_summary": category_summary,
         "user_summary": user_summary,
-        "tasks": tasks,
+        "tasks": ordered_tasks,
     }
 
 
@@ -4098,3 +4373,67 @@ def apply_routine_to_week(user_id: int, week_start: str, updated_by: str = "") -
                      r["subcategory_name"] or "", now, updated_by),
                 )
     db.commit()
+
+
+# ── ログイン時アンケート（ユーザー1人につき1回のみ回答） ──
+
+def has_answered_survey(user_id: int) -> bool:
+    """指定ユーザーがアンケートに回答済みかどうかを返す。
+
+    Args:
+        user_id: 対象ユーザーのID。
+
+    Returns:
+        bool: 回答済みであれば True。
+    """
+    db = get_db()
+    row = db.execute(
+        "SELECT 1 FROM user_survey WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return row is not None
+
+
+def save_survey_answer(
+    user_id: int,
+    usability: int,
+    merit: str,
+    demerit: str,
+    requested_feature: str,
+    recommend: str,
+    recommended_dept: str = "",
+) -> None:
+    """アンケートの回答を保存する（ユーザーごとに1回のみ、既存があれば無視）。
+
+    Args:
+        user_id: 回答者のユーザーID。
+        usability: 使いやすさの評価（1〜5）。
+        merit: メリットの自由記述。
+        demerit: デメリットの自由記述。
+        requested_feature: 希望機能の自由記述。
+        recommend: 他部署・他社への推奨可否（はい／いいえ／どちらとも言えない）。
+        recommended_dept: 特におすすめしたい部門の自由記述。
+    """
+    db = get_db()
+    db.execute(
+        "INSERT OR IGNORE INTO user_survey"
+        " (user_id, usability, merit, demerit, requested_feature, recommend, recommended_dept)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, usability, merit.strip(), demerit.strip(),
+         requested_feature.strip(), recommend, recommended_dept.strip()),
+    )
+    db.commit()
+
+
+def get_survey_answers() -> list[dict]:
+    """アンケート回答を回答者氏名付きで、回答日時の新しい順に取得する。
+
+    Returns:
+        list[dict]: 回答一覧（user_name, dept を含む）。
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT s.*, u.name AS user_name, u.dept AS dept"
+        " FROM user_survey s JOIN users u ON u.id = s.user_id"
+        " ORDER BY s.created_at DESC"
+    ).fetchall()
+    return [dict(row) for row in rows]

@@ -30,7 +30,7 @@
    1つのプルダウンで開始/終了時刻を選ぶ。未選択（空）も許可。 #}
 {% macro ev_time_select(name_prefix, value, form_id=None, disabled=False, cls='') %}
   <select {% if form_id %}form="{{ form_id }}"{% endif %} name="{{ name_prefix }}"
-          class="form-select form-select-sm ev-time-one {{ cls }}" style="width:auto;display:inline-block;font-size:.75rem;"
+          class="form-select form-select-sm ev-time-one {{ cls }}" style="min-width:90px;display:inline-block;font-size:.75rem;"
           {% if disabled %}disabled{% endif %}>
     <option value="">--</option>
     {% for h in range(9, 20) %}
@@ -49,7 +49,7 @@
     <div class="d-flex align-items-center justify-content-between mb-2">
       <div class="d-flex align-items-center gap-3">
         <h5 class="fw-bold mb-0">{% if page == 'routine' %}🔁 定例作業{% elif page == 'events' %}📅 イベント{% else %}タスク管理{% endif %}</h5>
-        {# タスク管理: マスタのみ担当者切替（全員含む）。イベント: 所属長・管理職以上のみ配下メンバーを切替（既定＝全員）。 #}
+        {# タスク管理・イベント共通: 管理職・所属長・システム管理者は配下（実効所属）メンバーを切替（既定＝全員）。 #}
         {% if page == 'events' and privileged is defined and privileged and selectable_users %}
         <div class="d-flex align-items-center gap-1">
           <label class="form-label small fw-semibold mb-0">担当者：</label>
@@ -61,7 +61,18 @@
             {% endfor %}
           </select>
         </div>
-        {% elif is_master is defined and is_master and selectable_users and page != 'routine' %}
+        {% elif page == 'routine' and privileged is defined and privileged and selectable_users %}
+        {% set routine_target_id = target_user_id if target_user_id else session.user_id %}
+        <div class="d-flex align-items-center gap-1">
+          <label class="form-label small fw-semibold mb-0">担当者：</label>
+          <select id="userSwitch" class="form-select form-select-sm" style="width:140px; font-size:0.8rem;"
+                  onchange="location.href='{{ page_url }}?user_id='+this.value">
+            {% for u in selectable_users %}
+            <option value="{{ u.id }}" {% if routine_target_id == u.id %}selected{% endif %}>{{ u.last_name or u.name }}{% if u.id == session.user_id %}（自分）{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% elif privileged is defined and privileged and selectable_users and page != 'routine' %}
         <div class="d-flex align-items-center gap-1">
           <label class="form-label small fw-semibold mb-0">担当者：</label>
           <select id="userSwitch" class="form-select form-select-sm" style="width:140px; font-size:0.8rem;"
@@ -375,6 +386,7 @@
             <div class="card-body border-bottom p-2">
               <form method="post" action="{{ url_for('project_tasks_bp.save_routine') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="target_user_id" value="{{ target_user_id if target_user_id else session.user_id }}">
                 <div class="row g-1 align-items-end">
                   <div class="col">
                     <label class="form-label small mb-0">作業名</label>
@@ -452,6 +464,7 @@
                     <form method="post" action="{{ url_for('project_tasks_bp.delete_routine', routine_id=r.id) }}"
                           class="d-inline" onsubmit="return confirm('削除しますか？')">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="target_user_id" value="{{ target_user_id if target_user_id else session.user_id }}">
                       <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1">✕</button>
                     </form>
                   </td>
@@ -516,6 +529,8 @@
             <input type="hidden" name="progress" value="0">
             <input type="hidden" name="delay_days" value="0">
             <input type="hidden" name="planned_hours" id="ev-planned-hours" value="0">
+            <input type="hidden" name="return_year" id="ev-return-year" value="">
+            <input type="hidden" name="return_month" id="ev-return-month" value="">
             {# 大区分は廃止：イベントは常に category なしで登録する #}
             <div class="row g-3 align-items-end">
               <div class="col-md-6">
@@ -593,7 +608,7 @@
       <form method="post" action="{{ url_for('project_tasks_bp.bulk_update_tasks') }}" id="bulkEventForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="from_tab" value="events">
-      <div class="card-body p-0">
+      <div class="card-body p-0 table-responsive">
         <table class="table table-sm table-hover mb-0" id="eventTable">
           <thead class="table-light">
             <tr>
@@ -641,12 +656,12 @@
               </td>
               <td><input type="date" form="bulkEventForm" name="start_date_{{ t.id }}" value="{{ t.start_date }}"
                          class="form-control form-control-sm px-1 ev-date-input" data-tid="{{ t.id }}"
-                         style="width:100px;"
+                         style="min-width:140px;"
                          oninput="syncEvEndDateEdit(this)"></td>
               <td><input type="date" form="bulkEventForm" name="end_date_{{ t.id }}" id="ev-end-{{ t.id }}"
                          value="{{ t.end_date or t.start_date }}"
                          class="form-control form-control-sm px-1 ev-end-input" data-tid="{{ t.id }}"
-                         style="width:100px;"></td>
+                         style="min-width:140px;"></td>
               <td class="text-center">
                 <input type="checkbox" form="bulkEventForm" name="is_milestone_{{ t.id }}"
                        class="form-check-input ev-ms-check" value="1"
@@ -709,9 +724,32 @@
       function toIso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 
       var today = new Date(); today.setHours(0, 0, 0, 0);
-      // 初期表示は常に当月（今月）。一覧は当月の全件を表示する。
-      var viewYear = today.getFullYear(), viewMonth = today.getMonth();  // 0-11
+      // 表示月は URL クエリ（year, month）があればそれを初期値にする。
+      // イベント追加後のリダイレクトやページ再読み込みでも、直前に見ていた月に戻れるようにするため。
+      // 指定が無ければ当月（今月）。一覧は表示中の月の全件を表示する。
+      var urlParams = new URLSearchParams(window.location.search);
+      var urlYear = parseInt(urlParams.get('year'), 10);
+      var urlMonth = parseInt(urlParams.get('month'), 10);  // 1-12 で受け取る
+      var viewYear, viewMonth;  // viewMonth は 0-11
+      if (urlYear && urlMonth >= 1 && urlMonth <= 12) {
+        viewYear = urlYear; viewMonth = urlMonth - 1;
+      } else {
+        viewYear = today.getFullYear(); viewMonth = today.getMonth();
+      }
       var selectedIso = null;
+
+      // 現在の表示月を URL に反映する（ブラウザ更新・イベント追加後の
+      // リダイレクトでも表示月を保てるようにする）。
+      function syncViewMonthToUrl() {
+        var u = new URL(window.location);
+        u.searchParams.set('year', String(viewYear));
+        u.searchParams.set('month', String(viewMonth + 1));
+        window.history.replaceState(null, '', u);
+        var yEl = document.getElementById('ev-return-year');
+        var mEl = document.getElementById('ev-return-month');
+        if (yEl) yEl.value = String(viewYear);
+        if (mEl) mEl.value = String(viewMonth + 1);
+      }
       var grid = document.getElementById('evCalGrid');
       var titleEl = document.getElementById('evCalTitle');
       var DOW = ['日', '月', '火', '水', '木', '金', '土'];
@@ -801,21 +839,22 @@
       });
 
       document.getElementById('evCalPrev').addEventListener('click', function () {
-        viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; } selectedIso = null; renderCalendar(); applyFilter();
+        viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; } selectedIso = null; renderCalendar(); applyFilter(); syncViewMonthToUrl();
       });
       document.getElementById('evCalNext').addEventListener('click', function () {
-        viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; } selectedIso = null; renderCalendar(); applyFilter();
+        viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; } selectedIso = null; renderCalendar(); applyFilter(); syncViewMonthToUrl();
       });
       document.getElementById('evCalClear').addEventListener('click', function () {
         // 絞り込み解除：選択日を外し、当月に戻して当月全件を表示。
         selectedIso = null;
         viewYear = today.getFullYear(); viewMonth = today.getMonth();
-        renderCalendar(); applyFilter();
+        renderCalendar(); applyFilter(); syncViewMonthToUrl();
         if (selDateLabel) selDateLabel.textContent = '';
       });
 
       renderCalendar();
-      applyFilter();  // 初期表示で当月全件に絞る
+      applyFilter();  // 初期表示で表示中の月の全件に絞る
+      syncViewMonthToUrl();  // 隠しフィールドへ反映（フォーム送信時に引き継ぐため）
     })();
     </script>
     </div>{# /tab-pane events #}

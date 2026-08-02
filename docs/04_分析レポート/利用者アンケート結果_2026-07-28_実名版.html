@@ -1,0 +1,267 @@
+<title>予定管理システム 利用者アンケート結果</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --surface-alt: #eef1f5;
+    --ink: #1c2430;
+    --ink-soft: #5b6472;
+    --line: #dde1e7;
+    --navy: #1f3864;
+    --navy-soft: #e8edf5;
+    --ok: #1e8a5f;
+    --ok-bg: #e7f6ee;
+    --warn: #b5720f;
+    --warn-bg: #fbf1de;
+    --font-display: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    --font-body: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181e; --surface: #1b212b; --surface-alt: #232a35;
+    --ink: #e7ebf1; --ink-soft: #9aa5b3; --line: #313a47;
+    --navy: #7fa2d6; --navy-soft: #202c3d;
+    --ok: #6fcda3; --ok-bg: #16281f;
+    --warn: #e0ab5c; --warn-bg: #2f2410;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181e; --surface: #1b212b; --surface-alt: #232a35;
+      --ink: #e7ebf1; --ink-soft: #9aa5b3; --line: #313a47;
+      --navy: #7fa2d6; --navy-soft: #202c3d;
+      --ok: #6fcda3; --ok-bg: #16281f;
+      --warn: #e0ab5c; --warn-bg: #2f2410;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); -webkit-font-smoothing: antialiased; }
+  body { padding: 32px 20px 80px; }
+  .page { max-width: 900px; margin: 0 auto; }
+
+  .masthead { background: var(--navy); color: #fff; border-radius: 12px; padding: 26px 30px; margin-bottom: 24px; }
+  .masthead .eyebrow { font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; opacity: .8; margin-bottom: 6px; }
+  .masthead h1 { font-family: var(--font-display); font-size: 1.5rem; font-weight: 700; margin: 0 0 8px; text-wrap: balance; }
+  .masthead p { margin: 0; font-size: .84rem; opacity: .92; line-height: 1.7; max-width: 64ch; }
+  .masthead .meta { margin-top: 12px; font-size: .74rem; opacity: .78; }
+
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 28px; }
+  .summary .cell { background: var(--surface); padding: 15px 16px; }
+  .summary .cell .num { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .summary .cell .label { font-size: .72rem; color: var(--ink-soft); margin-top: 4px; }
+  .summary .cell.ok .num { color: var(--ok); }
+
+  .section-label { font-size: .72rem; font-weight: 700; letter-spacing: .08em; color: var(--ink-soft); text-transform: uppercase; margin: 0 0 12px; }
+
+  .note-box { background: var(--surface-alt); border-radius: 8px; padding: 12px 16px; font-size: .8rem; color: var(--ink-soft); line-height: 1.7; margin-bottom: 28px; }
+  .note-box strong { color: var(--ink); }
+
+  .resp-grid { display: flex; flex-direction: column; gap: 12px; margin-bottom: 32px; }
+  .resp-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; }
+  .resp-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .resp-id { font-family: var(--font-display); font-weight: 700; font-size: .95rem; background: var(--navy-soft); color: var(--navy); border-radius: 6px; padding: 3px 10px; }
+  .resp-score { font-size: .74rem; font-weight: 700; color: var(--ink-soft); }
+  .resp-score .stars { color: var(--warn); letter-spacing: 1px; }
+  .resp-recommend { margin-left: auto; font-size: .72rem; font-weight: 700; background: var(--ok-bg); color: var(--ok); border-radius: 100px; padding: 3px 10px; }
+
+  .resp-body dl { margin: 0; }
+  .resp-body dt { font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); margin-top: 10px; }
+  .resp-body dt:first-child { margin-top: 0; }
+  .resp-body dd { margin: 3px 0 0; font-size: .84rem; line-height: 1.7; color: var(--ink); }
+
+  .theme-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+  .theme-card { background: var(--warn-bg); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0; padding: 12px 16px; }
+  .theme-card .theme-head { font-weight: 700; font-size: .86rem; color: var(--ink); margin-bottom: 4px; }
+  .theme-card .theme-body { font-size: .8rem; color: var(--ink-soft); line-height: 1.7; }
+  .theme-card .theme-body strong { color: var(--ink); }
+
+  .footnote { font-size: .74rem; color: var(--ink-soft); border-top: 1px solid var(--line); padding-top: 16px; margin-top: 8px; line-height: 1.8; }
+
+  .qa-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 28px; }
+  .qa-item { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; font-size: .82rem; display: flex; gap: 10px; align-items: baseline; }
+  .qa-item .qn { font-family: var(--font-display); font-weight: 700; color: var(--navy); flex: 0 0 auto; }
+  .qa-item .qt { color: var(--ink); min-width: 0; }
+  .qa-item .qt .type { color: var(--ink-soft); font-size: .74rem; margin-left: 6px; }
+
+  @media (max-width: 640px) {
+    .summary { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+
+<div class="page">
+
+  <div class="masthead">
+    <div class="eyebrow">利用者アンケート結果</div>
+    <h1>予定管理システム 利用者アンケート結果報告</h1>
+    <p>本番リリース後、利用者に対して実施したシステム利用アンケートの回答内容をまとめました。【実名版・社内限定】回答者氏名（姓）を記載しています。</p>
+    <div class="meta">集計基準日：2026-07-28　対象：商品開発室 一般メンバー 7名（管理職・テスト用アカウントを除く）</div>
+  </div>
+
+  <div class="summary">
+    <div class="cell ok"><div class="num">7 / 7</div><div class="label">回答済み（100%）</div></div>
+    <div class="cell ok"><div class="num">100%</div><div class="label">「推奨する」と回答</div></div>
+    <div class="cell"><div class="num">4.6 / 5</div><div class="label">使いやすさ 平均スコア</div></div>
+    <div class="cell"><div class="num">0名</div><div class="label">未回答</div></div>
+  </div>
+
+  <p class="section-label">アンケート設問</p>
+  <div class="qa-list">
+    <div class="qa-item"><span class="qn">Q1</span><span class="qt">このシステムは使いやすいですか？<span class="type">（1. 使いにくい　2. やや使いにくい　3. どちらとも言えない　4. やや使いやすい　5. 使いやすい　の5択）</span></span></div>
+    <div class="qa-item"><span class="qn">Q2</span><span class="qt">このシステムのメリットを教えてください<span class="type">（自由記述・「良い点」）</span></span></div>
+    <div class="qa-item"><span class="qn">Q3</span><span class="qt">このシステムのデメリットを教えてください<span class="type">（自由記述・「気になる点」）</span></span></div>
+    <div class="qa-item"><span class="qn">Q4</span><span class="qt">追加してほしい機能はありますか？<span class="type">（自由記述・「要望」）</span></span></div>
+    <div class="qa-item"><span class="qn">Q5</span><span class="qt">他の会社や部署での使用をおすすめしますか？<span class="type">（はい／いいえ）＋おすすめしたい部門（任意）</span></span></div>
+  </div>
+
+  <p class="section-label">回答一覧（回答順・実名／社内限定）</p>
+  <div class="resp-grid">
+
+    <div class="resp-card">
+      <div class="resp-top">
+        <span class="resp-id">金浜</span>
+        <span class="resp-score">使いやすさ　<span class="stars">★★★★★</span>　5/5</span>
+        <span class="resp-recommend">推奨：はい</span>
+      </div>
+      <div class="resp-body">
+        <dl>
+          <dt>良い点</dt>
+          <dd>毎日の業務において、「今日やる予定のこと」「明日やるべきこと」「それが全体のどれぐらいか」を明確にしながら取り組める点がよい。上司からのフィードバックが毎日のモチベーションになっている。</dd>
+          <dt>気になる点</dt>
+          <dd>週間予定を反映した後に予定を変更したくなった際、入力済みの作業時間もリセットされてしまう。使用上のコツ等で解決できる方法があれば助かる。</dd>
+          <dt>要望</dt>
+          <dd>チームメンバーのスケジュールや予定が見えると、打ち合わせの打診や相談がしやすくなるのではないか。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="resp-card">
+      <div class="resp-top">
+        <span class="resp-id">浦松</span>
+        <span class="resp-score">使いやすさ　<span class="stars">★★★★★</span>　5/5</span>
+        <span class="resp-recommend">推奨：はい</span>
+      </div>
+      <div class="resp-body">
+        <dl>
+          <dt>良い点</dt>
+          <dd>1日の業務内容とガントチャートが同一アプリ内に表示されるため、複数のアプリを使わずに済む。実績も予定を見ながら同アプリ内で作成できる。</dd>
+          <dt>気になる点</dt>
+          <dd>特になし</dd>
+          <dt>要望</dt>
+          <dd>指定したものだけ通知（画面表示など）する機能。全部は不要だが、忘れやすい予定（バックアップテープのスケジュール変更・出走情報の更新など、時間が指定されているもの）をわかりやすくできるとありがたい。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="resp-card">
+      <div class="resp-top">
+        <span class="resp-id">髙陽</span>
+        <span class="resp-score">使いやすさ　<span class="stars">★★★★★</span>　5/5</span>
+        <span class="resp-recommend">推奨：はい</span>
+      </div>
+      <div class="resp-body">
+        <dl>
+          <dt>良い点</dt>
+          <dd>日報作成の時間削減。</dd>
+          <dt>気になる点</dt>
+          <dd>イベント登録機能がやや分かりづらい。</dd>
+          <dt>要望</dt>
+          <dd>今は特にない。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="resp-card">
+      <div class="resp-top">
+        <span class="resp-id">本澤</span>
+        <span class="resp-score">使いやすさ　<span class="stars">★★★★☆</span>　4/5</span>
+        <span class="resp-recommend">推奨：はい</span>
+      </div>
+      <div class="resp-body">
+        <dl>
+          <dt>良い点</dt>
+          <dd>予定と実績が一目でわかるので把握しやすい。ガントチャートで期限の把握ができるので、やるべきことが一目でわかる。</dd>
+          <dt>気になる点</dt>
+          <dd>タスクを反映した時に今までの予定が一気に消えてしまうのが困る（自分も気をつける、とのコメント添付）。</dd>
+          <dt>要望</dt>
+          <dd>当日の予定も変更できるようにしてほしい。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="resp-card">
+      <div class="resp-top">
+        <span class="resp-id">穴澤</span>
+        <span class="resp-score">使いやすさ　<span class="stars">★★★★★</span>　5/5</span>
+        <span class="resp-recommend">推奨：はい</span>
+      </div>
+      <div class="resp-body">
+        <dl>
+          <dt>良い点</dt>
+          <dd>今後の予定や過去に行ったことが一目で確認できる。タスク管理も入力できて、予定を立てるときにも使いやすい。</dd>
+          <dt>気になる点</dt>
+          <dd>（特にタスク管理周り）使い方が初見でわかりにくい。どこを押したら何が入力できて、何に反映されるのかが把握しにくい。</dd>
+          <dt>要望</dt>
+          <dd>特になし。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="resp-card">
+      <div class="resp-top">
+        <span class="resp-id">亀川</span>
+        <span class="resp-score">使いやすさ　<span class="stars">★★★★☆</span>　4/5</span>
+        <span class="resp-recommend">推奨：はい（全社展開を推奨）</span>
+      </div>
+      <div class="resp-body">
+        <dl>
+          <dt>良い点</dt>
+          <dd>報告と予定管理が一元化されているので、報告や進捗管理などをまとめて行えてとても便利。</dd>
+          <dt>気になる点</dt>
+          <dd>タスクが完了にならない状態で途中中断される場合の管理が悩ましい。現タスクを「中断」とコメントして100%にし再開時に新規タスクを作成するか、バーをそのまま再開するまで伸ばすのか、どちらがわかりやすいか迷う。</dd>
+          <dt>要望</dt>
+          <dd>①タスク名が長い場合に右側の文字が切れてしまい何の作業かわかりにくいため、カーソルを合わせたら全文表示される、または文字サイズ調整で枠内に収まるようにしてほしい。②タスクを分割する機能（例：ある担当者の作業完了後に別の担当者が作業を再開する、という共同作業の流れや進捗をつなげられるとよい）。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="resp-card">
+      <div class="resp-top">
+        <span class="resp-id">早田</span>
+        <span class="resp-score">使いやすさ　<span class="stars">★★★★☆</span>　4/5</span>
+        <span class="resp-recommend">推奨：はい（全社展開を推奨）</span>
+      </div>
+      <div class="resp-body">
+        <dl>
+          <dt>良い点</dt>
+          <dd>予定が組みやすい。タスクからの自動反映が便利。</dd>
+          <dt>気になる点</dt>
+          <dd>特になし</dd>
+          <dt>要望</dt>
+          <dd>ガントチャートと予定表が同時に見られるとよい。</dd>
+        </dl>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="section-label">複数名が指摘した共通の課題</p>
+  <div class="theme-list">
+    <div class="theme-card">
+      <div class="theme-head">① 週間予定の変更で、入力済みの実績・予定が消えてしまう</div>
+      <div class="theme-body">金浜・本澤の2名が同様の現象を指摘。予定を反映し直す操作の影響範囲について、仕様として妥当か実装を確認する余地がある。</div>
+    </div>
+    <div class="theme-card">
+      <div class="theme-head">② タスク管理・イベント登録機能が初見で分かりにくい</div>
+      <div class="theme-body">髙陽・穴澤の2名が指摘。どこを操作すると何が起きるかが直感的に伝わりにくいとの声。操作ガイドの整備や画面上のヒント表示が有効な可能性がある。</div>
+    </div>
+    <div class="theme-card">
+      <div class="theme-head">③ 中断中タスクの運用ルールが不明確</div>
+      <div class="theme-body">亀川が指摘。作業が完了しないまま中断する場合、どう記録するのが適切か判断に迷うとのこと。運用ルールの明文化が有効と考えられる。</div>
+    </div>
+  </div>
+
+  <div class="footnote">
+    本レポートは2026-07-28時点の一般メンバー回答（7件、管理職・テスト用アカウントを除く）を集計したものです。
+    【実名版・社内限定】本ファイルには回答者氏名（姓）を記載しています。社外への提供・共有には匿名版（利用者アンケート結果_2026-07-28.html）を使用してください。
+  </div>
+
+</div>

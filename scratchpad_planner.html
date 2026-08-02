@@ -1,8 +1,87 @@
-{% extends "base.html" %}
-{% block title %}ガントチャート{% endblock %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ガントチャート</title>
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="manifest" href="/static/manifest.json">
+  <meta name="theme-color" content="#0d6efd">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-logged-in="1">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-success">
+    <div class="container-fluid">
+      <a class="navbar-brand fw-bold" href="/">📅 予定管理システム</a>
+      
+      <span class="badge bg-warning text-dark fs-6 ms-2">DEV - 開発環境</span>
+      
+      
+      <div class="d-flex align-items-center gap-2 ms-auto">
+        
+        <a class="btn btn-outline-light btn-sm" href="/schedule">週間予定</a>
+        <a class="btn btn-outline-warning btn-sm" href="/daily/today">実績</a>
+        <a class="btn btn-outline-warning btn-sm" href="/planner/">ガントチャート</a>
+        <a class="btn btn-outline-info btn-sm" href="/project-tasks/dashboard">進捗</a>
+        <a class="btn btn-outline-info btn-sm" href="/project-tasks/events">イベント</a>
+        <a class="btn btn-outline-info btn-sm" href="/project-tasks/routine">定例</a>
+
+        
+        <div class="dropdown">
+          <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button"
+                  data-bs-toggle="dropdown" aria-expanded="false">
+            👤 新名洋幸
+            <span class="opacity-75">（システム管理者）</span>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+            
+            
+            <li><h6 class="dropdown-header">所属を切り替え</h6></li>
+            
+            <li>
+              <a class="dropdown-item "
+                 href="/switch_dept?dept=%E5%95%86%E5%93%81%E9%96%8B%E7%99%BA%E5%AE%A4">
+                商品開発室
+              </a>
+            </li>
+            
+            <li>
+              <a class="dropdown-item "
+                 href="/switch_dept?dept=%E7%AE%A1%E7%90%86%E5%AE%A4">
+                管理室
+              </a>
+            </li>
+            
+            
+            <li><hr class="dropdown-divider"></li>
+            
+
+            
+            
+            <li><a class="dropdown-item" href="/daily/comments-review">💬 振り返りレビュー</a></li>
+            <li><a class="dropdown-item" href="/daily/team-progress">📆 部下の予定・実績振り返り</a></li>
+            <li><a class="dropdown-item" href="/admin/">⚙ 管理画面</a></li>
+            
+
+            
+            <li><a class="dropdown-item" href="/help">❓ ヘルプ</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item text-danger" href="/logout">↩ ログアウト</a></li>
+          </ul>
+        </div>
+      </div>
+      
+    </div>
+  </nav>
+  <div class="container-fluid mt-3 px-4">
+    
+    
+    
+    
 <style>
-  :root { --dayw: 30px; --namew: 480px; --rowh: 32px; --headh: 40px; }
+  :root { --dayw: 30px; --namew: 340px; --rowh: 32px; --headh: 40px; }
   /* 縦横スクロール可能なコンテナ。縦スクロール時も日付ヘッダー(.g-head)を
      コンテナ上端に固定表示するため、max-height と overflow-y を持たせる。 */
   .gantt-scroll { overflow: auto; max-height: calc(100vh - 220px); border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
@@ -15,22 +94,6 @@
   .g-col.today { background: #dbeafe; box-shadow: inset 0 0 0 1px rgba(59,130,246,.45); }
   .g-dcell.today { background: #dbeafe; }
   .g-col .line { position: absolute; top: 0; bottom: 0; right: 0; border-right: 1px solid #eef2f7; }
-  /* マイルストーン縦線：画面全体（全行）を貫通する線をその日の中央に表示する。
-     行単位の .g-bar.milestone とは別に、背景レイヤー(.g-bg)へ重ねて描画する。
-     .g-bg 自体が z-index:0（各行 .g-row は z-index:1）のため、線本体は行の下に
-     隠れてよいが、ホバー対象の旗マーカーは行より確実に手前へ出す必要がある。
-     そのため旗マーカーだけは別レイヤー(.g-ms-flags、.gantt 直下)に描画する。 */
-  .g-ms-fullline { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px dashed #7c3aed;
-    z-index: 1; pointer-events: none; }
-  .g-ms-fullline.done { border-left-color: #059669; }
-  /* 旗マーカー（△部分）専用レイヤー。.g-row（z-index:1）より確実に手前に出すため、
-     .gantt 直下に独立して配置し、高い z-index を与える。 */
-  .g-ms-flags { position: absolute; top: var(--headh); left: var(--namew); height: 0; z-index: 8; }
-  .g-ms-flag { position: absolute; top: -4px; width: 16px; height: 12px;
-    transform: translateX(-50%); background: transparent; pointer-events: auto; cursor: help; }
-  .g-ms-flag::after { content: ''; position: absolute; top: 3px; left: 2px; width: 12px; height: 8px;
-    background: #7c3aed; clip-path: polygon(0 0, 100% 0, 50% 100%); }
-  .g-ms-flag.done::after { background: #059669; }
   .g-head { display: flex; height: var(--headh); position: sticky; top: 0; z-index: 5; background: #eef2ff; }
   .g-name-head { width: var(--namew); flex: 0 0 var(--namew); font-weight: 700; font-size: .78rem;
     display: flex; align-items: center; padding: 0 8px; border-right: 1px solid #cbd5e1; position: sticky; left: 0; background: #eef2ff; z-index: 6; }
@@ -89,8 +152,6 @@
   .g-bar.done { background: linear-gradient(180deg,#6ee7b7,#10b981); border-color: #059669; }
   .g-bar.stop { background: linear-gradient(180deg,#e5e7eb,#d1d5db); border-color: #9ca3af; }
   .g-bar.unsaved { outline: 2px solid #f59e0b; }
-  /* マイルストーンの行自体にはバーを表示しない（背景レイヤーの全体貫通線で表現するため） */
-  .g-bar.milestone { display: none; }
   .g-bar .g-prog { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1;
     background: linear-gradient(180deg,#6ee7b7,#10b981); }
   .g-bar .g-prog.late { background: linear-gradient(180deg,#fca5a5,#ef4444); }
@@ -126,15 +187,20 @@
   .pl-modal-ft { padding: 8px 12px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #eef2f7; }
 </style>
 
+<div class="alert alert-warning py-2 d-flex align-items-center gap-2">
+  <span class="badge bg-danger">TEST</span>
+  <span class="small mb-0">ガント入力（試作・ツリー型）。現行の「タスク管理／ガントチャート」には影響しません。保存すると<strong>タスク管理のタスク</strong>として登録されます。</span>
+</div>
+
 <details class="mb-2">
   <summary class="small text-primary" style="cursor:pointer">▶ 使い方</summary>
   <ol class="small text-muted mb-0 mt-1">
     <li>一番下の空欄に<b>タスク名を入力</b>して <b>Enter</b>（その行の直後に新しい行が挿入されます）。</li>
     <li>行左の <b>⠿</b> を<b>上下にドラッグ</b>すると順番を入れ替えできます（子タスクも一緒に移動）。</li>
-    <li><b>＞</b> で<b>1つ上の行の子タスク</b>に、<b>＜</b> で<b>親レベルに戻す</b>（字下げ／字上げ／最大4階層）。<b>×</b> で行を削除。</li>
-    <li><b>👤</b> ボタン：<b>親＝メンバー（関係ユーザー・複数）</b>、<b>子＝担当者（2名以上も可）</b>を設定。ホバーで氏名を表示。</li>
-    <li><b>親タスクの作成・編集は管理職以上のみ</b>。一般ユーザーは<b>子タスクの追加</b>のみ可能です。</li>
-    <li>表示範囲：システム管理者＝全件／所属長・管理職＝自分がメンバーの親／一般＝自分が担当の子。</li>
+    <li><b>＞</b> で<b>1つ上の行の子タスク</b>に、<b>＜</b> で<b>親レベルに戻す</b>（字下げ／字上げ／最大2世代）。<b>×</b> で行を削除。</li>
+    <li><b>👤</b> ボタン：<b>親＝メンバー（関係ユーザー・複数）</b>、<b>子＝担当者（最大2名）</b>を設定。ホバーで氏名を表示。</li>
+    <li><b>親タスクの作成・編集は管理職／マスタのみ</b>。一般ユーザーは<b>子タスクの追加</b>のみ可能です。</li>
+    <li>表示範囲：マスタ＝全件／管理職＝自分がメンバーの親／一般＝自分が担当の子。</li>
     <li>右のタイムラインを<b>左→右にドラッグ</b>してバーを描く（期間）。<b>中央で移動 / 端で伸縮</b>。</li>
     <li>バーは項目名を出さず、<b>計画（枠）に対する進捗（塗り）</b>と<b>進捗率・状態</b>で表示します（現行ガントと同じ）。</li>
     <li><b>💾保存</b>で反映。未保存の変更があるまま画面を離れると警告が出ます。</li>
@@ -143,54 +209,48 @@
 
 <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
   <h5 class="mb-0">🌳 ガントチャート</h5>
-  {% if show_selector %}
+  
   <select id="userSelect" class="form-select form-select-sm" style="width:auto;" title="表示する担当者">
-    {% for p in people %}<option value="{{ p.id }}" {% if p.id == selected_user_id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+    <option value="0" selected>全員</option><option value="5" >新名洋幸</option><option value="7" >髙陽昂平</option><option value="4" >浦松奈央</option><option value="6" >亀川典子</option><option value="8" >テスト</option><option value="9" >早田</option><option value="10" >穴澤哲宣</option><option value="11" >本澤莉奈</option><option value="12" >金浜</option>
   </select>
-  {% else %}<span class="badge bg-light text-dark border">{{ view_name }}</span>{% endif %}
+  
   <div class="btn-group btn-group-sm ms-1">
-    <a class="btn btn-outline-secondary" href="{{ url_for('planner_bp.planner', start=prev_start, user_id=selected_user_id) }}">◀ 前週</a>
-    <a class="btn btn-outline-secondary" href="{{ url_for('planner_bp.planner', start=this_start, user_id=selected_user_id) }}">今日基準</a>
-    <a class="btn btn-outline-secondary" href="{{ url_for('planner_bp.planner', start=next_start, user_id=selected_user_id) }}">次週 ▶</a>
+    <a class="btn btn-outline-secondary" href="/planner/?start=2026-07-13&amp;user_id=0">◀ 前週</a>
+    <a class="btn btn-outline-secondary" href="/planner/?start=2026-07-20&amp;user_id=0">今日基準</a>
+    <a class="btn btn-outline-secondary" href="/planner/?start=2026-07-27&amp;user_id=0">次週 ▶</a>
   </div>
-  {# 親タスクの一括開閉。折りたたみ状態は次回も引き継ぐ（localStorage）。 #}
+  
   <div class="btn-group btn-group-sm ms-1">
     <button type="button" id="expandAllBtn" class="btn btn-outline-primary" title="すべての親を開く">▾ 全部開く</button>
     <button type="button" id="collapseAllBtn" class="btn btn-outline-primary" title="すべての親を閉じる">▸ 全部閉じる</button>
   </div>
-  <div class="form-check ms-2">
-    <input type="checkbox" class="form-check-input" id="showDoneCheck" {% if show_done %}checked{% endif %}>
-    <label class="form-check-label small" for="showDoneCheck" title="完了済みで終了日が当日以前の案件も表示する">完了案件も表示</label>
-  </div>
   <span class="ms-auto"></span>
   <a class="btn btn-success btn-sm"
-     href="{{ url_for('planner_bp.export', start=range_start, user_id=(selected_user_id if selected_user_id else None)) }}">📥 Excel出力</a>
+     href="/planner/export?start=2026-07-20">📥 Excel出力</a>
   <a class="btn btn-danger btn-sm"
-     href="{{ url_for('planner_bp.export_pdf', start=range_start, user_id=(selected_user_id if selected_user_id else None)) }}">📄 PDF出力</a>
-  {% if is_master %}
+     href="/planner/export-pdf?start=2026-07-20">📄 PDF出力</a>
+  
   <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#importExcelForm"
           title="タスク管理一覧画面の「タスク移行Excel出力」で出力したファイルを取り込みます">
     📤 Excel取込
   </button>
-  {% endif %}
+  
   <button id="saveBtn" class="btn btn-primary btn-sm">💾 保存</button>
-  <button id="undoBtn" type="button" class="btn btn-outline-secondary btn-sm"
-          title="直前の操作を1つ元に戻す（Ctrl+Z）">↩ 元に戻す</button>
   <span id="saveMsg" class="small"></span>
 </div>
 
-{% if is_master %}
+
 <div class="collapse mb-2" id="importExcelForm">
   <div class="card card-body py-2">
-    <form method="post" action="{{ url_for('planner_bp.import_excel') }}" enctype="multipart/form-data" class="d-flex align-items-center gap-2 flex-wrap">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <form method="post" action="/planner/import-excel" enctype="multipart/form-data" class="d-flex align-items-center gap-2 flex-wrap">
+      <input type="hidden" name="csrf_token" value="testtoken">
       <span class="small text-muted">移行用Excel（タスク管理一覧の「タスク移行Excel出力」で出力したファイル）を選択してください。</span>
       <input type="file" name="migration_file" accept=".xlsx" class="form-control form-control-sm" style="width:auto;" required>
       <button type="submit" class="btn btn-primary btn-sm">取込実行</button>
     </form>
   </div>
 </div>
-{% endif %}
+
 
 <div class="gantt-scroll" id="ganttScroll">
   <div class="gantt" id="gantt">
@@ -200,11 +260,10 @@
       <div class="g-timehead" id="gtimehead"></div>
     </div>
     <div id="rows"></div>
-    <div class="g-ms-flags" id="gMsFlags"></div>
   </div>
 </div>
 
-<div id="asgnPop"><div class="hd">担当者</div><div class="body"></div></div>
+<div id="asgnPop"><div class="hd">担当者（最大2名）</div><div class="body"></div></div>
 <div id="detailModal" class="pl-modal">
   <div class="pl-modal-box">
     <div class="pl-modal-hd">タスクの詳細・編集</div>
@@ -212,9 +271,7 @@
       <div class="fld"><label>タスク名</label><input type="text" class="dt-name"></div>
       <div class="fld"><label>担当/メンバー</label><div class="dt-people"></div></div>
       <div class="fld"><label>開始日</label><input type="date" class="dt-start"></div>
-      <div class="fld"><label>終了日</label><input type="date" class="dt-end">
-        <button type="button" class="btn btn-sm btn-outline-danger dt-clear-bar" title="日程を削除してガントバーを非表示にする">ガントバーを削除</button>
-      </div>
+      <div class="fld"><label>終了日</label><input type="date" class="dt-end"></div>
       <div class="fld"><label>状態</label>
         <select class="dt-status">
           <option value="未着手">未着手</option><option value="着手">着手</option>
@@ -235,17 +292,17 @@
 
 <script>
 (function () {
-  var CSRF = {{ csrf_token | tojson }};
-  var SELECTED_USER_ID = {{ selected_user_id | tojson }};   // 0=全員
-  var DEFAULT_ASSIGNEE = {{ default_assignee | tojson }};    // 新規子タスクの既定担当者
-  var LOGIN_USER = {{ login_user | tojson }};                // 新規親タスクの既定メンバー
-  var CAN_PARENT = {{ can_parent | tojson }};                // 親タスク作成・編集可（管理職/マスタ）
+  var CSRF = "testtoken";
+  var SELECTED_USER_ID = 0;   // 0=全員
+  var DEFAULT_ASSIGNEE = {"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"};    // 新規子タスクの既定担当者
+  var LOGIN_USER = {"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"};                // 新規親タスクの既定メンバー
+  var CAN_PARENT = true;                // 親タスク作成・編集可（管理職/マスタ）
   var MIN_LEVEL = CAN_PARENT ? 0 : 1;                        // 一般は最上位（親）不可
-  var RANGE_START = {{ range_start | tojson }};
-  var DAYS = {{ days | length }};
-  var DAY_META = {{ days | tojson }};
-  var TASKS = {{ tasks | tojson }};
-  var ASSIGN_USERS = {{ assign_users | tojson }};
+  var RANGE_START = "2026-07-20";
+  var DAYS = 63;
+  var DAY_META = [{"d": 20, "holiday": false, "index": 0, "is_month_start": false, "is_today": false, "iso": "2026-07-20", "m": 7, "wd": "\u6708", "weekend": false}, {"d": 21, "holiday": false, "index": 1, "is_month_start": false, "is_today": false, "iso": "2026-07-21", "m": 7, "wd": "\u706b", "weekend": false}, {"d": 22, "holiday": false, "index": 2, "is_month_start": false, "is_today": false, "iso": "2026-07-22", "m": 7, "wd": "\u6c34", "weekend": false}, {"d": 23, "holiday": false, "index": 3, "is_month_start": false, "is_today": false, "iso": "2026-07-23", "m": 7, "wd": "\u6728", "weekend": false}, {"d": 24, "holiday": false, "index": 4, "is_month_start": false, "is_today": false, "iso": "2026-07-24", "m": 7, "wd": "\u91d1", "weekend": false}, {"d": 25, "holiday": false, "index": 5, "is_month_start": false, "is_today": false, "iso": "2026-07-25", "m": 7, "wd": "\u571f", "weekend": true}, {"d": 26, "holiday": false, "index": 6, "is_month_start": false, "is_today": false, "iso": "2026-07-26", "m": 7, "wd": "\u65e5", "weekend": true}, {"d": 27, "holiday": false, "index": 7, "is_month_start": false, "is_today": true, "iso": "2026-07-27", "m": 7, "wd": "\u6708", "weekend": false}, {"d": 28, "holiday": false, "index": 8, "is_month_start": false, "is_today": false, "iso": "2026-07-28", "m": 7, "wd": "\u706b", "weekend": false}, {"d": 29, "holiday": false, "index": 9, "is_month_start": false, "is_today": false, "iso": "2026-07-29", "m": 7, "wd": "\u6c34", "weekend": false}, {"d": 30, "holiday": false, "index": 10, "is_month_start": false, "is_today": false, "iso": "2026-07-30", "m": 7, "wd": "\u6728", "weekend": false}, {"d": 31, "holiday": false, "index": 11, "is_month_start": false, "is_today": false, "iso": "2026-07-31", "m": 7, "wd": "\u91d1", "weekend": false}, {"d": 1, "holiday": false, "index": 12, "is_month_start": true, "is_today": false, "iso": "2026-08-01", "m": 8, "wd": "\u571f", "weekend": true}, {"d": 2, "holiday": false, "index": 13, "is_month_start": false, "is_today": false, "iso": "2026-08-02", "m": 8, "wd": "\u65e5", "weekend": true}, {"d": 3, "holiday": false, "index": 14, "is_month_start": false, "is_today": false, "iso": "2026-08-03", "m": 8, "wd": "\u6708", "weekend": false}, {"d": 4, "holiday": false, "index": 15, "is_month_start": false, "is_today": false, "iso": "2026-08-04", "m": 8, "wd": "\u706b", "weekend": false}, {"d": 5, "holiday": false, "index": 16, "is_month_start": false, "is_today": false, "iso": "2026-08-05", "m": 8, "wd": "\u6c34", "weekend": false}, {"d": 6, "holiday": false, "index": 17, "is_month_start": false, "is_today": false, "iso": "2026-08-06", "m": 8, "wd": "\u6728", "weekend": false}, {"d": 7, "holiday": false, "index": 18, "is_month_start": false, "is_today": false, "iso": "2026-08-07", "m": 8, "wd": "\u91d1", "weekend": false}, {"d": 8, "holiday": false, "index": 19, "is_month_start": false, "is_today": false, "iso": "2026-08-08", "m": 8, "wd": "\u571f", "weekend": true}, {"d": 9, "holiday": false, "index": 20, "is_month_start": false, "is_today": false, "iso": "2026-08-09", "m": 8, "wd": "\u65e5", "weekend": true}, {"d": 10, "holiday": false, "index": 21, "is_month_start": false, "is_today": false, "iso": "2026-08-10", "m": 8, "wd": "\u6708", "weekend": false}, {"d": 11, "holiday": false, "index": 22, "is_month_start": false, "is_today": false, "iso": "2026-08-11", "m": 8, "wd": "\u706b", "weekend": false}, {"d": 12, "holiday": false, "index": 23, "is_month_start": false, "is_today": false, "iso": "2026-08-12", "m": 8, "wd": "\u6c34", "weekend": false}, {"d": 13, "holiday": false, "index": 24, "is_month_start": false, "is_today": false, "iso": "2026-08-13", "m": 8, "wd": "\u6728", "weekend": false}, {"d": 14, "holiday": false, "index": 25, "is_month_start": false, "is_today": false, "iso": "2026-08-14", "m": 8, "wd": "\u91d1", "weekend": false}, {"d": 15, "holiday": false, "index": 26, "is_month_start": false, "is_today": false, "iso": "2026-08-15", "m": 8, "wd": "\u571f", "weekend": true}, {"d": 16, "holiday": false, "index": 27, "is_month_start": false, "is_today": false, "iso": "2026-08-16", "m": 8, "wd": "\u65e5", "weekend": true}, {"d": 17, "holiday": false, "index": 28, "is_month_start": false, "is_today": false, "iso": "2026-08-17", "m": 8, "wd": "\u6708", "weekend": false}, {"d": 18, "holiday": false, "index": 29, "is_month_start": false, "is_today": false, "iso": "2026-08-18", "m": 8, "wd": "\u706b", "weekend": false}, {"d": 19, "holiday": false, "index": 30, "is_month_start": false, "is_today": false, "iso": "2026-08-19", "m": 8, "wd": "\u6c34", "weekend": false}, {"d": 20, "holiday": false, "index": 31, "is_month_start": false, "is_today": false, "iso": "2026-08-20", "m": 8, "wd": "\u6728", "weekend": false}, {"d": 21, "holiday": false, "index": 32, "is_month_start": false, "is_today": false, "iso": "2026-08-21", "m": 8, "wd": "\u91d1", "weekend": false}, {"d": 22, "holiday": false, "index": 33, "is_month_start": false, "is_today": false, "iso": "2026-08-22", "m": 8, "wd": "\u571f", "weekend": true}, {"d": 23, "holiday": false, "index": 34, "is_month_start": false, "is_today": false, "iso": "2026-08-23", "m": 8, "wd": "\u65e5", "weekend": true}, {"d": 24, "holiday": false, "index": 35, "is_month_start": false, "is_today": false, "iso": "2026-08-24", "m": 8, "wd": "\u6708", "weekend": false}, {"d": 25, "holiday": false, "index": 36, "is_month_start": false, "is_today": false, "iso": "2026-08-25", "m": 8, "wd": "\u706b", "weekend": false}, {"d": 26, "holiday": false, "index": 37, "is_month_start": false, "is_today": false, "iso": "2026-08-26", "m": 8, "wd": "\u6c34", "weekend": false}, {"d": 27, "holiday": false, "index": 38, "is_month_start": false, "is_today": false, "iso": "2026-08-27", "m": 8, "wd": "\u6728", "weekend": false}, {"d": 28, "holiday": false, "index": 39, "is_month_start": false, "is_today": false, "iso": "2026-08-28", "m": 8, "wd": "\u91d1", "weekend": false}, {"d": 29, "holiday": false, "index": 40, "is_month_start": false, "is_today": false, "iso": "2026-08-29", "m": 8, "wd": "\u571f", "weekend": true}, {"d": 30, "holiday": false, "index": 41, "is_month_start": false, "is_today": false, "iso": "2026-08-30", "m": 8, "wd": "\u65e5", "weekend": true}, {"d": 31, "holiday": false, "index": 42, "is_month_start": false, "is_today": false, "iso": "2026-08-31", "m": 8, "wd": "\u6708", "weekend": false}, {"d": 1, "holiday": false, "index": 43, "is_month_start": true, "is_today": false, "iso": "2026-09-01", "m": 9, "wd": "\u706b", "weekend": false}, {"d": 2, "holiday": false, "index": 44, "is_month_start": false, "is_today": false, "iso": "2026-09-02", "m": 9, "wd": "\u6c34", "weekend": false}, {"d": 3, "holiday": false, "index": 45, "is_month_start": false, "is_today": false, "iso": "2026-09-03", "m": 9, "wd": "\u6728", "weekend": false}, {"d": 4, "holiday": false, "index": 46, "is_month_start": false, "is_today": false, "iso": "2026-09-04", "m": 9, "wd": "\u91d1", "weekend": false}, {"d": 5, "holiday": false, "index": 47, "is_month_start": false, "is_today": false, "iso": "2026-09-05", "m": 9, "wd": "\u571f", "weekend": true}, {"d": 6, "holiday": false, "index": 48, "is_month_start": false, "is_today": false, "iso": "2026-09-06", "m": 9, "wd": "\u65e5", "weekend": true}, {"d": 7, "holiday": false, "index": 49, "is_month_start": false, "is_today": false, "iso": "2026-09-07", "m": 9, "wd": "\u6708", "weekend": false}, {"d": 8, "holiday": false, "index": 50, "is_month_start": false, "is_today": false, "iso": "2026-09-08", "m": 9, "wd": "\u706b", "weekend": false}, {"d": 9, "holiday": false, "index": 51, "is_month_start": false, "is_today": false, "iso": "2026-09-09", "m": 9, "wd": "\u6c34", "weekend": false}, {"d": 10, "holiday": false, "index": 52, "is_month_start": false, "is_today": false, "iso": "2026-09-10", "m": 9, "wd": "\u6728", "weekend": false}, {"d": 11, "holiday": false, "index": 53, "is_month_start": false, "is_today": false, "iso": "2026-09-11", "m": 9, "wd": "\u91d1", "weekend": false}, {"d": 12, "holiday": false, "index": 54, "is_month_start": false, "is_today": false, "iso": "2026-09-12", "m": 9, "wd": "\u571f", "weekend": true}, {"d": 13, "holiday": false, "index": 55, "is_month_start": false, "is_today": false, "iso": "2026-09-13", "m": 9, "wd": "\u65e5", "weekend": true}, {"d": 14, "holiday": false, "index": 56, "is_month_start": false, "is_today": false, "iso": "2026-09-14", "m": 9, "wd": "\u6708", "weekend": false}, {"d": 15, "holiday": false, "index": 57, "is_month_start": false, "is_today": false, "iso": "2026-09-15", "m": 9, "wd": "\u706b", "weekend": false}, {"d": 16, "holiday": false, "index": 58, "is_month_start": false, "is_today": false, "iso": "2026-09-16", "m": 9, "wd": "\u6c34", "weekend": false}, {"d": 17, "holiday": false, "index": 59, "is_month_start": false, "is_today": false, "iso": "2026-09-17", "m": 9, "wd": "\u6728", "weekend": false}, {"d": 18, "holiday": false, "index": 60, "is_month_start": false, "is_today": false, "iso": "2026-09-18", "m": 9, "wd": "\u91d1", "weekend": false}, {"d": 19, "holiday": false, "index": 61, "is_month_start": false, "is_today": false, "iso": "2026-09-19", "m": 9, "wd": "\u571f", "weekend": true}, {"d": 20, "holiday": false, "index": 62, "is_month_start": false, "is_today": false, "iso": "2026-09-20", "m": 9, "wd": "\u65e5", "weekend": true}];
+  var TASKS = [{"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 227, "level": 0, "parent_id": null, "people": [{"id": 7, "name": "\u9ad9\u967d\u6602\u5e73"}], "progress": 0, "start": "2026-07-31", "status": "\u672a\u7740\u624b", "task_name": "\u55b6\u696d\u96fb\u8a71\u5fdc\u63f4"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 323, "level": 0, "parent_id": null, "people": [{"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}], "progress": 0, "start": "2026-07-29", "status": "\u672a\u7740\u624b", "task_name": "\u5225\u5e9c\u4f1a\u5408"}, {"delay_days": 0, "editable": true, "end": "2026-07-27", "id": 324, "level": 0, "parent_id": null, "people": [{"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}, {"id": 4, "name": "\u6d66\u677e\u5948\u592e"}], "progress": 0, "start": "2026-07-22", "status": "\u7740\u624b", "task_name": "\u30bf\u30d6\u30ec\u30c3\u30c8\u9078\u5b9a\u30fb\u898b\u7a4d\u30fb\u7a1f\u8b70"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 334, "level": 0, "parent_id": null, "people": [{"id": 4, "name": "\u6d66\u677e\u5948\u592e"}, {"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}], "progress": 0, "start": "2026-07-13", "status": "\u672a\u7740\u624b", "task_name": "Microsoft365\u5c0e\u5165"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 256, "level": 1, "parent_id": 334, "people": [{"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}, {"id": 4, "name": "\u6d66\u677e\u5948\u592e"}], "progress": 0, "start": "2026-07-27", "status": "\u7740\u624b", "task_name": "M365\u5168\u793e\u5c55\u958b\u3000\u5168\u30e6\u30fc\u30b6\u30fc\u901a\u77e5"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 273, "level": 1, "parent_id": 334, "people": [{"id": 4, "name": "\u6d66\u677e\u5948\u592e"}, {"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}], "progress": 56, "start": "2026-07-13", "status": "\u9806\u8abf", "task_name": "M365\u30d1\u30a4\u30ed\u30c3\u30c8\u7d50\u679c\u53cd\u6620\u30fb\u30d7\u30ed\u30b0\u30e9\u30e0\u4fee\u6b63"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 328, "level": 1, "parent_id": 334, "people": [{"id": 4, "name": "\u6d66\u677e\u5948\u592e"}], "progress": 0, "start": "2026-07-24", "status": "\u672a\u7740\u624b", "task_name": "Teams\u8a2d\u5b9a"}, {"delay_days": 0, "editable": true, "end": "2026-08-07", "id": 335, "level": 0, "parent_id": null, "people": [{"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}], "progress": 0, "start": "2026-08-03", "status": "\u672a\u7740\u624b", "task_name": "\u30e1\u30fc\u30eb\u30b5\u30fc\u30d0\u30fc\u79fb\u884c"}, {"delay_days": 0, "editable": true, "end": "2026-08-07", "id": 79, "level": 1, "parent_id": 335, "people": [{"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}, {"id": 4, "name": "\u6d66\u677e\u5948\u592e"}], "progress": 0, "start": "2026-08-03", "status": "\u7740\u624b", "task_name": "M365 Outlook\u79fb\u884c\u624b\u9806\u30fb\u52d5\u4f5c\u78ba\u8a8d\u30fb\u5c55\u958b\u65b9\u6cd5\u306e\u78ba\u5b9a"}, {"delay_days": 0, "editable": true, "end": "2026-08-07", "id": 78, "level": 1, "parent_id": 335, "people": [{"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}, {"id": 4, "name": "\u6d66\u677e\u5948\u592e"}], "progress": 0, "start": "2026-08-03", "status": "\u7740\u624b", "task_name": "M365 \u30e1\u30fc\u30eb\u30a2\u30c9\u30ec\u30b9\u68da\u5378"}, {"delay_days": 0, "editable": true, "end": "2026-10-08", "id": 336, "level": 0, "parent_id": null, "people": [{"id": 7, "name": "\u9ad9\u967d\u6602\u5e73"}, {"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}], "progress": 0, "start": "2026-07-01", "status": "\u672a\u7740\u624b", "task_name": "\u30bb\u30df\u30ca\u30fc\u904b\u55b6"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 45, "level": 1, "parent_id": 336, "people": [{"id": 7, "name": "\u9ad9\u967d\u6602\u5e73"}], "progress": 73, "start": "2026-07-01", "status": "\u9806\u8abf", "task_name": "7\u6708\u30bb\u30df\u30ca\u30fc\u958b\u50ac"}, {"delay_days": 0, "editable": true, "end": "2026-08-06", "id": 178, "level": 1, "parent_id": 336, "people": [{"id": 7, "name": "\u9ad9\u967d\u6602\u5e73"}], "progress": 0, "start": "2026-08-06", "status": "\u672a\u7740\u624b", "task_name": "\u30bb\u30df\u30ca\u30fc\u904b\u55b6\uff08\u73fe\u5730\u30bb\u30df\u30ca\u30fc\uff09"}, {"delay_days": 0, "editable": true, "end": "2026-07-28", "id": 265, "level": 1, "parent_id": 336, "people": [{"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}, {"id": 10, "name": "\u7a74\u6fa4\u54f2\u5ba3"}], "progress": 0, "start": "2026-07-28", "status": "\u672a\u7740\u624b", "task_name": "7/28\u3000\u52d5\u7684\u89e3\u6790 10\u6642\uff5e16\u6642"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 337, "level": 0, "parent_id": null, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-23", "status": "\u672a\u7740\u624b", "task_name": "2027\u5e74\u30ab\u30ec\u30f3\u30c0\u30fc"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 286, "level": 1, "parent_id": 337, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-23", "status": "\u672a\u7740\u624b", "task_name": "\u4f5c\u6210\u624b\u9806\u78ba\u8a8d"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 287, "level": 1, "parent_id": 337, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-23", "status": "\u672a\u7740\u624b", "task_name": "\u65e5\u4ed8\u30c7\u30fc\u30bf\u4f5c\u6210"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 288, "level": 1, "parent_id": 337, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-23", "status": "\u672a\u7740\u624b", "task_name": "\u5199\u771f\u9078\u5b9a/\u78ba\u5b9a"}, {"delay_days": 0, "editable": true, "end": "2026-08-03", "id": 338, "level": 0, "parent_id": null, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-20", "status": "\u672a\u7740\u624b", "task_name": "SNS\u30c8\u30ec\u30f3\u30c9\u5206\u6790\u6295\u7a3f"}, {"delay_days": 0, "editable": true, "end": "2026-07-29", "id": 266, "level": 1, "parent_id": 338, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-29", "status": "\u672a\u7740\u624b", "task_name": "\u7b2c\uff14\u5f3e\u3000\u5fb3\u7530\u3055\u3093\u6253\u5408\u305b"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 270, "level": 1, "parent_id": 338, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-31", "status": "\u672a\u7740\u624b", "task_name": "\u7b2c\uff14\u5f3e\u3000\u65b0\u540d\u3055\u3093\u5831\u544a"}, {"delay_days": 0, "editable": true, "end": "2026-08-03", "id": 329, "level": 1, "parent_id": 338, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-08-03", "status": "\u672a\u7740\u624b", "task_name": "\u7b2c\uff14\u5f3e\u3000\u793e\u9577\u5831\u544a"}, {"delay_days": 0, "editable": true, "end": "2026-07-26", "id": 350, "level": 0, "parent_id": null, "people": [], "progress": 0, "start": "2026-07-26", "status": "\u672a\u7740\u624b", "task_name": "SNS\u30a2\u30ed\u30fc\u30fc\u30d5\u30a1\u30fc\u30e0\u6295\u7a3f"}, {"delay_days": 0, "editable": true, "end": "2026-07-27", "id": 277, "level": 1, "parent_id": 350, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-24", "status": "\u7740\u624b", "task_name": "\u7d39\u4ecb5\u5f3e\u78ba\u8a8d"}, {"delay_days": 0, "editable": true, "end": "2026-07-27", "id": 276, "level": 1, "parent_id": 350, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-27", "status": "\u7740\u624b", "task_name": "\u7d39\u4ecb5\u5f3e\u6295\u7a3f"}, {"delay_days": 0, "editable": true, "end": "2026-07-26", "id": 349, "level": 0, "parent_id": null, "people": [], "progress": 0, "start": "2026-07-26", "status": "\u672a\u7740\u624b", "task_name": "SNS\u30b0\u30eb\u30fc\u30d7\u6295\u7a3f"}, {"delay_days": 0, "editable": true, "end": "2026-07-27", "id": 275, "level": 1, "parent_id": 349, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-20", "status": "\u7740\u624b", "task_name": "\u30b0\u30eb\u30fc\u30d7\u52d5\u753b\u6295\u7a3f"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 339, "level": 0, "parent_id": null, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-22", "status": "\u672a\u7740\u624b", "task_name": "\u7267\u5834\u95a2\u9023(\u30ec\u30c8\u30eb\u30c8\u30fb\u30af\u30c3\u30ad\u30fc)"}, {"delay_days": 0, "editable": true, "end": "2026-07-28", "id": 292, "level": 1, "parent_id": 339, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-27", "status": "\u7740\u624b", "task_name": "\u8ca9\u8def\u958b\u62d3\u5b9f\u8df5"}, {"delay_days": 0, "editable": true, "end": "2026-07-27", "id": 295, "level": 1, "parent_id": 339, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-27", "status": "\u7740\u624b", "task_name": "\u8ca9\u8def\u958b\u62d3 \u307f\u3087\u3046\u3070\u3093\u6e6f\u306e\u91ccTEL\u5831\u544a"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 301, "level": 1, "parent_id": 339, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-22", "status": "\u672a\u7740\u624b", "task_name": "\u30af\u30c3\u30ad\u30fc\u5bb9\u5668\u30fb\u30b7\u30fc\u30eb\u30c7\u30b6\u30a4\u30f3"}, {"delay_days": 0, "editable": true, "end": "2026-07-27", "id": 303, "level": 1, "parent_id": 339, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-27", "status": "\u672a\u7740\u624b", "task_name": "\u5fb3\u7530\u3055\u3093\u3078\u3068POP\u306e\u30a4\u30e1\u30fc\u30b8\u5171\u6709"}, {"delay_days": 0, "editable": true, "end": "2026-07-29", "id": 304, "level": 1, "parent_id": 339, "people": [{"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}], "progress": 0, "start": "2026-07-29", "status": "\u672a\u7740\u624b", "task_name": "\u793e\u9577\u3078POP\u306e\u30a4\u30e1\u30fc\u30b8\u5171\u6709"}, {"delay_days": 0, "editable": true, "end": "2026-07-26", "id": 344, "level": 1, "parent_id": 339, "people": [], "progress": 0, "start": "2026-07-26", "status": "\u672a\u7740\u624b", "task_name": "3\u8fba\u685d"}, {"delay_days": 0, "editable": true, "end": "2026-07-28", "id": 316, "level": 2, "parent_id": 344, "people": [{"id": 9, "name": "\u65e9\u7530"}], "progress": 0, "start": "2026-07-24", "status": "\u672a\u7740\u624b", "task_name": "\u914d\u7b4b\uff08\u958b\u53e3\u306a\u3057\uff09\u52d5\u4f5c\u691c\u8a3c\u30fb\u8abf\u6574"}, {"delay_days": 0, "editable": true, "end": "2026-07-30", "id": 318, "level": 2, "parent_id": 344, "people": [{"id": 9, "name": "\u65e9\u7530"}], "progress": 0, "start": "2026-07-29", "status": "\u672a\u7740\u624b", "task_name": "\u914d\u7b4b\uff08\u958b\u53e3\u6709\uff09\u958b\u53e3\u88dc\u5f37\u30eb\u30fc\u30eb\u8ffd\u52a0"}, {"delay_days": 0, "editable": true, "end": "2026-07-30", "id": 333, "level": 2, "parent_id": 344, "people": [{"id": 9, "name": "\u65e9\u7530"}], "progress": 0, "start": "2026-07-30", "status": "\u672a\u7740\u624b", "task_name": "\u914d\u7b4b\uff08\u958b\u53e3\u6709\uff09\u958b\u53e3\u88dc\u5f37\u65ad\u9762\u56f3\u30fb\u52a0\u5de5\u56f3\u51fa\u529b\u8abf\u6574"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 327, "level": 1, "parent_id": 339, "people": [{"id": 12, "name": "\u91d1\u6d5c"}], "progress": 0, "start": "2026-07-27", "status": "\u672a\u7740\u624b", "task_name": "Revit\u5165\u529b\u30c7\u30fc\u30bf\u4f5c\u6210\u6a5f\u80fd"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 135, "level": 0, "parent_id": null, "people": [{"id": 6, "name": "\u4e80\u5ddd\u5178\u5b50"}], "progress": 0, "start": "2026-07-20", "status": "\u672a\u7740\u624b", "task_name": "\u4e0a\u5c4b\u6570\u91cf\u8a08\u7b97\u66f8 \u30c6\u30f3\u30d7\u30ec\u30fc\u30c8\u4fee\u6b63\u30fb\u30c6\u30b9\u30c8\u2461"}, {"delay_days": 0, "editable": true, "end": "2026-08-05", "id": 341, "level": 0, "parent_id": null, "people": [{"id": 12, "name": "\u91d1\u6d5c"}], "progress": 0, "start": "2026-07-27", "status": "\u672a\u7740\u624b", "task_name": "\u52d5\u7684\u89e3\u6790\u958b\u767a"}, {"delay_days": 0, "editable": true, "end": "2026-08-05", "id": 325, "level": 1, "parent_id": 341, "people": [{"id": 12, "name": "\u91d1\u6d5c"}, {"id": 10, "name": "\u7a74\u6fa4\u54f2\u5ba3"}], "progress": 0, "start": "2026-07-27", "status": "\u672a\u7740\u624b", "task_name": "\u52d5\u7684\u89e3\u6790\u958b\u767a\u3000\u6848\u691c\u8a0e"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 326, "level": 1, "parent_id": 341, "people": [{"id": 12, "name": "\u91d1\u6d5c"}], "progress": 0, "start": "2026-07-27", "status": "\u672a\u7740\u624b", "task_name": "\u52d5\u7684\u89e3\u6790\u3000\u5b66\u7fd2"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 342, "level": 0, "parent_id": null, "people": [{"id": 12, "name": "\u91d1\u6d5c"}, {"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}, {"id": 10, "name": "\u7a74\u6fa4\u54f2\u5ba3"}, {"id": 9, "name": "\u65e9\u7530"}], "progress": 0, "start": "2026-07-22", "status": "\u672a\u7740\u624b", "task_name": "\u914d\u7b4b\u30b7\u30b9\u30c6\u30e0\u958b\u767a"}, {"delay_days": 0, "editable": true, "end": "2026-07-27", "id": 300, "level": 1, "parent_id": 342, "people": [{"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}, {"id": 9, "name": "\u65e9\u7530"}], "progress": 0, "start": "2026-07-22", "status": "\u7740\u624b", "task_name": "\u914d\u7b4b\u3000\u904b\u7528\u74b0\u5883\u958b\u767a\u8a2d\u8a08"}, {"delay_days": 0, "editable": true, "end": "2026-07-27", "id": 302, "level": 1, "parent_id": 342, "people": [{"id": 10, "name": "\u7a74\u6fa4\u54f2\u5ba3"}], "progress": 53, "start": "2026-07-23", "status": "\u672a\u7740\u624b", "task_name": "\u4e0a\u5c4b\u4f5c\u56f3\u6a5f\u80fd\u3000\u4fee\u6b63"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 343, "level": 0, "parent_id": null, "people": [], "progress": 0, "start": "2026-07-23", "status": "\u672a\u7740\u624b", "task_name": "\u914d\u7b4b\u30b7\u30b9\u30c6\u30e0\u958b\u767a"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 308, "level": 1, "parent_id": 343, "people": [{"id": 12, "name": "\u91d1\u6d5c"}], "progress": 0, "start": "2026-07-23", "status": "\u672a\u7740\u624b", "task_name": "\u5b9f\u904b\u7528\u74b0\u5883\u691c\u8a0e"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 348, "level": 0, "parent_id": null, "people": [], "progress": 0, "start": "2026-07-24", "status": "\u672a\u7740\u624b", "task_name": "\u30c7\u30fc\u30bf\u30d9\u30fc\u30b9"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 331, "level": 1, "parent_id": 348, "people": [{"id": 12, "name": "\u91d1\u6d5c"}], "progress": 0, "start": "2026-07-24", "status": "\u672a\u7740\u624b", "task_name": "DB\u691c\u7d22\u8868\u793a\u8a2d\u5b9a\u30d7\u30ea\u30bb\u30c3\u30c8"}, {"delay_days": 0, "editable": true, "end": "2026-07-31", "id": 332, "level": 1, "parent_id": 348, "people": [{"id": 12, "name": "\u91d1\u6d5c"}], "progress": 0, "start": "2026-07-24", "status": "\u672a\u7740\u624b", "task_name": "DB\u767b\u9332\u6a5f\u80fd"}];
+  var ASSIGN_USERS = [{"id": 5, "name": "\u65b0\u540d\u6d0b\u5e78"}, {"id": 7, "name": "\u9ad9\u967d\u6602\u5e73"}, {"id": 4, "name": "\u6d66\u677e\u5948\u592e"}, {"id": 6, "name": "\u4e80\u5ddd\u5178\u5b50"}, {"id": 8, "name": "\u30c6\u30b9\u30c8"}, {"id": 9, "name": "\u65e9\u7530"}, {"id": 10, "name": "\u7a74\u6fa4\u54f2\u5ba3"}, {"id": 11, "name": "\u672c\u6fa4\u8389\u5948"}, {"id": 12, "name": "\u91d1\u6d5c"}];
   var DAYW = 30, INDENT = 18;
 
   var STATUS_COLORS = {
@@ -255,71 +312,14 @@
 
   var gantt = document.getElementById('gantt'), timehead = document.getElementById('gtimehead');
   var gbg = document.getElementById('gbg'), rowsEl = document.getElementById('rows');
-  var gMsFlags = document.getElementById('gMsFlags');
   var timelineW = DAYS * DAYW;
   gantt.style.width = 'calc(var(--namew) + ' + timelineW + 'px)';
-  timehead.style.width = timelineW + 'px'; gbg.style.width = timelineW + 'px'; gMsFlags.style.width = timelineW + 'px';
+  timehead.style.width = timelineW + 'px'; gbg.style.width = timelineW + 'px';
   var tmpSeq = 0;
   var initializing = true;          // 初期描画中は変更フラグを立てない
   var pageDirty = false;
   var deletedIds = [];              // 削除された既存タスクID（保存時に送信）
-
-  /* ── 1操作ずつのUndo履歴（Ctrl+Z） ──
-     操作の直前状態を履歴に積み、Undo時はその1つ前の状態を丸ごと再構築する。
-     個々の操作（ドラッグ・削除・字上げ下げ等）ごとに逆操作を実装する代わりに、
-     行データ全体のスナップショットで代替することで、実装・保守を単純化している。 */
-  var undoStack = [];
-  var UNDO_LIMIT = 50;
-  function snapshotRows() {
-    return Array.prototype.slice.call(rowsEl.querySelectorAll('.g-row')).map(function (row) {
-      var inp = row.querySelector('input.nm');
-      return {
-        id: row.dataset.id || null,
-        isNew: row.dataset.new === '1',
-        name: inp ? inp.value : (row.querySelector('.nm-txt') ? row.querySelector('.nm-txt').textContent : ''),
-        level: +row.dataset.level,
-        start: row.dataset.start || null,
-        end: row.dataset.end || null,
-        status: row.dataset.statusRaw || '未着手',
-        progress: +(row.dataset.progressRaw || 0),
-        delay: +(row.dataset.delayRaw || 0),
-        editable: row.dataset.editable !== '0',
-        dirty: row.dataset.dirty === '1',
-        collapsed: row.dataset.collapsed === '1',
-        people: (row._people || []).slice(),
-      };
-    });
-  }
-  function restoreRows(snapshot) {
-    rowsEl.innerHTML = '';
-    snapshot.forEach(function (s) {
-      var row = makeRow({
-        id: s.id, isNew: s.isNew, name: s.name, level: s.level,
-        start: s.start, end: s.end, status: s.status, progress: s.progress,
-        delay: s.delay, editable: s.editable, people: s.people,
-      });
-      if (s.dirty && s.id) row.dataset.dirty = '1';
-      if (s.collapsed) row.dataset.collapsed = '1';
-    });
-    ensureTrailing(false);
-    recomputeTree();
-  }
-  function pushUndoSnapshot(beforeRows) {
-    undoStack.push({ rows: beforeRows, deletedIds: deletedIds.slice() });
-    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-  }
-  function undoLastChange() {
-    if (!undoStack.length) { setMsg('これ以上は戻せません', 'muted'); return; }
-    var prev = undoStack.pop();
-    restoreRows(prev.rows);
-    deletedIds = prev.deletedIds;
-    pageDirty = undoStack.length > 0;
-    setMsg('直前の操作を元に戻しました', 'success');
-  }
-  function markDirty() {
-    if (initializing) return;
-    pageDirty = true;
-  }
+  function markDirty() { if (!initializing) pageDirty = true; }
 
   var today = new Date(); today.setHours(0, 0, 0, 0);
 
@@ -352,18 +352,14 @@
     var start = row.dataset.start, end = row.dataset.end, prog;
     if (st === '完了') prog = 100;
     else if (st === '未着手') prog = 0;
-    // 進捗バーを手動でドラッグ操作した行は、状態にかかわらず入力値を優先する
-    // （自動計算に即座に上書きされ「操作できない」ように見える不具合を防ぐ）。
-    else if (row.dataset.progressManual === '1') prog = p;
     else if (!start || !end) prog = p;
-    // 順調・着手は日数ベースで自動計算する（予定工数未設定でも0%のまま止まらないようにするため）。
-    else if (st === '順調' || st === '着手') prog = autoProgressByDate(start, end);
+    else if (st === '順調') prog = autoProgressByDate(start, end);
     else if (st === '遅れ') {
       var s = toDate(start), e = toDate(end);
       var total = Math.max(1, Math.round((e - s) / 86400000));
       var elapsed = Math.round((today - s) / 86400000);
       prog = Math.max(0, Math.min(99, Math.round((elapsed - delay) / total * 100)));
-    } else prog = p;  // 停止＝入力値
+    } else prog = p;  // 着手・停止＝入力値
     return { status: st, progress: prog };
   }
 
@@ -378,43 +374,12 @@
     timehead.appendChild(cell);
   });
 
-  /* マイルストーンの縦線を背景レイヤー(.g-bg)に、旗マーカーを専用レイヤー(.g-ms-flags)に描画する。
-     画面上の全マイルストーン行（dataset.milestone==='1'）の開始日を集め、
-     表示範囲内であれば、その日の中央に画面全体を貫通する線を1本引く
-     （行を折りたたんでいても、日付は変わらないため常に描画する）。
-     線本体（.g-bg 内）は各行 .g-row（z-index:1）より下に隠れてよいが、ホバー対象の
-     旗マーカーは行より確実に手前に出す必要があるため、別レイヤーに分けて描画する。 */
-  function renderMilestoneLines() {
-    gbg.querySelectorAll('.g-ms-fullline').forEach(function (el) { el.remove(); });
-    gMsFlags.innerHTML = '';
-    rowsEl.querySelectorAll('.g-row').forEach(function (row) {
-      if (row.dataset.milestone !== '1' || !row.dataset.start) return;
-      var idx = dayIndexOf(row.dataset.start);
-      if (idx < 0 || idx >= DAYS) return;
-      var eff = effOf(row);
-      var isDone = eff.status === '完了';
-      var msTitle = (row.querySelector('.nm-txt') ? row.querySelector('.nm-txt').textContent
-        : (row.querySelector('input.nm') ? row.querySelector('input.nm').value : '')) + '（' + row.dataset.start + '）';
-      var line = document.createElement('div');
-      line.className = 'g-ms-fullline' + (isDone ? ' done' : '');
-      line.style.left = (idx * DAYW + DAYW / 2) + 'px';
-      gbg.appendChild(line);
-      // title は実際にホバーされる旗マーカー（.g-ms-flag）自体に設定する（DOM APIで
-      // 安全に設定し、タスク名の特殊文字がHTMLとして解釈されないようにする）。
-      var flag = document.createElement('span');
-      flag.className = 'g-ms-flag' + (isDone ? ' done' : '');
-      flag.style.left = (idx * DAYW + DAYW / 2) + 'px';
-      flag.title = msTitle;
-      gMsFlags.appendChild(flag);
-    });
-  }
-
   function prevRowOf(row) {
     var p = row.previousElementSibling;
     while (p && !p.classList.contains('g-row')) p = p.previousElementSibling;
     return p;
   }
-  var MAX_LEVEL = 3;   // 子は3世代まで（親=0／子=1／孫=2／曾孫=3）
+  var MAX_LEVEL = 2;   // 子は2世代まで（親=0／子=1／孫=2）
   /* レベル（インデント）を見た目に反映するだけ（変更フラグは立てない） */
   function applyLevel(row, lv) {
     var prev = prevRowOf(row);
@@ -433,7 +398,6 @@
   }
   /* ユーザー操作によるレベル変更（変更フラグを立てる） */
   function setLevel(row, lv) {
-    if (!initializing) pushUndoSnapshot(snapshotRows());
     applyLevel(row, lv);
     if (row.dataset.id) row.dataset.dirty = '1';
     markDirty();
@@ -508,7 +472,6 @@
     return Array.prototype.slice.call(rowsEl.querySelectorAll('.g-row')).filter(function (r) { return drag.block.indexOf(r) < 0; });
   }
   function startRowDrag(rootRow, e) {
-    pushUndoSnapshot(snapshotRows());
     var block = rowBlock(rootRow);
     drag = { block: block, root: rootRow, ref: null,
              origRef: block[block.length - 1].nextElementSibling };
@@ -551,8 +514,6 @@
       });
       markDirty();
       recomputeTree();
-    } else {
-      undoStack.pop();  // 実質的な変化がなければ、開始時に積んだ履歴を取り消す
     }
     drag = null;
   }
@@ -574,7 +535,6 @@
     row.className = 'g-row';
     row.dataset.tmp = 'c' + (++tmpSeq);
     row.dataset.level = opts.level || 0;
-    if (opts.isMilestone) row.dataset.milestone = '1';
     if (opts.id) row.dataset.id = opts.id;
     if (opts.isNew) row.dataset.new = '1';
     row.dataset.statusRaw = opts.isNew ? '未着手' : (opts.status || '未着手');
@@ -590,7 +550,6 @@
       '<span class="ctl">' +
         '<button class="tw out" title="親レベルに戻す（字上げ）">＜</button>' +
         '<button class="tw in" title="1つ上の行の子タスクにする（字下げ）">＞</button>' +
-        '<button class="ins" title="この行の直後に新しいタスクを挿入">＋</button>' +
         '<button class="del" title="この行を削除">×</button>' +
       '</span>' +
       '<span class="tree"></span>' +
@@ -620,7 +579,6 @@
     if (editable) {
       name.querySelector('.tw.in').addEventListener('click', function () { setLevel(row, +row.dataset.level + 1); });
       name.querySelector('.tw.out').addEventListener('click', function () { setLevel(row, +row.dataset.level - 1); });
-      name.querySelector('.ins').addEventListener('click', function () { insertAfter(row); });
       name.querySelector('.del').addEventListener('click', function () { deleteRow(row); });
       name.querySelector('.drag-h').addEventListener('mousedown', function (e) { e.preventDefault(); startRowDrag(row, e); });
       ab.addEventListener('click', function (e) { e.stopPropagation(); openPeoplePicker(row, ab); });
@@ -647,20 +605,8 @@
 
   /* バーの見た目（計画枠＋進捗塗り＋進捗率）を状態から算出して反映 */
   function styleBar(bar, row) {
-    var eff = effOf(row), st = eff.status;
-    // マイルストーンは行内バーを表示せず、画面全体を貫通する縦線（renderMilestoneLines）
-    // で表現する。ここでは行のバー要素自体は隠したまま、色（完了/未完了）だけ更新する。
-    if (row.dataset.milestone === '1') {
-      bar.classList.remove('plan', 'stop');
-      bar.classList.add('milestone');
-      bar.classList.toggle('done', st === '完了');
-      bar.classList.toggle('unsaved', row.dataset.new === '1' || row.dataset.dirty === '1');
-      updateMeta(row);
-      renderMilestoneLines();
-      return;
-    }
-    var prog = bar.querySelector('.g-prog'), pct = bar.querySelector('.g-pct');
-    bar.classList.remove('plan', 'done', 'stop', 'milestone');
+    var eff = effOf(row), st = eff.status, prog = bar.querySelector('.g-prog'), pct = bar.querySelector('.g-pct');
+    bar.classList.remove('plan', 'done', 'stop');
     if (st === '完了') { bar.classList.add('done'); prog.style.width = '0'; }
     else if (st === '停止') { bar.classList.add('stop'); prog.style.width = '0'; }
     else {
@@ -686,15 +632,6 @@
     var old = track.querySelector('.g-bar'); if (old) old.remove();
     if (ei < si) { var t = si; si = ei; ei = t; }
     var bar = document.createElement('div');
-    var isMs = row.dataset.milestone === '1';
-    if (isMs) {
-      // マイルストーンは単一日（開始日=終了日）として日付だけ保持する。
-      // 見た目は行のバーではなく、画面全体を貫通する縦線（renderMilestoneLines）で表現する。
-      ei = si;
-      bar.className = 'g-bar milestone';
-      row.dataset.start = addDaysIso(RANGE_START, si); row.dataset.end = addDaysIso(RANGE_START, ei);
-      track.appendChild(bar); styleBar(bar, row); renderMilestoneLines(); return bar;
-    }
     bar.className = 'g-bar plan';
     bar.style.left = (si*DAYW)+'px'; bar.style.width = ((ei-si+1)*DAYW)+'px';
     bar.innerHTML = '<span class="g-prog"><span class="g-prog-h" title="ドラッグで進捗を調整"></span></span><span class="g-pct"></span><span class="h l"></span><span class="h r"></span>';
@@ -709,13 +646,11 @@
     var handle = bar.querySelector('.g-prog-h');
     handle.addEventListener('mousedown', function (e) {
       e.preventDefault(); e.stopPropagation();
-      pushUndoSnapshot(snapshotRows());
       var rect = bar.getBoundingClientRect();
       function mv(ev) {
         var pct = Math.max(0, Math.min(100, Math.round((ev.clientX - rect.left) / rect.width * 100)));
         if (row.dataset.statusRaw !== '停止') row.dataset.statusRaw = '着手';  // 手動進捗として扱う
         row.dataset.progressRaw = String(pct);
-        row.dataset.progressManual = '1';  // 以後、日数ベース自動計算より入力値を優先する
         styleBar(bar, row);
       }
       function up() {
@@ -754,7 +689,6 @@
       if (e.target.closest('.g-bar')) return;
       if (track.querySelector('.g-bar')) return;
       e.preventDefault();
-      pushUndoSnapshot(snapshotRows());
       var rect = track.getBoundingClientRect();
       var s0 = clampIdx(Math.floor((e.clientX - rect.left)/DAYW));
       var tip = document.createElement('div'); tip.className = 'g-drawtip'; track.appendChild(tip);
@@ -793,7 +727,6 @@
     if (row.dataset.editable === '0') return;   // 読取専用行はバー操作不可
     bar.addEventListener('mousedown', function (e) {
       e.preventDefault(); e.stopPropagation();
-      pushUndoSnapshot(snapshotRows());
       var rect = track.getBoundingClientRect(), mode='move';
       if (e.target.classList.contains('h')&&e.target.classList.contains('l')) mode='l';
       else if (e.target.classList.contains('h')&&e.target.classList.contains('r')) mode='r';
@@ -834,10 +767,9 @@
   var popBody = pop.querySelector('.body');
   var popHd = pop.querySelector('.hd');
   function openPeoplePicker(row, btn) {
-    pushUndoSnapshot(snapshotRows());
     var isParent = +row.dataset.level === 0;
-    var max = Infinity;
-    popHd.textContent = isParent ? 'メンバー（関係ユーザー）' : '担当者';
+    var max = isParent ? Infinity : 2;
+    popHd.textContent = isParent ? 'メンバー（関係ユーザー）' : '担当者（最大2名）';
     var sel = (row._people || []).map(function (x) { return x.id; });
     popBody.innerHTML = '';
     ASSIGN_USERS.forEach(function (u) {
@@ -889,7 +821,6 @@
     if (hasContent) {
       var msg = block.length > 1 ? 'このタスクと子タスクを削除しますか？' : 'このタスクを削除しますか？';
       if (!confirm(msg)) return;
-      pushUndoSnapshot(snapshotRows());
     }
     block.forEach(function (el) {
       if (el.dataset.id) deletedIds.push(+el.dataset.id);
@@ -902,7 +833,6 @@
 
   /* 指定行の直後（子孫の後）に新規行を挿入する */
   function insertAfter(refRow) {
-    pushUndoSnapshot(snapshotRows());
     var lv = +refRow.dataset.level;
     var block = rowBlock(refRow), after = block[block.length - 1];
     var r = makeRow({ isNew: true, level: lv });     // 末尾に生成
@@ -930,10 +860,6 @@
 
   document.getElementById('userSelect') && document.getElementById('userSelect').addEventListener('change', function () {
     var u = new URL(window.location); u.searchParams.set('user_id', this.value); window.location = u;
-  });
-
-  document.getElementById('showDoneCheck') && document.getElementById('showDoneCheck').addEventListener('change', function () {
-    var u = new URL(window.location); u.searchParams.set('show_done', this.checked ? '1' : '0'); window.location = u;
   });
 
   /* ── タスク詳細・編集モーダル（日付・状態・進捗を専用画面で編集） ── */
@@ -966,7 +892,6 @@
   }
   function detApply() {
     if (!detRow) return false;
-    pushUndoSnapshot(snapshotRows());
     var newName = q('.dt-name').value.trim();
     var nameInp = detRow.querySelector('input.nm');
     var nameTxt = detRow.querySelector('.nm-txt');
@@ -981,9 +906,6 @@
     detRow.dataset.statusRaw = q('.dt-status').value;
     detRow.dataset.delayRaw = String(Math.max(0, parseInt(q('.dt-delay').value) || 0));
     if (!q('.dt-prog').disabled) detRow.dataset.progressRaw = String(Math.max(0, Math.min(100, parseInt(q('.dt-prog').value) || 0)));
-    // 詳細編集画面で状態・進捗を明示的に選び直した場合は、進捗バードラッグ時に
-    // 立てた「手動優先」フラグを解除し、状態に応じた通常の計算方法に戻す。
-    delete detRow.dataset.progressManual;
     if (s && e) {
       var track = detRow.querySelector('.g-track');
       var old = track.querySelector('.g-bar'); if (old) old.remove();  // 範囲外変更時に旧バーを残さない
@@ -992,16 +914,6 @@
       }
       // addBar はクランプ後の日付を dataset に書くため、真の入力日付で上書きし直す
       detRow.dataset.start = s; detRow.dataset.end = e;
-    } else if (!s && !e) {
-      // 開始日・終了日を両方クリアした場合：ガントバーを削除し、日程未設定に戻す。
-      var trackNoBar = detRow.querySelector('.g-track');
-      var oldBar = trackNoBar.querySelector('.g-bar'); if (oldBar) oldBar.remove();
-      delete detRow.dataset.start; delete detRow.dataset.end;
-      // 状態・進捗も未着手・0%に揃える。状態を「着手」等のまま日付だけ消すと、
-      // ダイアログを開いた時点の自動計算値（日数ベースの進捗％）が残ってしまうため。
-      detRow.dataset.statusRaw = '未着手';
-      detRow.dataset.progressRaw = '0';
-      if (detRow.dataset.milestone === '1') renderMilestoneLines();
     }
     if (detRow.dataset.id) detRow.dataset.dirty = '1';
     markDirty();
@@ -1010,10 +922,6 @@
     return true;
   }
   q('.dt-status').addEventListener('change', detRefresh);
-  q('.dt-clear-bar').addEventListener('click', function () {
-    if (!confirm('このタスクのガントバー（日程）を削除しますか？')) return;
-    q('.dt-start').value = ''; q('.dt-end').value = '';
-  });
   q('.dt-cancel').addEventListener('click', function () { detModal.style.display = 'none'; detRow = null; });
   q('.dt-save').addEventListener('click', function () { if (detApply()) { detModal.style.display = 'none'; saveAll(); } });
   detModal.addEventListener('mousedown', function (e) { if (e.target === detModal) { detModal.style.display = 'none'; detRow = null; } });
@@ -1033,6 +941,16 @@
                status: row.dataset.statusRaw || '未着手', progress: eff.progress,
                delay: parseInt(row.dataset.delayRaw || '0') || 0,
                people: (row._people || []).map(function (a) { return a.id; }) };
+    });
+    // 親にバーが無ければ子の期間で補完
+    items.forEach(function (it, idx) {
+      if (it.start && it.end) return;
+      var cs = null, ce = null;
+      for (var j = idx + 1; j < items.length; j++) {
+        if (items[j].level <= it.level) break;
+        if (items[j].start && items[j].end) { if (!cs || items[j].start < cs) cs = items[j].start; if (!ce || items[j].end > ce) ce = items[j].end; }
+      }
+      if (cs && ce) { it.start = cs; it.end = ce; }
     });
     var rows = [];
     var invalid = false;
@@ -1056,13 +974,13 @@
       }
       // 既存行は並び順反映のため dirty でなくても送信する
       rows.push({ tmp: it.tmp, id: it.id, name: it.name, start: it.start, end: it.end,
-                  level: it.level, parent_id: parent_id, parent_tmp: parent_tmp, dirty: it.dirty,
+                  parent_id: parent_id, parent_tmp: parent_tmp, dirty: it.dirty,
                   status: it.status, progress: it.progress, delay: it.delay, people: it.people });
     });
     if (invalid) { setMsg('バーを描いた行にタスク名を入力してください', 'danger'); return; }
     if (!rows.length) { setMsg('保存する変更がありません', 'muted'); return; }
     setMsg('保存中...', 'muted');
-    fetch('{{ url_for("planner_bp.save") }}', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
+    fetch('/planner/save', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
       body: JSON.stringify({ user_id: SELECTED_USER_ID, rows: rows, deleted: deletedIds }) })
       .then(function (r) { return r.json(); }).then(function (d) {
         if (d && d.ok) {
@@ -1088,20 +1006,8 @@
     if (pageDirty) { e.preventDefault(); e.returnValue = ''; return ''; }
   });
 
-  // Ctrl+Z（テキスト編集中はブラウザ標準のUndoに任せる）・「元に戻す」ボタンの共通結線
-  document.addEventListener('keydown', function (e) {
-    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.key.toLowerCase() !== 'z') return;
-    var tag = (e.target.tagName || '').toLowerCase();
-    if (tag === 'input' || tag === 'textarea') return;  // テキスト編集中はブラウザ標準のUndoに任せる
-    e.preventDefault();
-    undoLastChange();
-  });
-  var undoBtn = document.getElementById('undoBtn');
-  if (undoBtn) undoBtn.addEventListener('click', undoLastChange);
-
   // 初期描画
-  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable, isMilestone: t.is_milestone }); });
-  renderMilestoneLines();  // マイルストーンの全体貫通縦線を描画
+  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable }); });
   ensureTrailing(false);  // 末尾に入力行
   // 前回の折りたたみ状態を復元（保存済みIDを collapsed=1 に）。
   var _collapsed = loadCollapsedSet();
@@ -1170,4 +1076,42 @@
   })();
 })();
 </script>
-{% endblock %}
+
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+  // IME制御: 数値・日付フィールドのみIMEを無効化する
+  (function () {
+    function setImeHints(root) {
+      // 数値・日付 → IME無効
+      root.querySelectorAll('input[type="number"], input[type="date"]').forEach(function (el) {
+        if (!el.dataset.imeSet) {
+          el.style.imeMode = 'inactive';
+          el.dataset.imeSet = '1';
+        }
+      });
+    }
+
+    // 初期設定
+    document.addEventListener('DOMContentLoaded', function () {
+      setImeHints(document);
+
+      // 動的に追加される要素にも対応
+      var observer = new MutationObserver(function (mutations) {
+        mutations.forEach(function (m) {
+          m.addedNodes.forEach(function (node) {
+            if (node.nodeType === 1) setImeHints(node);
+          });
+        });
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+  })();
+  </script>
+  
+  
+  <script src="/static/event_notify.js" defer></script>
+  
+  
+</body>
+</html>

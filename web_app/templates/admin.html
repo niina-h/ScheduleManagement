@@ -9,6 +9,7 @@
     {% if session.user_role == 'システム管理者' %}
     <a href="{{ url_for('export_bp.import_schedule') }}" class="btn btn-outline-success btn-sm">📥 予定インポート</a>
     <a href="{{ url_for('mail_report_bp.settings') }}" class="btn btn-outline-warning btn-sm">⚙ メール設定</a>
+    <a href="{{ url_for('survey_bp.survey_results') }}" class="btn btn-outline-info btn-sm">📝 アンケート回答一覧</a>
     <a href="{{ url_for('admin_bp.db_download') }}" class="btn btn-outline-dark btn-sm"
        title="現時点のDBファイルをダウンロード（端末故障時の復旧用バックアップ）">💾 DBバックアップ取得</a>
     {% endif %}

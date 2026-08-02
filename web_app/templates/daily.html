@@ -20,7 +20,7 @@
   </a>
   <a class="btn btn-outline-primary btn-sm ms-2"
      href="{{ url_for('daily_bp.daily_today') }}{% if is_admin_view is defined and is_admin_view %}?user_id={{ target_user.id }}{% endif %}">今日</a>
-  {% if (session.user_role == '管理職' or session.user_role == 'システム管理者') and all_users %}
+  {% if role_is_privileged and all_users %}
   <div class="input-group input-group-sm ms-auto" style="width:auto;">
     <span class="input-group-text">切り替え：</span>
     <select class="form-select form-select-sm" style="width:auto;"
@@ -385,101 +385,11 @@
     </div>
   </div>
 
-  {# ---- 管理者（上長）コメント欄 ---- #}
-  {# 入力フォーム表示条件: 管理職→管理職/マスタ以外、マスタ→全員（自分以外）。管理職→マスタは閲覧専用ブロックで表示する #}
-  {% if (session.user_role == '管理職' or session.user_role == 'システム管理者') and is_admin_view is defined and is_admin_view
-      and not (session.user_role == '管理職' and target_user.get('role','') in ('管理職','システム管理者')) %}
-  {# 管理者が部下の画面を閲覧中: 振り返り（左）＋上長コメント（右）の2カラム #}
-  <div class="row g-3 mt-1">
-    <!-- 左: 部下の振り返り（読み取り専用） -->
-    <div class="col-md-5">
-      <div class="card border-info h-100">
-        <div class="card-header bg-info text-white py-2">
-          <strong>{{ target_user.name }}さんの振り返り</strong>
-        </div>
-        <div class="card-body p-2">
-          <div class="mb-2">
-            <small class="text-muted fw-bold">本日の振り返り</small>
-            <div style="min-height:60px;max-height:120px;overflow-y:auto;white-space:pre-wrap;background:#f8f9fa;padding:0.5rem;border-radius:4px;">
-              {{ comment.reflection if comment and comment.reflection else '（未記入）' }}
-            </div>
-          </div>
-          <div>
-            <small class="text-muted fw-bold">対策・懸念事項</small>
-            <div style="min-height:60px;max-height:120px;overflow-y:auto;white-space:pre-wrap;background:#f8f9fa;padding:0.5rem;border-radius:4px;">
-              {{ comment.action if comment and comment.action else '（未記入）' }}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <!-- 右: 上長コメント入力 -->
-    <div class="col-md-7">
-      <div class="card border-success h-100">
-        <div class="card-header bg-success text-white py-2">
-          <strong>📝 上長コメント</strong>
-        </div>
-        <div class="card-body p-2">
-          <form id="admin-comment-form" method="post" action="{{ url_for('daily_bp.daily_save_admin_comment') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="date_str" value="{{ date_str }}">
-            <input type="hidden" name="target_user_id" value="{{ target_user.id }}">
-            <input type="hidden" name="ajax" value="1">
-            <textarea name="admin_comment" id="admin-comment-textarea" class="form-control" rows="6"
-                      placeholder="部下への上長コメントを入力してください。" style="overflow-y:auto; max-height:200px;">{{ comment.admin_comment if comment and comment.admin_comment else '' }}</textarea>
-            <div class="mt-2 d-flex align-items-center gap-2">
-              <button type="submit" class="btn btn-success btn-sm">💾 上長コメントを保存</button>
-              <span id="admin-comment-status" class="small
-                {% if comment and comment.admin_comment and comment.updated_at %}text-success{% else %}text-muted{% endif %}">
-                {% if comment and comment.admin_comment and comment.updated_at %}
-                  ✅ 保存済み {{ comment.updated_at[:16] | replace('T', ' ') }}{% if comment.updated_by %}（{{ comment.updated_by }}）{% endif %}
-                {% else %}
-                  未保存
-                {% endif %}
-              </span>
-            </div>
-          </form>
-        </div>
-        <script>
-        (function() {
-          var form = document.getElementById('admin-comment-form');
-          if (!form) return;
-          form.addEventListener('submit', function(e) {
-            e.preventDefault();
-            var btn = form.querySelector('button[type="submit"]');
-            var status = document.getElementById('admin-comment-status');
-            btn.disabled = true;
-            btn.textContent = '保存中...';
-            fetch(form.action, {
-              method: 'POST',
-              body: new FormData(form)
-            })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-              if (data.ok) {
-                status.className = 'small text-success';
-                status.textContent = '✅ 保存済み ' + data.updated_at + '（' + data.updated_by + '）';
-              } else {
-                status.className = 'small text-danger';
-                status.textContent = '❌ 保存に失敗しました';
-              }
-            })
-            .catch(function() {
-              status.className = 'small text-danger';
-              status.textContent = '❌ 通信エラー';
-            })
-            .finally(function() {
-              btn.disabled = false;
-              btn.textContent = '💾 上長コメントを保存';
-            });
-          });
-        })();
-        </script>
-      </div>
-    </div>
-  </div>
-  {% elif comment and comment.admin_comment %}
-  {# 自分自身の画面または閲覧専用ケース（管理職→マスタ等）：上長コメントを読み取り専用で表示 #}
+  {# ---- 管理者（上長）コメント欄 ----
+     切り替え中でも本人ログイン時と同じ画面にするため、入力欄は常設せず、
+     上長にあたる人が「📝 上長コメントを書く」ボタン経由でモーダルから入力する。 #}
+  {% if comment and comment.admin_comment %}
+  {# 上長コメントが保存済みなら、本人・切り替え中を問わず読み取り専用で表示 #}
   <div class="row g-3 mt-1">
     <div class="col-12">
       <div class="card border-success">
@@ -505,32 +415,27 @@
     </div>
   </div>
   {% endif %}
-  {# 管理者自身のページ（is_admin_view=False）の場合は管理者コメント欄を表示しない #}
 
   <div class="mt-1 small text-muted">★＝タスク管理に登録された作業</div>
   {# ---- 操作ボタン ---- #}
   <div class="d-flex align-items-center gap-2 mt-3 flex-wrap">
-    {% if not (is_admin_view is defined and is_admin_view) %}
     <button type="submit" class="btn btn-primary">💾 実績を保存</button>
-    {% endif %}
     <a href="{{ url_for('export_bp.download_report', date=date_str, user_id=target_user.id if target_user else '') }}"
        class="btn btn-outline-success">📥 日報 Excel</a>
     <a href="{{ url_for('export_bp.print_report', date=date_str, user_id=target_user.id if target_user else '') }}"
-       class="btn btn-outline-dark" target="_blank">📄 日報 PDF</a>
+       class="btn btn-outline-dark" target="_blank">📄 日報</a>
     {% if not (is_admin_view is defined and is_admin_view) %}
     <a href="{{ url_for('mail_report_bp.user_preview', date=date_str) }}"
        class="btn btn-outline-primary">📧 日報メール</a>
     {% endif %}
-    {% if session.user_role == '管理職' or session.user_role == 'システム管理者' %}
-    <a href="{{ url_for('export_bp.download_team_report', date=date_str) }}"
-       class="btn btn-outline-info">📋 チーム日報 Excel</a>
+    {% if role_is_privileged %}
     <a href="{{ url_for('mail_report_bp.preview', date=date_str) }}"
        class="btn btn-outline-primary">📧 管理職日報メール</a>
-    {% endif %}
-    {% if session.user_role == 'システム管理者' %}
     <a href="{{ url_for('export_bp.export_admin_daily', date_str=date_str) }}"
        class="btn btn-outline-warning">📊 全員日報 Excel</a>
-
+    {% endif %}
+    {% if can_comment_target %}
+    <button type="button" class="btn btn-outline-success" id="open-admin-comment-modal">📝 上長コメントを書く</button>
     {% endif %}
   </div>
 
@@ -556,8 +461,8 @@
 </form>
 {% endfor %}
 
-{# ---- 管理者: 部下の振り返りコメント一覧 ---- #}
-{% if (session.user_role == '管理職' or session.user_role == 'システム管理者') and not is_admin_view and subordinate_comments %}
+{# ---- 管理者: 部下の振り返りコメント一覧（切り替え中は「切り替え先」の部下一覧になる） ---- #}
+{% if subordinate_comments %}
 <div class="mt-4">
   <h6 class="fw-bold border-bottom pb-2">部下の振り返りコメント（{{ date_str }}）</h6>
   {% for item in subordinate_comments %}
@@ -615,6 +520,82 @@
   </div>
   {% endfor %}
 </div>
+{% endif %}
+
+{# ---- 上長コメント入力モーダル（表示中の本人＝target_user への上長コメント） ---- #}
+{% if can_comment_target %}
+<div id="admin-comment-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:1050;
+     align-items:center; justify-content:center;">
+  <div class="card shadow" style="max-width:520px; width:92%;">
+    <div class="card-header bg-success text-white py-2 d-flex justify-content-between align-items-center">
+      <strong>📝 {{ target_user.name }}さんへの上長コメント</strong>
+      <button type="button" class="btn-close btn-close-white" id="close-admin-comment-modal" aria-label="閉じる"></button>
+    </div>
+    <div class="card-body p-3">
+      <form id="admin-comment-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="date_str" value="{{ date_str }}">
+        <input type="hidden" name="target_user_id" value="{{ target_user.id }}">
+        <input type="hidden" name="ajax" value="1">
+        <textarea name="admin_comment" class="form-control" rows="6"
+                  placeholder="上長コメントを入力してください。">{{ comment.admin_comment if comment and comment.admin_comment else '' }}</textarea>
+        <div class="mt-2 d-flex align-items-center gap-2">
+          <button type="submit" class="btn btn-success btn-sm">💾 保存</button>
+          <span id="admin-comment-status" class="small
+            {% if comment and comment.admin_comment and comment.updated_at %}text-success{% else %}text-muted{% endif %}">
+            {% if comment and comment.admin_comment and comment.updated_at %}
+              ✅ 保存済み {{ comment.updated_at[:16] | replace('T', ' ') }}{% if comment.updated_by %}（{{ comment.updated_by }}）{% endif %}
+            {% else %}
+              未保存
+            {% endif %}
+          </span>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var openBtn = document.getElementById('open-admin-comment-modal');
+  var closeBtn = document.getElementById('close-admin-comment-modal');
+  var modal = document.getElementById('admin-comment-modal');
+  if (!openBtn || !modal) return;
+  openBtn.addEventListener('click', function () { modal.style.display = 'flex'; });
+  closeBtn.addEventListener('click', function () { modal.style.display = 'none'; });
+  modal.addEventListener('mousedown', function (e) { if (e.target === modal) modal.style.display = 'none'; });
+
+  var form = document.getElementById('admin-comment-form');
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = form.querySelector('button[type="submit"]');
+    var status = document.getElementById('admin-comment-status');
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+    fetch("{{ url_for('daily_bp.daily_save_admin_comment') }}", {
+      method: 'POST',
+      body: new FormData(form),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ok) {
+          status.className = 'small text-success';
+          status.textContent = '✅ 保存済み ' + data.updated_at + '（' + data.updated_by + '）';
+        } else {
+          status.className = 'small text-danger';
+          status.textContent = '❌ 保存に失敗しました';
+        }
+      })
+      .catch(function () {
+        status.className = 'small text-danger';
+        status.textContent = '❌ 通信エラー';
+      })
+      .finally(function () {
+        btn.disabled = false;
+        btn.textContent = '💾 保存';
+      });
+  });
+})();
+</script>
 {% endif %}
 {% endblock %}
 
@@ -954,9 +935,10 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
   }
   if (!projectTasks.length) return;
 
-  /* タスク名 → {id, status, progress} のマップ */
+  /* タスク名 → {id, status, progress} のマップ、および ID → タスク名の逆引きマップ */
   var taskMap = {};
-  projectTasks.forEach(function (t) { taskMap[t.name] = t; });
+  var idToName = {};
+  projectTasks.forEach(function (t) { taskMap[t.name] = t; idToName[t.id] = t.name; });
 
   function updateBadge(slot, idx, ptId) {
     var badge = document.querySelector('.pt-link-badge[data-slot="' + slot + '"][data-idx="' + idx + '"]');
@@ -989,8 +971,13 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
       );
       if (!hidden) return;
 
-      /* 既に紐付き済みの場合は上書きしない */
-      if (hidden.value) { updateBadge(slot, idx, hidden.value); return; }
+      /* 既に紐付き済みでも、紐付き先のタスク名と入力中の名前が一致しなくなった
+         場合は古い紐付けを解除し、新しい名前で再判定する（タスク名だけ別作業に
+         書き換えたのに古いタスクへの紐付けが残り続ける不具合を防ぐ）。 */
+      if (hidden.value) {
+        if (idToName[hidden.value] === name) { updateBadge(slot, idx, hidden.value); return; }
+        hidden.value = '';
+      }
 
       var matched = taskMap[name];
       if (matched) {

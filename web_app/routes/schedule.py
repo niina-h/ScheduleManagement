@@ -30,6 +30,7 @@ from ..models import (
     get_all_subcategories,
     get_all_users,
     get_daily_comment,
+    get_latest_daily_comment,
     get_events_for_user_date,
     get_task_master,
     get_user_by_id,
@@ -195,10 +196,14 @@ def weekly() -> Any:
     schedule_meta: dict | None = get_weekly_schedule_meta(target_user_id, week_start)
 
     # 管理職・マスタ用: ユーザーリスト（ユーザー切り替えセレクト用・スコープ制限あり）
+    # システム管理者が所属切替していない場合、get_accessible_users は全所属を返すが、
+    # 部署未設定のテスト用アカウント等が混入するのを避けるため、自分自身の所属で絞り込む。
     login_role: str = session.get("user_role", "")
     login_dept: str = session.get("user_dept", "")
     if is_privileged(login_role):
         all_users: list[dict] = get_accessible_users(int(login_user_id), login_role, login_dept)
+        if login_dept:
+            all_users = [u for u in all_users if (u.get("dept") or "") == login_dept]
     else:
         all_users = []
 
@@ -234,6 +239,10 @@ def weekly() -> Any:
             "admin_comment": c.get("admin_comment", ""),
             "updated_by": c.get("updated_by", ""),
         }
+
+    # 直近の振り返り・懸念事項（本日入力済みなら本日分、未入力なら直近の入力日）。
+    # 上長コメントはその日付にちょうど入力されている場合のみ表示し、無ければ空欄のままにする。
+    latest_comment: dict = get_latest_daily_comment(target_user_id, date.today().isoformat())
 
     categories = get_all_categories()
     all_subcategories = get_all_subcategories()
@@ -279,6 +288,7 @@ def weekly() -> Any:
         all_users=all_users,
         week_daily_results=week_daily_results,
         week_admin_comments=week_admin_comments,
+        latest_comment=latest_comment,
         categories=categories,
         all_subcategories=all_subcategories,
         active_project_tasks=active_project_tasks,

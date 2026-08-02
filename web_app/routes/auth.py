@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import secrets
+from typing import Any
 
 from flask import (
     Blueprint,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -29,43 +31,6 @@ auth_bp = Blueprint("auth", __name__)
 
 # 記憶トークンクッキーの有効期間（1年）
 _TOKEN_MAX_AGE = 365 * 24 * 3600
-
-# ── ログイン試行のレート制限（4桁PINの総当たり対策） ──
-# login_id ごとに連続失敗回数と最終失敗時刻をメモリに保持する。
-# 社内LAN・少人数運用のため、専用テーブルは設けずプロセス内メモリで十分。
-_MAX_FAILURES = 5           # 連続失敗の上限
-_LOCKOUT_SECONDS = 300      # ロックアウト時間（5分）
-_login_failures: dict[str, tuple[int, float]] = {}  # login_id(小文字) → (失敗回数, 最終失敗epoch)
-
-
-def _is_locked_out(login_id: str) -> int:
-    """login_id がロックアウト中なら残り秒数を返す（0=ロックなし）。"""
-    import time
-    rec = _login_failures.get(login_id.lower())
-    if not rec:
-        return 0
-    count, last = rec
-    if count < _MAX_FAILURES:
-        return 0
-    remaining = int(_LOCKOUT_SECONDS - (time.time() - last))
-    if remaining <= 0:
-        _login_failures.pop(login_id.lower(), None)  # 期限切れは解除
-        return 0
-    return remaining
-
-
-def _record_failure(login_id: str) -> None:
-    """ログイン失敗を記録する（連続失敗回数を加算）。"""
-    import time
-    key = login_id.lower()
-    count = _login_failures.get(key, (0, 0.0))[0] + 1
-    _login_failures[key] = (count, time.time())
-
-
-def _clear_failures(login_id: str) -> None:
-    """ログイン成功時に失敗カウントをクリアする。"""
-    _login_failures.pop(login_id.lower(), None)
-
 
 def _csrf_ok() -> bool:
     """POSTフォームのCSRFトークンがセッションのものと一致するか検証する。
@@ -129,21 +94,13 @@ def login() -> str:
             flash("ログインIDとパスワードを入力してください", "warning")
             return redirect(url_for("auth.login"))
 
-        # レート制限：連続失敗が上限に達していればロックアウト
-        locked = _is_locked_out(login_id)
-        if locked > 0:
-            flash(f"ログインの失敗が続いたため、約{(locked + 59) // 60}分間ロックされています", "danger")
-            return redirect(url_for("auth.login"))
-
         user = get_user_by_login_id(login_id)
         # ユーザー不明・パスワード不一致は同一メッセージ（ID存在の推測を防ぐ）
         if user is None or not check_user_password(user["id"], password):
-            _record_failure(login_id)
             flash("ログインIDまたはパスワードが正しくありません", "danger")
             return redirect(url_for("auth.login"))
 
         user_id = user["id"]
-        _clear_failures(login_id)
         _establish_session(user)
 
         resp = redirect(url_for("schedule.weekly"))
@@ -167,60 +124,64 @@ def login() -> str:
 
 
 @auth_bp.route("/reset_password_and_login", methods=["POST"])
-def reset_password_and_login() -> str:
-    """初回パスワード設定を行い、そのままログインする（全ロール対象）。
+def reset_password_and_login() -> Any:
+    """パスワードを設定（変更）し、そのままログインする（全ロール対象）。
 
-    パスワード未設定のユーザーが、ログインIDと現行パスワードの確認を経ずに
-    初回パスワードを設定してログインする。既にパスワードが設定済みの場合は拒否する
-    （パスワード変更は管理画面またはログイン後の機能で行う）。
+    パスワード未設定のユーザーはログインIDのみで新しいパスワードを設定できる。
+    既にパスワードが設定済みのユーザーは、本人確認のため現在のパスワードの
+    入力も必須とする（他人のログインIDを知るだけでパスワードを奪えないようにする）。
+
+    エラー時にログイン画面へリダイレクトすると、入力中のフォーム（開いていた
+    パスワード設定欄）が閉じてしまい入力し直しになるため、常にJSONで応答し、
+    フロント側でその場にエラーメッセージを表示させる。
 
     Returns:
-        str: 週間予定へのリダイレクト、またはエラー時はログイン画面へのリダイレクト。
+        Any: 成否・遷移先・エラーメッセージを含むJSONレスポンス。
     """
     import re as _re
+
+    def _err(message: str) -> Any:
+        return jsonify({"ok": False, "error": message}), 400
+
     if not _csrf_ok():
-        flash("セッションが無効です。もう一度お試しください", "danger")
-        return redirect(url_for("auth.login"))
+        return _err("セッションが無効です。もう一度お試しください")
 
     login_id = request.form.get("login_id", "").strip()
+    current_pw = request.form.get("current_password", "")
     new_pw = request.form.get("new_password", "")
     confirm_pw = request.form.get("new_password_confirm", "")
 
     if not login_id:
-        flash("ログインIDを入力してください", "warning")
-        return redirect(url_for("auth.login"))
+        return _err("ログインIDを入力してください")
 
     user = get_user_by_login_id(login_id)
     if user is None:
-        flash("ログインIDが正しくありません", "warning")
-        return redirect(url_for("auth.login"))
-
-    # 既にパスワード設定済みなら初回設定は不可（乗っ取り防止）。
-    if user_has_password(user["id"]):
-        flash("このユーザーは既にパスワードが設定されています。ログインしてください", "warning")
-        return redirect(url_for("auth.login"))
-
-    if not _re.fullmatch(r"\d{4}", new_pw):
-        flash("パスワードは4桁の数字で入力してください", "warning")
-        return redirect(url_for("auth.login"))
-
-    if new_pw != confirm_pw:
-        flash("パスワードと確認用パスワードが一致しません", "warning")
-        return redirect(url_for("auth.login"))
+        return _err("ログインIDが正しくありません")
 
     user_id = user["id"]
+
+    # 既にパスワード設定済みの場合は、現在のパスワードで本人確認する。
+    if user_has_password(user_id):
+        if not check_user_password(user_id, current_pw):
+            return _err("現在のパスワードが正しくありません")
+
+    if not _re.fullmatch(r"\d{4}", new_pw):
+        return _err("パスワードは4桁の数字で入力してください")
+
+    if new_pw != confirm_pw:
+        return _err("パスワードと確認用パスワードが一致しません")
+
     set_user_password(user_id, new_pw)
     _establish_session(user)
 
-    resp = redirect(url_for("schedule.weekly"))
+    resp = jsonify({"ok": True, "redirect": url_for("schedule.weekly")})
     resp.set_cookie("last_login_id", login_id, max_age=_TOKEN_MAX_AGE)
     token = set_remember_token(user_id)
     resp.set_cookie(
         "remember_token", token, max_age=_TOKEN_MAX_AGE,
         httponly=True, samesite="Lax",
     )
-    record_operation(ACTION_LOGIN, f"user_id={user_id} (initial_password_set)")
-    flash("パスワードを設定してログインしました", "success")
+    record_operation(ACTION_LOGIN, f"user_id={user_id} (password_set)")
     return resp
 
 

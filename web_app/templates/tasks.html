@@ -131,7 +131,7 @@
   </div>
 </div>
 
-{% if login_role in ('管理職', 'マスタ') %}
+{% if role_is_privileged %}
 <hr class="my-4">
 <div class="row g-4">
 

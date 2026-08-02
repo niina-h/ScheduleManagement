@@ -39,7 +39,7 @@ from ..models import (
     save_daily_result,
     sync_daily_progress_to_task,
 )
-from ..auth_helpers import is_privileged, is_master, can_access_user
+from ..auth_helpers import is_privileged, is_master, is_manager, can_access_user, normalize_role
 
 daily_bp = Blueprint("daily_bp", __name__)
 
@@ -255,35 +255,58 @@ def daily_view(date_str: str) -> Any:
     day_label: str = ["月", "火", "水", "木", "金"][day_of_week]
 
     # 管理職・マスタ用ユーザー一覧（切り替えドロップダウン用・スコープ制限あり）
+    # ドロップダウンの選択肢はログイン中の本人の権限範囲（誰の画面に切り替えられるか）。
+    # システム管理者が所属切替していない場合、get_accessible_users は全所属を返すが、
+    # 部署未設定のテスト用アカウント等が混入するのを避けるため、自分自身の所属で絞り込む。
     login_role_nav: str = session.get("user_role", "")
     login_dept_nav: str = session.get("user_dept", "")
     all_users_list: list[dict] = []
     if is_privileged(login_role_nav):
         all_users_list = get_accessible_users(int(session["user_id"]), login_role_nav, login_dept_nav)
+        if login_dept_nav:
+            all_users_list = [u for u in all_users_list if (u.get("dept") or "") == login_dept_nav]
 
-    # 管理職・マスタが自分自身のページを見ている場合、スコープ内メンバーの振り返りコメントを取得
+    # 部下の振り返りコメント一覧: 「切り替え先（target_user）」が本人ログインした場合と
+    # 全く同じ画面になるよう、target_user 自身の権限・所属を基準に計算する
+    # （ログイン中の本人ではなく、成り代わっている相手の視点で部下一覧を出す）。
     # 表示対象ロール:
-    #   管理職 → ユーザー のみ（他の管理職・マスタは除外）
-    #   マスタ  → 管理職 + ユーザー（他のマスタは除外）
-    login_role_sub: str = session.get("user_role", "")
-    if is_master(login_role_sub):
-        _allowed_roles: frozenset[str] = frozenset({"管理職", "ユーザー"})
+    #   管理職        → 一般 のみ（他の管理職・所属長・システム管理者は除外）
+    #   所属長/システム管理者 → 管理職 + 一般（他の所属長・システム管理者は除外）
+    target_role: str = target_user.get("role", "") if target_user else ""
+    target_dept: str = target_user.get("dept", "") if target_user else ""
+    if is_manager(target_role):
+        _allowed_roles: frozenset[str] = frozenset({"一般"})
     else:
-        _allowed_roles = frozenset({"ユーザー"})
+        _allowed_roles = frozenset({"管理職", "一般"})
 
     subordinate_comments: list[dict] = []
-    if is_privileged(login_role_sub) and not is_admin_view:
-        all_users = all_users_list  # スコープ制限済みリストを再利用
-        for sub in all_users:
+    if is_privileged(target_role):
+        target_accessible = get_accessible_users(target_user_id, target_role, target_dept)
+        if target_dept:
+            target_accessible = [u for u in target_accessible if (u.get("dept") or "") == target_dept]
+        for sub in target_accessible:
             if sub["id"] == target_user_id:
-                continue  # 自分自身はスキップ
-            if sub.get("role", "") not in _allowed_roles:
+                continue  # 本人はスキップ
+            if normalize_role(sub.get("role", "")) not in _allowed_roles:
                 continue  # 役職フィルター
             sub_comment = get_daily_comment(sub["id"], date_str)
             subordinate_comments.append({
                 "user": sub,
                 "comment": sub_comment,
             })
+
+    # ログイン中の本人が「表示中の人物（target_user）」に上長コメントできるか。
+    # 自分自身へのコメントは不可。切り替え中でも常にこの判定（本人の権限）で行う。
+    can_comment_target: bool = False
+    if target_user_id != int(session["user_id"]) and is_privileged(session.get("user_role", "")):
+        if is_master(session.get("user_role", "")):
+            can_comment_target = True
+        else:
+            _login_user_dict2 = {
+                "id": int(session["user_id"]), "role": session.get("user_role", ""),
+                "dept": session.get("user_dept", ""),
+            }
+            can_comment_target = can_access_user(_login_user_dict2, dict(target_user)) if target_user else False
 
     # 当日のイベント一覧を取得
     day_events: list[dict] = get_events_for_user_date(target_user_id, date_str)
@@ -307,6 +330,7 @@ def daily_view(date_str: str) -> Any:
         "daily.html",
         user=login_user,
         target_user=target_user,
+        can_comment_target=can_comment_target,
         date_str=date_str,
         day_of_week=day_of_week,
         day_label=day_label,
@@ -374,6 +398,13 @@ def daily_save() -> Any:
 
     is_admin_view: bool = (target_user_id != int(session["user_id"]))
 
+    # project_task_id の妥当性検証用（タスク名が変わったのに古い紐付けが送信された
+    # 場合に備え、id→task_name のマップで一致を確認する。フロントの change イベント
+    # に依存しない、サーバー側での最終防御）。
+    pt_name_by_id: dict[int, str] = {
+        t["id"]: t["task_name"] for t in get_all_project_tasks()
+    }
+
     # フォームから実績データを解析
     data: dict[str, list[dict[str, Any]]] = {"am": [], "pm": []}
     for slot in ("am", "pm"):
@@ -384,11 +415,15 @@ def daily_save() -> Any:
             raw_defer: str = request.form.get(f"defer_date_{slot}_{i}", "").strip()
             defer_date: str = raw_defer if task else ""
             is_carryover: int = 1 if (task and request.form.get(f"carryover_{slot}_{i}", "") == "1") else 0
-            # project_task_id の取得（タスク管理と紐づいている場合）
+            # project_task_id の取得（タスク管理と紐づいている場合）。
+            # 紐付き先のタスク名が現在の入力値と一致しない場合は、古い紐付けと
+            # 判断して無視する（フロントのJS修正が効かなかった場合の保険）。
             pt_id_raw: str = request.form.get(f"project_task_id_{slot}_{i}", "").strip()
             try:
                 project_task_id: int | None = int(pt_id_raw) if pt_id_raw else None
             except ValueError:
+                project_task_id = None
+            if project_task_id is not None and pt_name_by_id.get(project_task_id) != task:
                 project_task_id = None
             try:
                 hours: float = float(request.form.get(f"result_hours_{slot}_{i}", 0) or 0)

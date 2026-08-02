@@ -946,12 +946,13 @@ def import_master_csv() -> Response:
 
 @admin_bp.route("/company-holiday/add", methods=["POST"])
 def add_company_holiday_route() -> object:
-    """会社休日を登録する（マスタ権限のみ）。
+    """会社休日を登録する（システム管理者・所属長）。
 
     Returns:
         object: 管理者ダッシュボードへのリダイレクト
     """
-    if not is_system_admin(session.get("user_role", "")):
+    login_role = session.get("user_role", "")
+    if not (is_system_admin(login_role) or is_dept_head(login_role)):
         abort(403)
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)

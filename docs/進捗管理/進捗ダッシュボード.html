@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>進捗ダッシュボード ― 予定管理システム</title>
+<style>
+  :root {
+    --bg: #f3f4f2;
+    --surface: #ffffff;
+    --surface-alt: #eceeec;
+    --ink: #1e2422;
+    --ink-soft: #565f5c;
+    --line: #d8dcd9;
+    --accent: #2f4a6b;
+    --accent-soft: #e7edf3;
+    --ok: #2f7a4f;
+    --ok-bg: #e5f2e9;
+    --warn: #9a6a1c;
+    --warn-bg: #f6ecd9;
+    --hold: #6b6f6d;
+    --hold-bg: #e9eae8;
+    --font-display: "LoopSans", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", sans-serif;
+    --font-body: "LoopSans", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181a;
+    --surface: #1c2124;
+    --surface-alt: #23282b;
+    --ink: #e7ebe8;
+    --ink-soft: #a3aca8;
+    --line: #333a3d;
+    --accent: #7fa6cf;
+    --accent-soft: #232f3b;
+    --ok: #6fbd8f;
+    --ok-bg: #1c2c22;
+    --warn: #d6a85b;
+    --warn-bg: #332a17;
+    --hold: #9aa19d;
+    --hold-bg: #262a28;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181a;
+      --surface: #1c2124;
+      --surface-alt: #23282b;
+      --ink: #e7ebe8;
+      --ink-soft: #a3aca8;
+      --line: #333a3d;
+      --accent: #7fa6cf;
+      --accent-soft: #232f3b;
+      --ok: #6fbd8f;
+      --ok-bg: #1c2c22;
+      --warn: #d6a85b;
+      --warn-bg: #332a17;
+      --hold: #9aa19d;
+      --hold-bg: #262a28;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 40px 20px 80px; }
+  .page {
+    max-width: 880px;
+    margin: 0 auto;
+  }
+
+  /* ---- ヘッダー ---- */
+  .masthead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-bottom: 28px;
+  }
+  .masthead h1 {
+    font-family: var(--font-display);
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .masthead .sub {
+    color: var(--ink-soft);
+    font-size: 0.86rem;
+    line-height: 1.6;
+  }
+  .masthead .meta {
+    text-align: right;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    line-height: 1.7;
+    white-space: nowrap;
+  }
+  .masthead .meta strong { color: var(--ink); font-weight: 600; }
+
+  /* ---- サマリー行 ---- */
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 32px;
+  }
+  .summary .cell {
+    background: var(--surface);
+    padding: 16px 18px;
+  }
+  .summary .cell .num {
+    font-size: 1.7rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .summary .cell .label {
+    font-size: 0.74rem;
+    color: var(--ink-soft);
+    margin-top: 4px;
+  }
+  .summary .cell.ok .num { color: var(--ok); }
+  .summary .cell.warn .num { color: var(--warn); }
+  .summary .cell.hold .num { color: var(--hold); }
+
+  /* ---- セクション見出し ---- */
+  .section-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    margin: 0 0 12px;
+  }
+
+  /* ---- 優先度カード ---- */
+  .priority-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .card-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .rank {
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--surface);
+    background: var(--accent);
+    border-radius: 5px;
+    padding: 3px 8px;
+    flex-shrink: 0;
+  }
+  .card-title {
+    font-size: 1.02rem;
+    font-weight: 700;
+    flex: 1 1 auto;
+    min-width: 200px;
+  }
+  .chip {
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 100px;
+    white-space: nowrap;
+  }
+  .chip.progress { background: var(--accent-soft); color: var(--accent); }
+  .chip.ok { background: var(--ok-bg); color: var(--ok); }
+  .chip.warn { background: var(--warn-bg); color: var(--warn); }
+  .chip.hold { background: var(--hold-bg); color: var(--hold); }
+
+  .card-body {
+    font-size: 0.86rem;
+    color: var(--ink-soft);
+    line-height: 1.75;
+    max-width: 65ch;
+  }
+  .card-body strong { color: var(--ink); font-weight: 600; }
+
+  .bar-track {
+    height: 6px;
+    background: var(--surface-alt);
+    border-radius: 100px;
+    overflow: hidden;
+    margin: 12px 0 4px;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 100px;
+  }
+  .bar-caption {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .subitems {
+    margin: 12px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .subitems li {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 0.82rem;
+  }
+  .subitems .mark {
+    flex-shrink: 0;
+    width: 15px;
+    text-align: center;
+    font-weight: 700;
+  }
+  .subitems .mark.done { color: var(--ok); }
+  .subitems .mark.pend { color: var(--ink-soft); }
+  .subitems .txt { color: var(--ink-soft); }
+  .subitems .txt strong { color: var(--ink); font-weight: 600; }
+
+  /* ---- 完了ログ ---- */
+  .log-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  .log-table th {
+    text-align: left;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding: 0 12px 8px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .log-table td {
+    padding: 10px 12px 10px 0;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+  .log-table tr:last-child td { border-bottom: none; }
+  .log-table td.name { color: var(--ink); font-weight: 600; white-space: nowrap; }
+  .log-table td.date { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--ink-soft); font-size: 0.78rem; }
+  .table-scroll { overflow-x: auto; margin-bottom: 36px; }
+
+  /* ---- フッター ---- */
+  .footnote {
+    font-size: 0.76rem;
+    color: var(--ink-soft);
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+    line-height: 1.8;
+  }
+  .footnote a { color: var(--accent); }
+
+  @media (max-width: 640px) {
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    .masthead { flex-direction: column; align-items: flex-start; }
+    .masthead .meta { text-align: left; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="masthead">
+    <div>
+      <h1>進捗ダッシュボード</h1>
+      <div class="sub">予定管理システム（ScheduleManagement）― 本番リリース後の残作業</div>
+    </div>
+    <div class="meta">
+      集計基準日 <strong>2026-07-27</strong><br>
+      対象台帳 <strong>改善タスク台帳.md §10</strong>
+    </div>
+  </div>
+
+  <div class="summary">
+    <div class="cell ok">
+      <div class="num">22</div>
+      <div class="label">解決済み</div>
+    </div>
+    <div class="cell warn">
+      <div class="num">1</div>
+      <div class="label">経過観察中</div>
+    </div>
+    <div class="cell hold">
+      <div class="num">0</div>
+      <div class="label">未着手・判断待ち</div>
+    </div>
+    <div class="cell">
+      <div class="num">22/23</div>
+      <div class="label">全項目に対する解決割合（#15経過観察を除き100%）</div>
+    </div>
+  </div>
+
+  <p class="section-label">優先度順・残作業</p>
+  <div class="priority-list">
+
+    <div class="card">
+      <div class="card-top">
+        <span class="rank">優先度 1</span>
+        <span class="card-title">所属長・システム管理者の代理操作を全画面に統一する</span>
+        <span class="chip ok">解決</span>
+      </div>
+      <div class="card-body">
+        「切り替え」で他ユーザーの画面を見たとき、<strong>本人ログインと完全に同じ画面</strong>になるようにする。
+        対象4画面すべてで確認・修正が完了。ガントチャート（新旧）では、担当者切替プルダウンが
+        <strong>マスタ限定</strong>になっており、所属長・管理職が配下の代理でタスクを作成する際の
+        担当者初期値を選べない不整合を発見・修正した（バックエンドの保存権限自体は元々正しく実装済みで、UI表示のみの制約だった）。
+      </div>
+      <div class="bar-track"><div class="bar-fill" style="width: 100%;"></div></div>
+      <div class="bar-caption"><span>4 / 4 画面 対応済み</span><span>100%</span></div>
+      <ul class="subitems">
+        <li><span class="mark done">✓</span><span class="txt"><strong>日次実績画面</strong>（daily.py / daily.html）― 対応済み。切り替え先視点で部下一覧を再計算、上長コメントはモーダルに分離</span></li>
+        <li><span class="mark done">✓</span><span class="txt"><strong>週間予定画面</strong>（schedule.py / schedule.html）― 調査の結果、既に target_user_id 基準で実装済みと確認</span></li>
+        <li><span class="mark done">✓</span><span class="txt"><strong>作業登録・タスク管理画面</strong>（tasks.py / project_tasks.py）― タスク一覧・イベントは実装済み。定例作業タブのみ本人固定になっていた抜け穴を発見・修正（2026-07-27）</span></li>
+        <li><span class="mark done">✓</span><span class="txt"><strong>ガントチャート新旧画面</strong>（planner.py / project_tasks.py の gantt()）― 担当者切替プルダウンがマスタ限定だった箇所を所属長・管理職にも拡張（2026-07-28）</span></li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <div class="card-top">
+        <span class="rank">優先度 2</span>
+        <span class="card-title">「切り替え」時、別ユーザーの上長コメントが一瞬表示された件</span>
+        <span class="chip warn">経過観察</span>
+      </div>
+      <div class="card-body">
+        新名さんが髙陽さんに切り替えた際、本澤さんへの上長コメントが表示された報告があったが、
+        サーバー側ロジックの検証では日付・対象ユーザーとも正しくDBの内容と一致しており、矛盾は見つからなかった。
+        再現条件が特定できないため、無理に原因を作りにいかず、<strong>再発時にURL（user_id・日付）を確認する運用</strong>で監視を続ける。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-top">
+        <span class="rank">優先度 3</span>
+        <span class="card-title">「商品開発業務 (7).xlsx」記載タスクが本番未反映な件</span>
+        <span class="chip ok">対応不要（確定）</span>
+      </div>
+      <div class="card-body">
+        2026-04-01時点のブラビオ運用データにある20件の作業タスクのうち、19件が現在の本番ガントチャートに存在しない
+        （完全一致・部分一致とも無し）。ファイルの期限はすべて3〜5月で、7月時点では期限切れ。
+        ユーザー判断により「4月時点で既に終了・不要なタスクのため対応不要」と確定（2026-07-27）。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-top">
+        <span class="rank">追加調査</span>
+        <span class="card-title">「バージョンアップ前_業務進捗_2026-07-27.xlsx」（リリース直前の実データ）との突き合わせ</span>
+        <span class="chip ok">解決</span>
+      </div>
+      <div class="card-body">
+        7/27リリース直前時点の旧ガント形式データ（46件）を本番`project_task`（54件）と突き合わせ。33件は表記揺れのみで反映済み。
+        残り8件（新名・金浜・本澤・髙陽担当分）はユーザー判断により<strong>登録不要</strong>と確定。
+        一方で<strong>亀川典子さん担当の「上屋数量計算書」関連7件（進捗57〜100%完了済み）が本番未反映</strong>と判明し、
+        親タスク（id135）の子タスクとして本番DBへ追加・反映済み（id360〜366）。
+      </div>
+    </div>
+
+  </div>
+
+  <p class="section-label">本日解決済みの主な項目</p>
+  <div class="table-scroll">
+    <table class="log-table">
+      <thead>
+        <tr><th style="width:64px;">#</th><th>内容</th><th style="width:120px;">状態</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">1–4</td><td>ログイン不可・パスワード設定関連（ロックアウト解除、既存パスワード保有者の再設定対応、エラー時にその場で表示）</td><td>解決</td></tr>
+        <tr><td class="name">5, 7</td><td>4段階ロール化後、テンプレートに残っていた旧ロール名（「管理職」「マスタ」）の文字列比較により、所属長の権限が弾かれていた不具合</td><td>解決</td></tr>
+        <tr><td class="name">6</td><td>日報メールの「業務内容」表示基準を、状態・進捗率ではなく実際の日次実績入力の有無に変更</td><td>解決</td></tr>
+        <tr><td class="name">8</td><td>「チーム日報Excel」を廃止し「全員日報Excel」に統合、管理職以上に開放</td><td>解決</td></tr>
+        <tr><td class="name">9, 10</td><td>ガントチャートのTEST表記削除、進捗率が着手状態でも0%のままだった不具合（日数ベース自動計算に変更）</td><td>解決</td></tr>
+        <tr><td class="name">11, 12</td><td>アンケートの「次回回答する」スキップ機能を追加、対象2名の回答をリセット</td><td>解決</td></tr>
+        <tr><td class="name">13, 14</td><td>部下コメント一覧に部署外ユーザーが混入する不具合、上長画面に部下の振り返りが出ない不具合（原因はアンケート未回答）</td><td>解決</td></tr>
+        <tr><td class="name">16</td><td>日次実績画面の「切り替え」を本人ログインと完全一致させる設計に修正</td><td>解決</td></tr>
+        <tr><td class="name">17–19</td><td>週間予定画面に振り返り・上長コメント表示を追加、当週の危険ボタン非表示、表示調整</td><td>解決</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footnote">
+    詳細は <code>docs/進捗管理/改善タスク台帳.md §10</code> を参照。反復ログは
+    <code>docs/進捗管理/LOOP_LOG.md</code>、ループ運用の契約書は
+    <code>docs/進捗管理/LOOP_CONTRACT.md</code>（v2.0）。
+  </div>
+
+</div>
+</body>
+</html>

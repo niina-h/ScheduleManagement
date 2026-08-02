@@ -14,7 +14,6 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from ..models import (
-    get_accessible_users,
     get_all_users,
     get_daily_comment,
     get_daily_result,
@@ -2057,120 +2056,6 @@ def print_report() -> object:
         action=action,
         next_am_tasks=next_am_tasks,
         next_pm_tasks=next_pm_tasks,
-    )
-
-
-@export_bp.route("/report/team", endpoint="download_team_report")
-def download_team_report() -> object:
-    """管理職・マスタ用: 担当メンバーの日報をシート別にまとめたExcelをダウンロードする。
-
-    クエリパラメータ ``date`` で対象日を指定する（未指定時は今日）。
-    管理職・マスタ以外からのアクセスは403を返す。
-
-    Returns:
-        object: Excelファイルのダウンロードレスポンス、または未ログイン時はリダイレクト。
-    """
-    if not session.get("user_id"):
-        return redirect(url_for("auth.login"))
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
-
-    raw_date: str = request.args.get("date", "").strip()
-    try:
-        date_obj = date.fromisoformat(raw_date)
-        date_str: str = date_obj.isoformat()
-    except ValueError:
-        date_obj = date.today()
-        date_str = date_obj.isoformat()
-
-    login_user = get_user_by_id(int(session["user_id"]))
-    if login_user is None:
-        abort(404)
-
-    # 担当メンバー取得（自分自身を先頭に含める）
-    login_role: str = session.get("user_role", "")
-    login_dept: str = session.get("user_dept", "")
-    members: list[dict] = get_accessible_users(int(session["user_id"]), login_role, login_dept)
-    # 自分自身が含まれていない場合は先頭に追加
-    member_ids: set[int] = {m["id"] for m in members}
-    if login_user["id"] not in member_ids:
-        members = [login_user] + members
-
-    if not members:
-        flash("対象メンバーが存在しないためExcelを生成できません", "warning")
-        return redirect(url_for("daily_bp.daily_view", date_str=date_str))
-
-    week_start: str = _get_monday(date_obj).isoformat()
-    day_of_week: int = date_obj.weekday()
-
-    # 翌日算出
-    next_date = date_obj + timedelta(days=1)
-    while next_date.weekday() >= 5:
-        next_date += timedelta(days=1)
-    next_week_start: str = _get_monday(next_date).isoformat()
-    next_dow: int = next_date.weekday()
-
-    try:
-        # テンプレートを直接操作し、同一ワークブック内でシートをコピーする
-        wb = openpyxl.load_workbook(str(REPORT_TPL))
-        ws_tpl = wb["日次業務報告"]
-
-        for idx, member in enumerate(members):
-            schedule: dict = get_weekly_schedule(member["id"], week_start)
-            day_sch_m: dict = schedule.get(day_of_week, {"am": [], "pm": []})
-            schedule_am: list = day_sch_m.get("am", [])
-            schedule_pm: list = day_sch_m.get("pm", [])
-
-            result: dict = get_daily_result(member["id"], date_str)
-            comment: dict = get_daily_comment(member["id"], date_str)
-
-            next_schedule: dict = get_weekly_schedule(member["id"], next_week_start)
-            next_day_sch_m: dict = next_schedule.get(next_dow, {"am": [], "pm": []})
-            next_am: list = next_day_sch_m.get("am", [])
-            next_pm: list = next_day_sch_m.get("pm", [])
-
-            if idx == 0:
-                # 最初のメンバーはテンプレートシートをそのまま使用
-                ws_new = ws_tpl
-            else:
-                # 同一ワークブック内でコピー
-                ws_new = wb.copy_worksheet(ws_tpl)
-
-            sheet_title: str = member["name"][:10]
-            # 同名シート回避
-            existing_titles: list[str] = [s.title for s in wb.worksheets]
-            if sheet_title in existing_titles:
-                for n in range(2, 100):
-                    candidate: str = f"{sheet_title}({n})"[:31]
-                    if candidate not in existing_titles:
-                        sheet_title = candidate
-                        break
-            ws_new.title = sheet_title
-
-            _fill_report_sheet(
-                ws_new, member, date_str,
-                schedule_am, schedule_pm,
-                result, comment,
-                next_am, next_pm,
-            )
-
-        buf = io.BytesIO()
-        wb.save(buf)
-        buf.seek(0)
-    except Exception:
-        logger.exception(
-            "チーム日次業務報告Excel生成中にエラーが発生しました (date=%s)",
-            date_str,
-        )
-        flash("チーム日報Excel生成中にエラーが発生しました", "warning")
-        return redirect(url_for("daily_bp.daily_view", date_str=date_str))
-
-    filename: str = f"日次業務報告_チーム_{date_str}.xlsx"
-    return send_file(
-        buf,
-        as_attachment=True,
-        download_name=filename,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 

@@ -7,7 +7,7 @@
     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
       <h5 class="fw-bold mb-0">ガントチャート</h5>
       <div class="d-flex gap-2 align-items-center flex-wrap">
-        {% if is_master_flag and selectable_users %}
+        {% if privileged and selectable_users %}
         <label class="form-label small mb-0 fw-semibold">担当者：</label>
         <select id="ganttUserSelect" class="form-select form-select-sm" style="width:120px; font-size:0.8rem;">
           <option value="0" {% if initial_target_user_id == 0 %}selected{% endif %}>全員</option>

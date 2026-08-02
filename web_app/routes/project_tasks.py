@@ -157,6 +157,34 @@ def _can_touch_gantt_task(task: dict) -> bool:
     return False
 
 
+def _resolve_routine_target_user_id(login_id: int) -> int:
+    """定例作業の登録・削除における代理操作対象ユーザーIDを解決する。
+
+    フォームの target_user_id が指定されていれば、所属長・管理職・
+    システム管理者のスコープ内（get_accessible_users）かを確認し、範囲内
+    ならその ID を、範囲外・未指定・一般ユーザーならログイン本人を返す。
+
+    Args:
+        login_id: ログインユーザーのID。
+
+    Returns:
+        int: 代理操作対象ユーザーID。
+    """
+    login_role = session.get("user_role", "")
+    form_user_id = request.form.get("target_user_id", "").strip()
+    if not form_user_id or not is_privileged(login_role):
+        return login_id
+    try:
+        candidate = int(form_user_id)
+    except ValueError:
+        return login_id
+    login_dept = session.get("user_dept", "")
+    accessible = get_accessible_users(login_id, login_role, login_dept)
+    if any(u["id"] == candidate for u in accessible):
+        return candidate
+    return login_id
+
+
 @project_tasks_bp.before_request
 def _check_login() -> object | None:
     """未ログインならログイン画面へリダイレクトする。"""
@@ -265,16 +293,22 @@ def _render_task_page(only_tab: str | None) -> str:
         else:
             target_user_id = login_id  # 一般ユーザーは自分の関係イベントのみ
             tasks = get_all_project_tasks(assigned_to=target_user_id)
-    elif is_master(login_role):
+    elif privileged:
+        # 管理職・所属長・システム管理者：get_accessible_users のスコープ内メンバーを
+        # 切替閲覧できる（既定＝全員）。権限外ユーザーの指定は許可範囲に照合してフォールバック。
         selectable_users = get_accessible_users(login_id, login_role, login_dept)
+        allowed_ids = {u["id"] for u in selectable_users} | {login_id}
         req_uid = request.args.get("user_id", "").strip()
         if req_uid is not None and req_uid != "":
             try:
-                target_user_id = int(req_uid)
+                cand = int(req_uid)
             except ValueError:
-                target_user_id = 0
+                cand = 0
+            target_user_id = cand if (cand in allowed_ids or cand == 0) else 0
         elif session.get("task_selected_user_id") is not None:
             target_user_id = int(session["task_selected_user_id"])
+            if target_user_id not in allowed_ids and target_user_id != 0:
+                target_user_id = 0
         else:
             target_user_id = 0  # デフォルトは全員
         session["task_selected_user_id"] = target_user_id
@@ -316,7 +350,10 @@ def _render_task_page(only_tab: str | None) -> str:
             t["can_edit"] = related
 
     # 定例スケジュール（作業名は自由入力のため、作業マスタからの候補取得は不要）
-    routine_schedules = get_routine_schedules(login_id)
+    # 「切り替え」中は代理操作対象（target_user_id）の定例を表示する。
+    # イベントタブは target_user_id=0（全員）の場合があるため、その時は本人の定例を表示する。
+    routine_user_id = target_user_id if target_user_id else login_id
+    routine_schedules = get_routine_schedules(routine_user_id)
     used_rows = {r["row_number"] for r in routine_schedules}
 
     return render_template(
@@ -472,8 +509,16 @@ def add_task() -> object:
         return redirect(redir)
 
     # イベント追加時はイベント専用画面へ戻る
+    # （カレンダーの表示月はクライアント側の状態のため、直前に見ていた月を
+    #   隠しフィールド経由で受け取り、リダイレクト先URLに引き継いで当月に
+    #   戻ってしまわないようにする）。
     if is_event == 1:
-        return redirect(url_for("project_tasks_bp.events_page") + "?add_open=1&tab=events")
+        events_redir = url_for("project_tasks_bp.events_page") + "?add_open=1&tab=events"
+        return_year = request.form.get("return_year", "").strip()
+        return_month = request.form.get("return_month", "").strip()
+        if return_year.isdigit() and return_month.isdigit():
+            events_redir += f"&year={return_year}&month={return_month}"
+        return redirect(events_redir)
 
     return redirect(url_for("project_tasks_bp.task_list") + "?add_open=1")
 
@@ -821,14 +866,18 @@ def delete_task(task_id: int) -> object:
 
 @project_tasks_bp.route("/routine/save", methods=["POST"])
 def save_routine() -> object:
-    """定例スケジュールを登録する（ログインユーザー自身）。
+    """定例スケジュールを登録する。
+
+    「切り替え」中は、フォームの target_user_id が示す代理操作対象に登録する
+    （所属長・管理職・システム管理者は get_accessible_users のスコープ内のみ許可）。
 
     Returns:
         object: タスク管理画面へのリダイレクト
     """
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
-    user_id = int(session["user_id"])
+    login_id = int(session["user_id"])
+    user_id = _resolve_routine_target_user_id(login_id)
     task_name = request.form.get("task_name", "").strip()
     subcategory_name = request.form.get("subcategory_name", "").strip()
     period = request.form.get("period", "").strip().upper()
@@ -877,7 +926,10 @@ def save_routine() -> object:
 
 @project_tasks_bp.route("/routine/delete/<int:routine_id>", methods=["POST"])
 def delete_routine(routine_id: int) -> object:
-    """定例スケジュールを削除する（ログインユーザー自身）。
+    """定例スケジュールを削除する。
+
+    「切り替え」中は、フォームの target_user_id が示す代理操作対象から削除する
+    （所属長・管理職・システム管理者は get_accessible_users のスコープ内のみ許可）。
 
     Args:
         routine_id: 定例スケジュールID
@@ -887,7 +939,8 @@ def delete_routine(routine_id: int) -> object:
     """
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
-    user_id = int(session["user_id"])
+    login_id = int(session["user_id"])
+    user_id = _resolve_routine_target_user_id(login_id)
     delete_routine_task(routine_id, user_id)
     flash("定例スケジュールを削除しました。", "success")
     # 削除後は定例作業画面をそのまま維持する
@@ -908,6 +961,10 @@ _STATUS_COLOR_MAP: dict[str, str] = {
 def _build_chart_json(summary: dict) -> dict:
     """サマリー情報からグラフ描画用のJSON構造を構築する。
 
+    タスク別進捗のラベルは「親タスク名　子タスク名」を1行にまとめる。同じ親が
+    続く間は親名を省略し、同じ文字数分を全角スペースで埋めて子タスク名の位置を
+    揃える（親は複数行にまたがっても表示は1回だけ）。
+
     Args:
         summary: get_task_progress_summary() の戻り値。
 
@@ -921,13 +978,36 @@ def _build_chart_json(summary: dict) -> dict:
         _STATUS_COLOR_MAP.get(s, "#9ca3af") for s in status_labels
     ]
 
+    # 親タスク名の解決用（対象ユーザーの担当タスクだけでは親情報が欠けるため全件から引く）。
+    parent_name_by_id: dict[int, str] = {
+        t["id"]: t["task_name"] for t in get_all_project_tasks()
+    }
+
     task_names: list[str] = []
-    task_progresses: list[float] = []
+    task_progresses: list[float | None] = []
     task_colors: list[str] = []
     task_statuses: list[str] = []
 
+    # タスク別進捗のラベルは「親タスク名　子タスク名」を1行にまとめる。
+    # 同じ親が続く間は親名を省略し、親名と同じ文字数分を全角スペースで
+    # 埋めて子タスク名の位置を揃える（親は複数行にまたがっても見出しは1回だけ）。
+    seen_parent_ids: set[int] = set()
+    parent_indent_by_id: dict[int, str] = {}
     for task in summary["tasks"]:
-        task_names.append(task.get("task_name", ""))
+        parent_id = task.get("parent_task_id")
+        task_name = task.get("task_name", "")
+        if parent_id and parent_id in parent_name_by_id:
+            parent_name = parent_name_by_id[parent_id]
+            if parent_id not in seen_parent_ids:
+                seen_parent_ids.add(parent_id)
+                parent_indent_by_id[parent_id] = "　" * len(parent_name)
+                label = f"{parent_name}　{task_name}"
+            else:
+                label = f"{parent_indent_by_id[parent_id]}　{task_name}"
+        else:
+            label = task_name
+
+        task_names.append(label)
         task_progresses.append(float(task.get("progress", 0) or 0))
         status: str = task.get("status", "未着手")
         task_statuses.append(status)
@@ -1403,20 +1483,15 @@ def gantt() -> str:
         except ValueError:
             target_user_id_int = None
 
-    # タスク一覧と同じスコープで取得
+    # タスク一覧と同じスコープで取得（管理職・所属長・システム管理者は
+    # get_accessible_users のスコープ内メンバーのタスクのみ表示する）。
     if target_user_id_int is not None:
         # 担当者絞り込みあり: 指定ユーザーが担当のタスクのみ
         tasks = get_all_project_tasks(assigned_to=target_user_id_int)
-    elif login_role == "マスタ":
-        accessible = get_accessible_users(login_id, login_role, login_dept)
-        accessible_ids = [u["id"] for u in accessible]
-        tasks = get_all_project_tasks(user_ids=accessible_ids)
-    elif login_role == "管理職":
-        accessible = get_accessible_users(login_id, login_role, login_dept)
-        accessible_ids = [u["id"] for u in accessible]
-        tasks = get_all_project_tasks(user_ids=accessible_ids)
     elif privileged:
-        tasks = get_all_project_tasks()
+        accessible = get_accessible_users(login_id, login_role, login_dept)
+        accessible_ids = [u["id"] for u in accessible]
+        tasks = get_all_project_tasks(user_ids=accessible_ids)
     else:
         tasks = get_all_project_tasks(assigned_to=login_id)
 
@@ -1473,10 +1548,11 @@ def gantt() -> str:
         if not t.get("is_event", 0) and (t.get("subcategory_name") or "")
     })
 
-    # マスタ権限の場合、画面上で担当者を切り替えられるよう選択肢を渡す
+    # 管理職・所属長・システム管理者は、画面上で担当者を切り替えられるよう選択肢を渡す
+    # （新ガント画面 planner.py と同じ方針：is_master 限定ではなく privileged 全体に対応）。
     is_master_flag: bool = is_master(login_role)
     selectable_users: list[dict] = []
-    if is_master_flag:
+    if privileged:
         selectable_users = get_accessible_users(login_id, login_role, login_dept)
 
     # ガントチャート画面でのタスク追加モーダル用データ
@@ -1534,6 +1610,7 @@ def _build_gantt_excel(
     start_date: date,
     display_days: int,
     show_completed: bool = False,
+    login_dept: str = "",
 ) -> openpyxl.Workbook:
     """ガントチャート付きExcelワークブックを生成する。
 
@@ -1544,6 +1621,7 @@ def _build_gantt_excel(
         tasks: タスク一覧（get_all_project_tasks の戻り値）
         start_date: 表示開始日
         display_days: 表示日数
+        login_dept: ヘッダーに表示するログインユーザーの所属名（空なら所属名なし）
 
     Returns:
         openpyxl.Workbook: 生成済みワークブック
@@ -1879,8 +1957,8 @@ def _build_gantt_excel(
     ws.page_setup.fitToHeight = 0  # 縦は自動
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
-    # ヘッダー: 左に部署名、右に出力日付
-    ws.oddHeader.left.text = "商品開発室業務進捗"
+    # ヘッダー: 左に所属名+業務進捗、右に出力日付
+    ws.oddHeader.left.text = f"{login_dept}業務進捗" if login_dept else "業務進捗"
     ws.oddHeader.left.size = 10
     ws.oddHeader.right.text = f"出力日：{today_d.strftime('%Y/%m/%d')}"
     ws.oddHeader.right.size = 9
@@ -1962,6 +2040,7 @@ def _build_gantt_excel_by_tree(
     children: dict[int, list[dict]],
     start_date: date,
     display_days: int,
+    login_dept: str = "",
 ) -> "openpyxl.Workbook":
     """親子ツリー（ガントチャート／親=大項目・子=タスク）のExcelを生成する。
 
@@ -1973,6 +2052,7 @@ def _build_gantt_excel_by_tree(
         children: 親タスクID → 子タスク一覧のマップ。
         start_date: 表示開始日。
         display_days: 表示日数。
+        login_dept: ヘッダーに表示するログインユーザーの所属名（空なら所属名なし）。
 
     Returns:
         openpyxl.Workbook: 生成済みワークブック。
@@ -2179,7 +2259,7 @@ def _build_gantt_excel_by_tree(
     ws.page_setup.fitToHeight = 0
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
-    ws.oddHeader.left.text = "商品開発室業務進捗"
+    ws.oddHeader.left.text = f"{login_dept}業務進捗" if login_dept else "業務進捗"
     ws.oddHeader.left.size = 10
     ws.oddHeader.right.text = f"出力日：{today_d.strftime('%Y/%m/%d')}"
     ws.oddHeader.right.size = 9
@@ -2192,6 +2272,7 @@ def _build_gantt_pdf_by_tree(
     children: dict[int, list[dict]],
     start_date: date,
     display_days: int,
+    login_dept: str = "",
 ) -> "io.BytesIO":
     """親子ツリーのガントチャートをPDF（A4横）で生成する。
 
@@ -2203,6 +2284,7 @@ def _build_gantt_pdf_by_tree(
         children: 親タスクID → 子タスク一覧のマップ。
         start_date: 表示開始日。
         display_days: 表示日数。
+        login_dept: ヘッダーに表示するログインユーザーの所属名（空なら所属名なし）。
 
     Returns:
         io.BytesIO: 生成済みPDFのバイナリ。
@@ -2355,7 +2437,7 @@ def _build_gantt_pdf_by_tree(
         y_top = page_h - margin
         # ヘッダー（左：タイトル、右：出力日）
         c.setFont(jp_font, 9); c.setFillColorRGB(0.2, 0.2, 0.2)
-        c.drawString(margin, y_top - 2, "商品開発室業務進捗")
+        c.drawString(margin, y_top - 2, f"{login_dept}業務進捗" if login_dept else "業務進捗")
         c.drawRightString(page_w - margin, y_top - 2, f"出力日：{today_d.strftime('%Y/%m/%d')}")
         y_top -= 12
         _draw_header(y_top)
@@ -2495,7 +2577,7 @@ def export_gantt() -> object:
             )
         ]
 
-    wb = _build_gantt_excel(tasks, start_d, display_days, show_completed=show_comp)
+    wb = _build_gantt_excel(tasks, start_d, display_days, show_completed=show_comp, login_dept=login_dept)
 
     buf = io.BytesIO()
     wb.save(buf)

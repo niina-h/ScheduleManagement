@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}アンケート回答一覧 - 予定管理システム{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <h4 class="mb-0 fw-bold">利用アンケート回答一覧</h4>
+  <span class="text-muted small">回答数: {{ answers|length }}件</span>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-secondary">
+          <tr>
+            <th>回答日時</th>
+            <th>氏名</th>
+            <th>所属</th>
+            <th>使いやすさ</th>
+            <th>メリット</th>
+            <th>デメリット</th>
+            <th>希望機能</th>
+            <th>推奨</th>
+            <th>おすすめ部門</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in answers %}
+          <tr>
+            <td class="text-nowrap">{{ a.created_at }}</td>
+            <td class="text-nowrap fw-semibold">{{ a.user_name }}</td>
+            <td class="text-nowrap">{{ a.dept or '' }}</td>
+            <td class="text-nowrap">{{ a.usability }} / 5</td>
+            <td style="white-space: pre-wrap;">{{ a.merit }}</td>
+            <td style="white-space: pre-wrap;">{{ a.demerit }}</td>
+            <td style="white-space: pre-wrap;">{{ a.requested_feature }}</td>
+            <td class="text-nowrap">{{ a.recommend }}</td>
+            <td style="white-space: pre-wrap;">{{ a.recommended_dept }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="9" class="text-center text-muted py-4">まだ回答がありません</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

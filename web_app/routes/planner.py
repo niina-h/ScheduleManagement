@@ -33,7 +33,9 @@ from flask import (
 from ..auth_helpers import can_access_user, is_master, is_privileged
 from ..models import (
     add_project_task,
+    clear_project_task_assigned_to,
     delete_project_task,
+    get_accessible_users,
     get_all_project_tasks,
     get_all_users,
     get_user_affiliations,
@@ -42,6 +44,8 @@ from ..models import (
     get_user_by_id,
     import_migration_excel,
     reassign_project_task_order,
+    resolve_parent_progress,
+    resolve_parent_status,
     set_project_task_members,
     set_project_task_parent,
     update_project_task,
@@ -78,29 +82,35 @@ def _members(t: dict) -> list[int]:
 
 
 def _get_visible_tree(
-    login_user_id: int, login_role: str, target_user_id: int
+    login_user_id: int, login_role: str, target_user_id: int, login_dept: str = "",
 ) -> tuple[list[dict], dict[int, list[dict]]]:
     """役職に応じて閲覧可能な親タスク（ルート）と子マップを返す。
 
-    マスタ=全件（対象ユーザー指定時はその関係者のみ）、管理職=自分がメンバーの親のみ、
-    一般=自分が担当の子を含む親ツリーのみを返す。
+    マスタ=全件（対象ユーザー指定時はその関係者のみ）、管理職・所属長=スコープ内
+    メンバー（get_accessible_users）の誰かがメンバーの親のみ、一般=自分が担当の
+    子を含む親ツリーのみを返す。
 
     Args:
         login_user_id: ログインユーザーID。
         login_role: ログインユーザーの役職。
         target_user_id: 絞り込み対象ユーザーID（0=全員）。
+        login_dept: ログインユーザーの所属（管理職・所属長のスコープ判定に使用）。
 
     Returns:
         tuple[list[dict], dict[int, list[dict]]]: (可視ルート一覧, 親ID→子タスク一覧)
     """
     master = is_master(login_role)
-    manager = login_role == "管理職"
+    manager = is_privileged(login_role) and not master
 
-    # 全タスク（イベント・マイルストーン・完了/停止も含む）をツリー化して表示する。
-    # 期間（開始日・終了日）が無いものはバーを描けないため除外する。
+    # 全タスク（マイルストーン・完了/停止も含む）をツリー化して表示する。
+    # 期間（開始日・終了日）が無いものはバーを描けないが、タスク名・担当者の行としては
+    # 表示する（ガントバーを削除しても行自体は残せるようにするため）。
+    # ただし通常のイベント（会議・打合せ等、is_event=1 かつ is_milestone=0）は
+    # ガントチャートには反映しない（イベント専用画面でのみ管理する）。
+    # マイルストーン（is_milestone=1）は is_event の値に関わらず表示を維持する。
     raw = [
         t for t in get_all_project_tasks()
-        if (t.get("start_date") or "").strip() and (t.get("end_date") or "").strip()
+        if not (t.get("is_event") and not t.get("is_milestone"))
     ]
     by_id = {t["id"]: t for t in raw}
     children: dict[int, list[dict]] = {}
@@ -130,8 +140,17 @@ def _get_visible_tree(
         else:
             visible_roots = [r for r in roots if _subtree_involves(r, target_user_id)]
     elif manager:
-        # 管理職：自分が関係ユーザー（メンバー）の親のみ
-        visible_roots = [r for r in roots if login_user_id in _members(r)]
+        # 管理職・所属長：スコープ内メンバー（自分自身を含む）の誰かが、
+        # 親のメンバー、または配下の子タスクの担当者として関与する親のみ表示する
+        # （親の member_ids だけで判定すると、子の担当者しか設定されていない
+        #   ツリーが表示から漏れてしまうため、_subtree_involves で判定する）。
+        # 担当者プルダウンで個別ユーザーが指定されていれば、そのユーザーが
+        # 関与する親のみにさらに絞り込む。
+        scope_ids = {u["id"] for u in get_accessible_users(login_user_id, login_role, login_dept)}
+        scope_ids.add(login_user_id)
+        visible_roots = [r for r in roots if any(_subtree_involves(r, uid) for uid in scope_ids)]
+        if target_user_id and target_user_id in scope_ids:
+            visible_roots = [r for r in visible_roots if _subtree_involves(r, target_user_id)]
     else:
         # 一般：自分が担当の子を含む親ツリー
         visible_roots = [r for r in roots if _subtree_involves(r, login_user_id)]
@@ -149,6 +168,22 @@ def _default_range_start() -> date:
     return _monday(date.today()) - timedelta(days=7)
 
 
+def _export_file_stem(login_dept: str) -> str:
+    """ガントチャート出力ファイル名の共通部分（拡張子なし）を返す。
+
+    形式は「所属＋進捗＋yymmdd」（ログイン中の本人の所属を使用）。
+    所属が未設定の場合は「進捗」のみとする。
+
+    Args:
+        login_dept: ログインユーザーの所属名。
+
+    Returns:
+        str: ファイル名の共通部分（例: "○○部進捗260728"）。
+    """
+    yymmdd = date.today().strftime("%y%m%d")
+    return f"{login_dept}進捗{yymmdd}" if login_dept else f"進捗{yymmdd}"
+
+
 @planner_bp.before_request
 def _require_login() -> Any:
     """未ログインならログイン画面へ誘導する。"""
@@ -160,13 +195,14 @@ def _require_login() -> Any:
 def _resolve_target(login_user_id: int) -> int:
     """?user_id= から対象ユーザーIDを決定する。
 
-    - 戻り値 0 は「全員」を表す（マスタのみ許可）。
-    - 既定値はマスタなら全員(0)、それ以外は本人。
+    - 戻り値 0 は「全員（スコープ内混在表示）」を表す。
+    - 既定値は、権限者（管理職・所属長・マスタ）なら全員(0)、一般は本人。
     - 権限外のユーザーが指定された場合は既定値へフォールバックする
       （一般は自分自身のみ、管理職・所属長は can_access_user が許可する範囲のみ）。
     """
     login_role = session.get("user_role", "")
-    default = 0 if is_master(login_role) else login_user_id
+    privileged = is_privileged(login_role)
+    default = 0 if privileged else login_user_id
     req_uid = request.args.get("user_id", "").strip()
     if not req_uid:
         return default
@@ -175,7 +211,7 @@ def _resolve_target(login_user_id: int) -> int:
     except ValueError:
         return default
     if cand == 0:
-        return 0 if is_master(login_role) else default
+        return 0 if privileged else default
     if cand == login_user_id:
         return cand
     if not is_privileged(login_role):
@@ -194,6 +230,9 @@ def planner() -> Any:
     """ガント入力（試作）画面を表示する。"""
     login_user_id = int(session["user_id"])
     target_user_id = _resolve_target(login_user_id)
+
+    # 完了タスク（状態が「完了」）の表示切替。既定は非表示。
+    show_done = request.args.get("show_done", "").strip() == "1"
 
     # 表示開始日
     raw_start = request.args.get("start", "").strip()
@@ -231,8 +270,7 @@ def planner() -> Any:
     # ── 役職 ──
     login_role = session.get("user_role", "")
     master = is_master(login_role)
-    manager = login_role == "管理職"
-    privileged = master or manager  # 親タスクの作成・編集が可能
+    privileged = is_privileged(login_role)  # 親タスクの作成・編集が可能（管理職以上）
 
     # 全ユーザー（ID→表示名）。既存タスクのメンバー・担当名の表示に使う（部署に関わらず引ける必要がある）。
     users = get_all_users()
@@ -265,8 +303,11 @@ def planner() -> Any:
             for u in users if u.get("dept") in _allow
         ]
     elif is_system_admin(login_role) and not scope_dept:
+        # 部署未設定のテスト用アカウント等が担当者候補に混入するのを避けるため、
+        # 所属が設定されているユーザーのみを対象にする。
         assign_users = [
-            {"id": u["id"], "name": user_name_map[u["id"]]} for u in users
+            {"id": u["id"], "name": user_name_map[u["id"]]}
+            for u in users if u.get("dept")
         ]
     else:
         assign_users = [
@@ -274,7 +315,7 @@ def planner() -> Any:
             for u in users if u.get("dept") == scope_dept
         ]
 
-    visible_roots, children = _get_visible_tree(login_user_id, login_role, target_user_id)
+    visible_roots, children = _get_visible_tree(login_user_id, login_role, target_user_id, login_dept)
 
     def _sortkey(t: dict) -> tuple:
         # 手動並べ替え（display_order）を最優先。同順位は開始日→IDで安定化。
@@ -286,6 +327,11 @@ def planner() -> Any:
     tasks: list[dict] = []
 
     def _assignees(t: dict) -> list[dict]:
+        # assigned_ids（2名以上対応）が設定されていればそちらを優先する。
+        # 未設定（従来データ）の場合は assigned_to/assigned_to_2 にフォールバックする。
+        ids_str = (t.get("assigned_ids") or "").strip()
+        if ids_str:
+            return _people_list(_parse_ids(ids_str))
         result: list[dict] = []
         if t.get("assigned_to"):
             result.append({"id": t["assigned_to"],
@@ -295,24 +341,83 @@ def planner() -> Any:
                            "name": _display_name(t.get("assigned_name_2", ""), t.get("assigned_last_name_2"))})
         return result
 
+    def _assignee_ids(t: dict) -> list[int]:
+        """タスク（子・単独）の担当者ID一覧を返す（assigned_ids優先、無ければ assigned_to系）。"""
+        ids_str = (t.get("assigned_ids") or "").strip()
+        if ids_str:
+            return _parse_ids(ids_str)
+        return [i for i in (t.get("assigned_to"), t.get("assigned_to_2")) if i]
+
+    def _leaf_visible(t: dict) -> bool:
+        """末端（子を持たないノード）が表示対象かどうか（完了・担当者絞り込みを判定）。"""
+        status = t.get("status") or ""
+        if not show_done and status == "完了":
+            return False
+        if target_user_id and target_user_id not in _assignee_ids(t):
+            return False
+        return True
+
+    _has_visible_cache: dict[int, bool] = {}
+
+    def _has_visible_descendant(t: dict) -> bool:
+        """このノード（自身含む）の配下に、最終的に表示される末端が1つでもあるか。
+
+        中間階層の見出し（子は持つが、配下が全員フィルタで除外された）が
+        中身の無いまま表示され続けるのを防ぐため、事前にボトムアップで判定する。
+        """
+        if t["id"] in _has_visible_cache:
+            return _has_visible_cache[t["id"]]
+        kids = children.get(t["id"]) or []
+        if not kids:
+            result = _leaf_visible(t)
+        else:
+            # 完了ツリー（自身が完了ならサブツリーごと非表示）は先に判定する。
+            status = resolve_parent_status(t, kids)
+            if not show_done and status == "完了":
+                result = False
+            else:
+                result = any(_has_visible_descendant(c) for c in kids)
+        _has_visible_cache[t["id"]] = result
+        return result
+
     def _emit(t: dict, level: int) -> None:
         # 「親」は level ではなく「実際に子を持つか」で判定する（保存側と統一）。
-        is_parent = bool(children.get(t["id"]))
+        kids = children.get(t["id"]) or []
+        is_parent = bool(kids)
         # 一般ユーザーは最上位の親タスクを編集不可（子・単独タスクは可）。
         editable = privileged or not (is_parent and level == 0)
+        # 親自身にバー（開始日・終了日）が無い見出し行は、子の状況から状態・進捗を自動判定する
+        # （子に進捗があっても親が常に「未着手」表示になってしまう不具合を防ぐ）。
+        status = resolve_parent_status(t, kids) if is_parent else (t.get("status") or "")
+        progress = resolve_parent_progress(t, kids) if is_parent else (t.get("progress") or 0)
+        # 完了タスクの表示切替：終了日に関わらず、状態が「完了」ならその行（配下の
+        # 子孫も含む）を非表示にする。子の有無に関係なく判定するため、一部の子だけ
+        # 間引かれてDOM順・level構造が崩れることはない（サブツリーごと消える）。
+        if not show_done and status == "完了":
+            return
+        # 担当者プルダウンで個別ユーザーに絞り込んでいる場合：
+        # - 末端（子・単独）は、そのユーザーが担当者でなければ間引く。
+        # - 中間階層（子を持つ）は、配下に表示対象の末端が1つも無ければ、
+        #   中身の無い見出しとして残さず間引く。
+        if target_user_id:
+            if not is_parent and target_user_id not in _assignee_ids(t):
+                return
+            if is_parent and not _has_visible_descendant(t):
+                return
         tasks.append({
             "id": t["id"],
             "task_name": t.get("task_name", ""),
             "start": (t.get("start_date") or "").strip(),
             "end": (t.get("end_date") or "").strip(),
-            "status": t.get("status") or "",
-            "progress": t.get("progress") or 0,
+            "status": status,
+            "progress": progress,
             "delay_days": t.get("delay_days") or 0,
             # 親（子持ち）はメンバー、それ以外（単独・末端）は担当者を people として渡す。
             "people": _people_list(_members(t)) if is_parent else _assignees(t),
             "level": level,
             "parent_id": t.get("parent_task_id") or None,
             "editable": editable,
+            "is_milestone": bool(t.get("is_milestone")),
         })
         for c in sorted(children.get(t["id"], []), key=_sortkey):
             _emit(c, level + 1)
@@ -320,21 +425,24 @@ def planner() -> Any:
     for r in sorted(visible_roots, key=_sortkey):
         _emit(r, 0)
 
-    # 人物選択（上部プルダウン）はマスタのみ表示：全員 ＋ 全ユーザー。
-    people = [{"id": 0, "name": "全員"}] + assign_users
+    # 人物選択（上部プルダウン）：権限者（管理職・所属長・マスタ）は「全員」＋
+    # 実効所属（assign_users、マスタは全ユーザー）から、表示・新規タスクの担当者
+    # 既定値を選べるようにする。「全員」を選ぶとスコープ内全員分が混在表示される。
+    people = ([{"id": 0, "name": "全員"}] + assign_users) if privileged else assign_users
 
     lu = get_user_by_id(login_user_id) or {}
     login_user = {"id": login_user_id,
                   "name": _display_name(lu.get("name", ""), lu.get("last_name"))}
-    # 新規タスクの既定担当者：マスタが特定ユーザー閲覧中はその人、それ以外は操作者本人。
-    if master and target_user_id not in (0, login_user_id):
+    # 新規タスクの既定担当者：マスタ・管理職・所属長が特定ユーザーを選んでいればその人、
+    # それ以外は操作者本人。
+    if privileged and target_user_id not in (0, login_user_id):
         u = get_user_by_id(target_user_id) or {}
         default_assignee = {"id": target_user_id,
                             "name": _display_name(u.get("name", ""), u.get("last_name"))}
         view_name = default_assignee["name"]
     else:
         default_assignee = login_user
-        view_name = "全員" if (master and target_user_id == 0) else login_user["name"]
+        view_name = "全員" if (privileged and target_user_id == 0) else login_user["name"]
 
     return render_template(
         "gantt_input_test.html",
@@ -352,12 +460,13 @@ def planner() -> Any:
         default_assignee=default_assignee,
         login_user=login_user,
         view_name=view_name,
-        show_selector=master,
+        show_selector=privileged,
         can_parent=privileged,
         role=login_role,
         is_master=master,
         display_days=_DISPLAY_DAYS,
         csrf_token=session.get("csrf_token", ""),
+        show_done=show_done,
     )
 
 
@@ -374,6 +483,7 @@ def export() -> Any:
 
     login_user_id = int(session["user_id"])
     login_role = session.get("user_role", "")
+    login_dept = session.get("user_dept", "")
     target_user_id = _resolve_target(login_user_id)
 
     raw_start = request.args.get("start", "").strip()
@@ -382,17 +492,16 @@ def export() -> Any:
     except ValueError:
         range_start = _default_range_start()
 
-    visible_roots, children = _get_visible_tree(login_user_id, login_role, target_user_id)
+    visible_roots, children = _get_visible_tree(login_user_id, login_role, target_user_id, login_dept)
     # Excel出力は4週間（28日）分のみ出力する（画面表示の9週とは別）。
-    wb = _build_gantt_excel_by_tree(visible_roots, children, range_start, _EXPORT_DAYS)
+    wb = _build_gantt_excel_by_tree(visible_roots, children, range_start, _EXPORT_DAYS, login_dept=login_dept)
 
     import io
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    today_str = date.today().isoformat()
     return send_file(
-        buf, as_attachment=True, download_name=f"ガントチャート_{today_str}.xlsx",
+        buf, as_attachment=True, download_name=f"{_export_file_stem(login_dept)}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -408,6 +517,7 @@ def export_pdf() -> Any:
 
     login_user_id = int(session["user_id"])
     login_role = session.get("user_role", "")
+    login_dept = session.get("user_dept", "")
     target_user_id = _resolve_target(login_user_id)
 
     raw_start = request.args.get("start", "").strip()
@@ -416,13 +526,12 @@ def export_pdf() -> Any:
     except ValueError:
         range_start = _default_range_start()
 
-    visible_roots, children = _get_visible_tree(login_user_id, login_role, target_user_id)
+    visible_roots, children = _get_visible_tree(login_user_id, login_role, target_user_id, login_dept)
     # PDFもExcelと同じ4週間（28日）分を出力する。
-    buf = _build_gantt_pdf_by_tree(visible_roots, children, range_start, _EXPORT_DAYS)
+    buf = _build_gantt_pdf_by_tree(visible_roots, children, range_start, _EXPORT_DAYS, login_dept=login_dept)
 
-    today_str = date.today().isoformat()
     return send_file(
-        buf, as_attachment=True, download_name=f"ガントチャート_{today_str}.pdf",
+        buf, as_attachment=True, download_name=f"{_export_file_stem(login_dept)}.pdf",
         mimetype="application/pdf",
     )
 
@@ -505,8 +614,8 @@ def save() -> Any:
                 break
         return result
 
-    # 役職による権限：親（レベル0）の作成・編集は管理職/マスタのみ。
-    privileged = is_master(login_role) or login_role == "管理職"
+    # 役職による権限：親（レベル0）の作成・編集は管理職以上のみ。
+    privileged = is_privileged(login_role)
 
     login_user_dict = {
         "id": login_user_id, "role": login_role, "dept": session.get("user_dept", ""),
@@ -589,13 +698,14 @@ def save() -> Any:
             if is_parent:
                 # 親：メンバー（関係ユーザー）を保存。担当者は持たない。
                 member_ids = _parse_people(row)
-                a1, a2, mem_str = None, None, ",".join(str(i) for i in member_ids)
+                a1, a2, mem_str, assigned_ids_str = None, None, ",".join(str(i) for i in member_ids), ""
             else:
-                # 子：担当者（最大2名）。未指定は既定担当者。
-                a_ids = _parse_people(row, 2) or [default_owner]
+                # 子：担当者（2名以上対応）。未指定は既定担当者。
+                a_ids = _parse_people(row) or [default_owner]
                 a1 = a_ids[0]
                 a2 = a_ids[1] if len(a_ids) > 1 else None
                 mem_str = ""
+                assigned_ids_str = ",".join(str(i) for i in a_ids)
             new_id = add_project_task(
                 category_id=None, subcategory_id=None,
                 task_name=name, description="",
@@ -607,6 +717,7 @@ def save() -> Any:
                 updated_by=session.get("user_name", ""),
                 assigned_to=a1, assigned_to_2=a2,
                 member_ids=mem_str,
+                assigned_ids=assigned_ids_str,
             )
             if parent_real:
                 set_project_task_parent(new_id, parent_real)
@@ -627,26 +738,37 @@ def save() -> Any:
             tmp_map[str(row.get("tmp"))] = tid
             ordered_ids.append(tid)
             if not row.get("dirty"):
+                # 変更なしの行でも、単独タスクが子の追加によって事後的に親化した
+                # ケースでは、残存する assigned_to をここでクリアする（このタスク
+                # 自体は dirty ではないため update_project_task はフルコールしない）。
+                if is_parent and (existing.get("assigned_to") or existing.get("assigned_to_2")):
+                    if _can_touch_existing(existing):
+                        clear_project_task_assigned_to(tid)
                 continue
             if not _can_touch_existing(existing):
                 continue
+            assigned_ids_update: str | None = None
             if is_parent:
-                # 親：メンバーを更新。担当者は変更しない。
+                # 親：メンバーを更新。親は担当者を持たない仕様のため常にクリアする
+                # （過去のデータ不整合で残存した assigned_to が、子の全削除時に
+                #   「担当者が復活する」ように見える不具合を防ぐ）。
                 set_project_task_members(tid, ",".join(str(i) for i in _parse_people(row)))
-                a1 = existing.get("assigned_to")
-                a2 = existing.get("assigned_to_2")
+                a1 = None
+                a2 = None
             else:
-                a_ids = _parse_people(row, 2)
+                a_ids = _parse_people(row)
                 a1 = a_ids[0] if a_ids else existing.get("assigned_to")
                 a2 = (a_ids[1] if len(a_ids) > 1 else None) if a_ids else existing.get("assigned_to_2")
-            if s and e:
+                assigned_ids_update = ",".join(str(i) for i in a_ids) if a_ids else ""
+            if (s and e) or (not s and not e):
+                # 開始日・終了日が両方揃っている場合は更新。両方空はガントバー削除（日程クリア）として扱う。
                 update_project_task(
                     task_id=tid,
                     category_id=existing.get("category_id"),
                     subcategory_id=existing.get("subcategory_id"),
-                    task_name=existing.get("task_name", ""),
+                    task_name=name or existing.get("task_name", ""),
                     description=existing.get("description", "") or "",
-                    start_date=s, end_date=e,
+                    start_date=s or "", end_date=e or "",
                     status=_parse_status(row.get("status")),
                     progress=_parse_int(row.get("progress"), 0, 100),
                     delay_days=_parse_int(row.get("delay"), 0),
@@ -656,6 +778,7 @@ def save() -> Any:
                     is_milestone=existing.get("is_milestone", 0) or 0,
                     is_event=existing.get("is_event", 0) or 0,
                     planned_hours=existing.get("planned_hours", 0.0) or 0.0,
+                    assigned_ids=assigned_ids_update,
                 )
             set_project_task_parent(tid, parent_real)
             updated += 1

@@ -122,4 +122,4 @@ ScheduleManagement/
 
 ## 詳細仕様
 
-DBスキーマ・全ルート一覧・画面遷移・業務フローの詳細は [`docs/system_spec.md`](docs/system_spec.md) を参照してください。
+DBスキーマ・全ルート一覧・画面遷移・業務フローの詳細は [`docs/01_仕様・設計/system_spec.md`](docs/01_仕様・設計/system_spec.md) を参照してください。

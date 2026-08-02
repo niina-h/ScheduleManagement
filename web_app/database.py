@@ -164,6 +164,19 @@ CREATE TABLE IF NOT EXISTS routine_schedule (
     row_number INTEGER NOT NULL,
     UNIQUE(user_id, row_number)
 );
+
+CREATE TABLE IF NOT EXISTS user_survey (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE,
+    usability INTEGER NOT NULL,
+    merit TEXT DEFAULT '',
+    demerit TEXT DEFAULT '',
+    requested_feature TEXT DEFAULT '',
+    recommend TEXT NOT NULL,
+    recommended_dept TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 """
 
 # users.json のパス
@@ -434,6 +447,12 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         if "member_ids" not in pt_cols2:
             db.execute("ALTER TABLE project_task ADD COLUMN member_ids TEXT NOT NULL DEFAULT ''")
             logger.info("project_task.member_ids カラムを追加しました。")
+        # 子タスクの担当者（2名以上に対応）。カンマ区切りのユーザーID。
+        # assigned_to/assigned_to_2（先頭2名の互換フィールド）は当面残し、
+        # 3名以上が設定された場合のみ本列を使う。
+        if "assigned_ids" not in pt_cols2:
+            db.execute("ALTER TABLE project_task ADD COLUMN assigned_ids TEXT NOT NULL DEFAULT ''")
+            logger.info("project_task.assigned_ids カラムを追加しました。")
 
     # weekly_schedule に project_task_id を追加（なければ）
     ws_cols = {row[1] for row in db.execute("PRAGMA table_info(weekly_schedule)").fetchall()}
@@ -543,6 +562,28 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
     if "fill_direction" not in rs_cols:
         db.execute("ALTER TABLE routine_schedule ADD COLUMN fill_direction TEXT DEFAULT 'top'")
         logger.info("routine_schedule.fill_direction カラムを追加しました。")
+
+    # user_survey テーブル（ログイン時アンケート、ユーザー1人につき1回のみ回答）を作成（なければ）。
+    if "user_survey" not in tables:
+        db.execute("""CREATE TABLE user_survey (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            usability INTEGER NOT NULL,
+            merit TEXT DEFAULT '',
+            demerit TEXT DEFAULT '',
+            requested_feature TEXT DEFAULT '',
+            recommend TEXT NOT NULL,
+            recommended_dept TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )""")
+        logger.info("user_survey テーブルを作成しました。")
+    else:
+        # recommended_dept（おすすめしたい部門の自由記述）を追加（なければ）。
+        survey_cols = {row[1] for row in db.execute("PRAGMA table_info(user_survey)").fetchall()}
+        if "recommended_dept" not in survey_cols:
+            db.execute("ALTER TABLE user_survey ADD COLUMN recommended_dept TEXT DEFAULT ''")
+            logger.info("user_survey.recommended_dept カラムを追加しました。")
 
     db.commit()
 

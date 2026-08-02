@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}アンケート - 予定管理システム{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-center" style="min-height: 70vh;">
+  <div class="card shadow-sm my-4" style="max-width: 640px; width: 100%;">
+    <div class="card-header bg-primary text-white py-3">
+      <h4 class="mb-0 fw-bold">利用アンケートのお願い</h4>
+    </div>
+    <div class="card-body p-4">
+      <p class="text-muted small mb-4">
+        本システムの改善のため、簡単なアンケートにご協力ください。
+        <strong>初回ログイン時に1度だけ</strong>お答えいただければ、以後は表示されません。
+      </p>
+      <form method="post" action="{{ url_for('survey_bp.survey') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        <div class="mb-4">
+          <label class="form-label fw-semibold">1. このシステムは使いやすいですか？</label>
+          <div class="d-flex gap-3 flex-wrap">
+            {% for v, lbl in [('1','1. 使いにくい'), ('2','2. やや使いにくい'), ('3','3. どちらとも言えない'), ('4','4. やや使いやすい'), ('5','5. 使いやすい')] %}
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="usability" id="usability{{ v }}" value="{{ v }}" required>
+              <label class="form-check-label small" for="usability{{ v }}">{{ lbl }}</label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label for="merit" class="form-label fw-semibold">2. このシステムのメリットを教えてください</label>
+          <textarea class="form-control" id="merit" name="merit" rows="3"
+                    placeholder="例：予定と実績が一画面で確認でき、進捗が把握しやすい"></textarea>
+        </div>
+
+        <div class="mb-4">
+          <label for="demerit" class="form-label fw-semibold">3. このシステムのデメリットを教えてください</label>
+          <textarea class="form-control" id="demerit" name="demerit" rows="3"
+                    placeholder="例：操作方法が分かりにくい部分がある"></textarea>
+        </div>
+
+        <div class="mb-4">
+          <label for="requested_feature" class="form-label fw-semibold">4. 追加してほしい機能はありますか？</label>
+          <textarea class="form-control" id="requested_feature" name="requested_feature" rows="3"></textarea>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label fw-semibold">5. 他の会社や部署での使用をおすすめしますか？</label>
+          <div class="d-flex gap-3 flex-wrap mb-2">
+            {% for v in ['はい', 'どちらとも言えない', 'いいえ'] %}
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="recommend" id="recommend_{{ loop.index }}" value="{{ v }}" required>
+              <label class="form-check-label small" for="recommend_{{ loop.index }}">{{ v }}</label>
+            </div>
+            {% endfor %}
+          </div>
+          <label for="recommended_dept" class="form-label small text-muted mb-1">特におすすめしたい部門があれば記載してください（任意）</label>
+          <input type="text" class="form-control" id="recommended_dept" name="recommended_dept"
+                 placeholder="例：営業部、製造部">
+        </div>
+
+        <div class="d-grid">
+          <button type="submit" class="btn btn-primary btn-lg">回答して続ける</button>
+        </div>
+      </form>
+      <form method="post" action="{{ url_for('survey_bp.survey_skip') }}" class="mt-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="d-grid">
+          <button type="submit" class="btn btn-outline-secondary btn-sm">次回回答する</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

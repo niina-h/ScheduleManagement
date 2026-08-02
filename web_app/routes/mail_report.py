@@ -12,6 +12,7 @@ from ..auth_helpers import is_privileged, is_master
 from ..models import (
     get_accessible_users,
     get_all_project_tasks,
+    get_all_users,
     get_daily_result,
     get_daily_comment,
     get_events_for_user_date,
@@ -21,6 +22,8 @@ from ..models import (
     get_task_master,
     get_weekly_leave,
     get_weekly_schedule,
+    resolve_parent_progress,
+    resolve_parent_status,
     save_mail_setting,
     get_user_by_id,
 )
@@ -29,7 +32,7 @@ mail_report_bp = Blueprint("mail_report_bp", __name__, url_prefix="/mail-report"
 
 
 def _require_privileged() -> None | object:
-    """管理職またはマスタでなければリダイレクト／403を返す。
+    """管理職以上（管理職・所属長・システム管理者）でなければリダイレクト／403を返す。
 
     Returns:
         None: 権限チェック通過時
@@ -40,6 +43,26 @@ def _require_privileged() -> None | object:
     if not is_privileged(session.get("user_role", "")):
         abort(403)
     return None
+
+
+def _get_master_mail_members(login_user: dict) -> list[dict]:
+    """マスタ用日報メールの対象メンバー（ログインユーザーの所属全員）を返す。
+
+    get_accessible_users はシステム管理者の所属切替（session["active_dept"]）状態に
+    連動するため、切替中は一部所属しか対象にならない。マスタ用メールは常に
+    ログインユーザー自身の所属全体を対象とすべき機能のため、切替状態に関わらず
+    dept 列で直接絞り込む。
+
+    Args:
+        login_user: ログインユーザー情報（dept を含む）。
+
+    Returns:
+        list[dict]: 所属メンバー一覧（ログインユーザー自身を含む）。
+    """
+    dept = login_user.get("dept", "")
+    if not dept:
+        return [login_user]
+    return get_all_users(dept_filter=dept)
 
 
 _WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
@@ -67,20 +90,17 @@ def _build_mgr_self_body(login_user: dict, target_date: date) -> tuple[str, str]
     comment_row = get_daily_comment(uid, date_str)
     reflection = comment_row.get("reflection", "").strip() or "（未入力）"
     action = comment_row.get("action", "").strip() or "（未入力）"
-    # 実施内容（本日の作業実績 - 同一作業名は時間を合算）
+    # 実施内容（本日の作業実績 - 同一作業名は1つにまとめる）
     result = get_daily_result(uid, date_str)
-    work_totals: dict[str, float] = {}
+    work_seen: set[str] = set()
     work_order: list[str] = []
     for slot in ("am", "pm"):
         for item in result.get(slot, []):
             task = item.get("task_name", "").strip()
-            hours = float(item.get("hours", 0.0))
-            if task:
-                if task not in work_totals:
-                    work_order.append(task)
-                work_totals[task] = work_totals.get(task, 0.0) + hours
-    work_lines: list[str] = [f"・{t}　{work_totals[t]}h" for t in work_order]
-    work_results = "\n".join(work_lines) if work_lines else "（実績なし）"
+            if task and task not in work_seen:
+                work_seen.add(task)
+                work_order.append(task)
+    work_results = "\n".join(work_order) if work_order else "（実績なし）"
 
     # 翌営業日の予定（同一作業名は1つにまとめる。
     # 土日・会社休日・本人の休暇設定をスキップして、実際に出勤する日の予定を表示する）
@@ -94,7 +114,7 @@ def _build_mgr_self_body(login_user: dict, target_date: date) -> tuple[str, str]
             task = item.get("task_name", "").strip()
             if task and task not in next_seen:
                 next_seen.append(task)
-    next_schedule = "\n".join(f"・{t}" for t in next_seen) if next_seen else "（予定未入力）"
+    next_schedule = "\n".join(next_seen) if next_seen else "（予定未入力）"
 
     body = (
         "お疲れ様です。\n"
@@ -334,6 +354,13 @@ def _build_master_body(
     # 全ユーザー横断の区分マップ（フォールバック用）
     global_cat_map = get_global_task_category_map()
 
+    # タスク名 → project_task.id の逆引き（週間予定に project_task_id が
+    # 未設定のまま残っている行を、タスク名の完全一致で補完するために使う）。
+    # 本番データでタスク名の重複が無いことを確認済み（重複時は先に見つかった方を使う）。
+    task_name_to_id: dict[str, int] = {}
+    for t in get_all_project_tasks():
+        task_name_to_id.setdefault(t["task_name"], t["id"])
+
     # 各メンバーの実績・タスクマスタ・週次スケジュールを収集
     member_data: list[dict] = []
     for member in members:
@@ -352,12 +379,27 @@ def _build_master_body(
         })
         # 対象日の週次スケジュール（計画判定用）
         schedule_data = get_weekly_schedule(uid, week_start_str)
-        scheduled_tasks: set[str] = {
-            item["task_name"].strip()
+        today_schedule_items = [
+            item
             for slot in ("am", "pm")
             for item in schedule_data.get(target_dow, {}).get(slot, [])
             if item.get("task_name", "").strip()
+        ]
+        scheduled_tasks: set[str] = {
+            item["task_name"].strip() for item in today_schedule_items
         }
+        # 本日の週間予定から project_task の ID を解決する（日報メール「対応中」
+        # セクションの判定に使用。実績入力の有無は問わない）。
+        # project_task_id が未設定の行は、タスク名の完全一致で project_task を
+        # 逆引きして補完する（ガント反映後の手直しなどで紐付けが欠けているケースが
+        # 多数あるため）。
+        scheduled_task_ids: set[int] = set()
+        for item in today_schedule_items:
+            pt_id = item.get("project_task_id")
+            if not pt_id:
+                pt_id = task_name_to_id.get(item["task_name"].strip())
+            if pt_id:
+                scheduled_task_ids.add(pt_id)
         # 当日の休暇種別（1日有休 / AM半休 / PM半休 / 特休 / 祝日 / その他休み）
         leave_type: str = get_weekly_leave(uid, week_start_str).get(target_dow, "")
         member_data.append({
@@ -366,6 +408,7 @@ def _build_master_body(
             "comment": comment_row,
             "task_cat_map": task_cat_map,
             "scheduled_tasks": scheduled_tasks,
+            "scheduled_task_ids": scheduled_task_ids,
             "leave_type": leave_type,
         })
 
@@ -378,6 +421,15 @@ def _build_master_body(
                 h = float(item.get("hours", 0.0))
                 if item.get("task_name", "").strip() and h > 0:
                     total_planned_hours += h
+
+    # 週間予定の入力率（休暇者は対象人数から除外）：
+    # 対象日にタスク名付きの予定が1件以上あるメンバー数 / 休暇者を除いた全体人数
+    schedule_targets = [md for md in member_data if not md["leave_type"]]
+    schedule_entered = sum(1 for md in schedule_targets if md["scheduled_tasks"])
+    if schedule_targets:
+        schedule_entry_rate = round(schedule_entered / len(schedule_targets) * 100)
+    else:
+        schedule_entry_rate = 0
 
     # 計画/突発/リスケ の時間集計
     plan_hours = 0.0
@@ -410,7 +462,8 @@ def _build_master_body(
 
     # 業務内容セクション（project_task の登録タスクを表示）
     # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ、イベント除外）。
-    # 当日以前に完了したタスクは過去の業務報告で既に表示済みなので本文から除外する。
+    # 完了タスクは、終了日が対象日より前（過去の業務報告で表示済み）のみ除外する。
+    # 終了日が対象日と同じ（＝当日完了）は「対応中」に残す。
     member_ids = [m["id"] for m in members]
     target_date_str: str = target_date.isoformat()
     project_tasks = [
@@ -418,63 +471,101 @@ def _build_master_body(
         if not t.get("is_event", 0)
         and not (
             t.get("status") == "完了"
-            and (t.get("end_date") or "") <= target_date_str
+            and (t.get("end_date") or "") < target_date_str
         )
     ]
-    # タスクを重複除去しつつ (大区分, 中区分, 状態) 付きで平坦化する
-    # （画面の絞り込みと同じスコープ＝担当メンバーのタスクのみ、既に project_tasks で確定済み）。
-    seen_task_names: set[str] = set()
-    flat_tasks: list[dict] = []
-    for pt in project_tasks:
-        tname = pt["task_name"]
-        if tname in seen_task_names:
-            continue
-        seen_task_names.add(tname)
-        flat_tasks.append({
-            "name": tname,
-            "status": pt.get("status", ""),
-            "cat_name": pt.get("category_name") or "",
-            "sub_name": pt.get("subcategory_name") or "",
-        })
 
-    # 状態別に件数を集計し、遅れが目立つ順（遅れ→着手→未着手→順調→完了→停止）に並べる。
-    # 「どのくらい作業があって、何が遅れているか」を先頭のサマリー行で即座に把握できるようにする。
-    _STATUS_ORDER = ["遅れ", "着手", "未着手", "順調", "完了", "停止"]
-    tasks_by_status: dict[str, list[dict]] = {s: [] for s in _STATUS_ORDER}
-    for t in flat_tasks:
-        tasks_by_status.setdefault(t["status"] or "未着手", []).append(t)
+    # 「対応中」判定: 基本は区分（大区分／中区分）で結合する。本日の週間予定・
+    # 日次実績に登場したタスク名を、各メンバーの task_cat_map（タスクマスタの
+    # 区分登録）で区分に変換し、その区分に属する project_task をすべて
+    # 「対応中」の対象にする（タスク名がガント側と一致しなくても表示される）。
+    # ただし task_master の区分登録が進んでいないユーザーも多いため、区分で
+    # 判定できない場合に備えてタスク名の完全一致もフォールバックとして残す
+    # （区分未登録でも「対応中」が0件のまま表示されない不具合を防ぐ）。
+    active_subcats: set[str] = set()
+    active_names: set[str] = set()
+    for md in member_data:
+        names: set[str] = set(md["scheduled_tasks"])
+        for slot in ("am", "pm"):
+            for item in md["result"].get(slot, []):
+                t = item.get("task_name", "").strip()
+                if t:
+                    names.add(t)
+        active_names |= names
+        for name in names:
+            info = md["task_cat_map"].get(name)
+            if info and info.get("subcategory_name"):
+                active_subcats.add(info["subcategory_name"])
 
-    status_counts = {s: len(tasks_by_status.get(s, [])) for s in _STATUS_ORDER}
-    total_count = len(flat_tasks)
-    delay_count = status_counts.get("遅れ", 0)
+    in_progress_tasks = [
+        t for t in project_tasks
+        if (t.get("subcategory_name") or "") in active_subcats
+        or t.get("task_name", "") in active_names
+    ]
 
-    def _format_task_line(t: dict) -> str:
-        """1タスクを「タスク名（大区分／中区分）」形式の1行に整形する。
+    # 親タスク（バー無しの見出し行）は、ガントチャート・進捗ダッシュボードと表示を
+    # 一致させるため、子タスクの状況から状態・進捗を自動判定する（DBの生値のまま
+    # だと常に「未着手・0%」に見えてしまう）。子は絞り込み前の全タスクから解決する
+    # （子の担当者がメール対象メンバーと異なる場合も正しく集計するため）。
+    _all_tasks_for_children = get_all_project_tasks()
+    all_tasks_by_id: dict[int, dict] = {t["id"]: t for t in _all_tasks_for_children}
+    _children_by_parent: dict[int, list[dict]] = {}
+    for _t in _all_tasks_for_children:
+        _pid = _t.get("parent_task_id")
+        if _pid:
+            _children_by_parent.setdefault(_pid, []).append(_t)
+    for pt in in_progress_tasks:
+        _kids = _children_by_parent.get(pt["id"])
+        if _kids:
+            pt["status"] = resolve_parent_status(pt, _kids)
+            pt["progress"] = resolve_parent_progress(pt, _kids)
 
-        区分が未設定（大区分・中区分ともに空）の場合は括弧書きを省略する。
-        """
-        cat_label = t["cat_name"]
-        if t["sub_name"]:
-            cat_label = f"{cat_label}／{t['sub_name']}" if cat_label else t["sub_name"]
-        if not cat_label:
-            return f"　・{t['name']}"
-        return f"　・{t['name']}（{cat_label}）"
+    all_users_by_id: dict[int, dict] = {u["id"]: u for u in get_all_users()}
+
+    def _assignee_names(pt: dict) -> str:
+        """タスクの担当者名（親ならメンバー、子なら担当者1・2）を「、」区切りで返す（姓のみ）。"""
+        member_ids_raw = (pt.get("member_ids") or "").strip()
+        if member_ids_raw:
+            names = [
+                (all_users_by_id[int(s)].get("last_name") or all_users_by_id[int(s)]["name"])
+                for s in member_ids_raw.split(",")
+                if s.strip().isdigit() and int(s) in all_users_by_id
+            ]
+            return "、".join(names) if names else "担当者未設定"
+        names = []
+        if pt.get("assigned_name"):
+            names.append(pt.get("assigned_last_name") or pt.get("assigned_name"))
+        if pt.get("assigned_name_2"):
+            names.append(pt.get("assigned_last_name_2") or pt.get("assigned_name_2"))
+        return "、".join(names) if names else "担当者未設定"
+
+    # 中区分ごとにグループ化する（大区分「開発」以外も対象。理想形の「AI開発[配筋]」
+    # 「販路開拓」のように、区分名そのものを見出しとして使う）。
+    # 中区分が未設定のタスクは大区分名、両方未設定なら「その他」にまとめる。
+    tasks_by_subcat: dict[str, list[dict]] = {}
+    subcat_order: dict[str, int] = {}
+    for pt in in_progress_tasks:
+        label = (pt.get("subcategory_name") or pt.get("category_name") or "").strip() or "その他"
+        tasks_by_subcat.setdefault(label, []).append(pt)
+        order = pt.get("subcat_order") or pt.get("cat_order") or 0
+        if label not in subcat_order or order < subcat_order[label]:
+            subcat_order[label] = order
+
+    total_count = sum(len(v) for v in tasks_by_subcat.values())
 
     content_lines: list[str] = []
-    content_lines.append(
-        f"全{total_count}件（遅れ{status_counts.get('遅れ', 0)}／着手{status_counts.get('着手', 0)}／"
-        f"未着手{status_counts.get('未着手', 0)}／順調{status_counts.get('順調', 0)}／"
-        f"完了{status_counts.get('完了', 0)}／停止{status_counts.get('停止', 0)}）"
-    )
-    for status in _STATUS_ORDER:
-        items = tasks_by_status.get(status, [])
-        if not items:
-            continue
-        content_lines.append(f"【{status}】{len(items)}件")
-        for t in items:
-            content_lines.append(_format_task_line(t))
+    content_lines.append(f"対応中 全{total_count}件")
+    for label in sorted(tasks_by_subcat.keys(), key=lambda k: (subcat_order.get(k, 0), k)):
+        content_lines.append(f"　・{label}")
+        for pt in sorted(tasks_by_subcat[label], key=lambda t: t.get("display_order") or 0):
+            progress = pt.get("progress", 0) or 0
+            status = pt.get("status", "") or "未着手"
+            if progress >= 1:
+                content_lines.append(f"　　└{pt['task_name']}　（{_assignee_names(pt)}：進捗{progress}%、{status}）")
+            else:
+                content_lines.append(f"　　└{pt['task_name']}")
 
-    # メンバー AM/PM サマリ
+    # メンバー実績サマリ
     # 除外条件: 定例作業（大区分「定例」or 中区分「定例作業」）、AM1行目(idx=0)、PM最終行(idx=4)
     def _is_routine(task_name: str, cat_map: dict) -> bool:
         """定例作業かどうか判定する。"""
@@ -482,12 +573,35 @@ def _build_master_body(
         return (info.get("category_name") in ("定例", "定例作業")
                 or info.get("subcategory_name") in ("定例", "定例作業"))
 
+    def _parent_task_name(project_task_id: int | None) -> str | None:
+        """project_task_id から親タスク名を返す（親を持たない・紐付けなしなら None）。"""
+        if not project_task_id:
+            return None
+        task = all_tasks_by_id.get(project_task_id)
+        if not task:
+            return None
+        parent_id = task.get("parent_task_id")
+        parent = all_tasks_by_id.get(parent_id) if parent_id else None
+        return parent["task_name"] if parent else None
+
+    def _format_member_tasks(items: list[dict]) -> str:
+        """作業名の後ろに親タスク名を付けて連結する。連続する項目の親が同じ場合は省略する。"""
+        parts: list[str] = []
+        last_parent: str | None = "__init__"  # 最初の項目は必ず親名を出すための番兵
+        for name, parent_name in items:
+            if parent_name and parent_name != last_parent:
+                parts.append(f"{name}（{parent_name}）")
+            else:
+                parts.append(name)
+            last_parent = parent_name
+        return "/ ".join(parts) if parts else "（なし）"
+
     # 終日休暇（出勤なし）と判定する種別
     FULL_LEAVE_TYPES: set[str] = {"1日有休", "特休", "その他休み", "祝日"}
 
     member_lines: list[str] = []
     for md in member_data:
-        name = md["member"]["name"]
+        name = md["member"].get("last_name") or md["member"]["name"]
         result = md["result"]
         tcm = md["task_cat_map"]
         leave = md.get("leave_type", "")
@@ -497,32 +611,33 @@ def _build_master_body(
             member_lines.append(f"{name}：{leave}")
             continue
 
-        am_tasks = list(dict.fromkeys(
-            item["task_name"]
-            for idx, item in enumerate(result.get("am", []))
-            if item.get("task_name", "").strip() and float(item.get("hours", 0)) > 0
-            and idx != 0  # AM1行目を除外
-            and not _is_routine(item["task_name"], tcm)
-        ))
-        pm_tasks = list(dict.fromkeys(
-            item["task_name"]
-            for idx, item in enumerate(result.get("pm", []))
-            if item.get("task_name", "").strip() and float(item.get("hours", 0)) > 0
-            and idx != 4  # PM最終行(5枠目)を除外
-            and not _is_routine(item["task_name"], tcm)
-        ))
-        am_str = "/ ".join(am_tasks) if am_tasks else "（なし）"
-        pm_str = "/ ".join(pm_tasks) if pm_tasks else "（なし）"
+        # AM・PMを通しで1本にまとめる（AM1行目・PM最終行・定例作業は除外）。
+        seen_names: set[str] = set()
+        combined_items: list[tuple[str, str | None]] = []
+        for idx, item in enumerate(result.get("am", [])):
+            task_name = item.get("task_name", "").strip()
+            if (not task_name or float(item.get("hours", 0)) <= 0
+                    or idx == 0 or _is_routine(task_name, tcm) or task_name in seen_names):
+                continue
+            seen_names.add(task_name)
+            combined_items.append((task_name, _parent_task_name(item.get("project_task_id"))))
+        for idx, item in enumerate(result.get("pm", [])):
+            task_name = item.get("task_name", "").strip()
+            if (not task_name or float(item.get("hours", 0)) <= 0
+                    or idx == 4 or _is_routine(task_name, tcm) or task_name in seen_names):
+                continue
+            seen_names.add(task_name)
+            combined_items.append((task_name, _parent_task_name(item.get("project_task_id"))))
 
-        # 半休の場合：休んでいる側を休暇種別表記、もう片方は通常通り
+        tasks_str = _format_member_tasks(combined_items)
+
+        # 半休の場合は先頭に休暇種別を付記する。
         if leave == "AM半休":
-            member_lines.append(f"{name}：AM半休 / {pm_str}")
+            member_lines.append(f"{name}：AM半休 / {tasks_str}")
         elif leave == "PM半休":
-            member_lines.append(f"{name}：{am_str} / PM半休")
-        elif am_str == pm_str:
-            member_lines.append(f"{name}：{am_str}")
+            member_lines.append(f"{name}：{tasks_str} / PM半休")
         else:
-            member_lines.append(f"{name}：{am_str} / {pm_str}")
+            member_lines.append(f"{name}：{tasks_str}")
 
     # マスタ自身の振り返り・対策
     def _wrap_text(text: str, width: int = 100) -> str:
@@ -553,33 +668,34 @@ def _build_master_body(
     # （日次実績の自由入力タスク名はタスクマスタに区分登録されていないことが多く、
     #   実績ベースの集計では常に空になりがちなため、大区分が確実に設定されている
     #   project_task を情報源にする。）
-    #   形式: 「  中区分　タスク名　（氏名：進捗X%、状態）」
-    user_name_by_id: dict[int, str] = {m["id"]: m["name"] for m in members}
-
-    def _dev_assignee_names(pt: dict) -> str:
-        """タスクの担当者名（親ならメンバー、子なら担当者1・2）を「、」区切りで返す。"""
-        member_ids_raw = (pt.get("member_ids") or "").strip()
-        if member_ids_raw:
-            names = [
-                user_name_by_id[int(s)] for s in member_ids_raw.split(",")
-                if s.strip().isdigit() and int(s) in user_name_by_id
-            ]
-            return "、".join(names) if names else "担当者未設定"
-        names = []
-        if pt.get("assigned_name"):
-            names.append(pt.get("assigned_last_name") or pt.get("assigned_name"))
-        if pt.get("assigned_name_2"):
-            names.append(pt.get("assigned_last_name_2") or pt.get("assigned_name_2"))
-        return "、".join(names) if names else "担当者未設定"
-
+    #   形式: 「  中区分　タスク名　（姓：進捗X%、状態）」
+    # 担当者名は _assignee_names（姓のみ表示、上の「対応中」セクションで定義済み）を再利用する。
     dev_tasks = [pt for pt in project_tasks if (pt.get("category_name") or "") == "開発"]
-    ai_lines: list[str] = []
+    # 中区分ごとにグループ化する。進捗1%以上のタスクのみ担当者・進捗・状態を付記し、
+    # それ以外（未着手）はタスク名のみを列記して情報量を抑える。
+    # 並び順はガントチャートと同じ表示順（subcategory の display_order）で統一する
+    # （現状は開発の中区分が全て display_order=0 のため実質アルファベット順になって
+    #   いたので、rows挿入順にも依存しない安定した順序を明示する）。
+    dev_by_subcat: dict[str, list[dict]] = {}
+    dev_subcat_order: dict[str, int] = {}
     for pt in dev_tasks:
         label = (pt.get("subcategory_name") or "").strip() or "開発"
-        assignees = _dev_assignee_names(pt)
-        status = pt.get("status", "") or "未着手"
-        progress = pt.get("progress", 0) or 0
-        ai_lines.append(f"  {label}　{pt['task_name']}　（{assignees}：進捗{progress}%、{status}）")
+        dev_by_subcat.setdefault(label, []).append(pt)
+        order = pt.get("subcat_order") or 0
+        if label not in dev_subcat_order or order < dev_subcat_order[label]:
+            dev_subcat_order[label] = order
+
+    ai_lines: list[str] = []
+    for label in sorted(dev_by_subcat.keys(), key=lambda k: (dev_subcat_order.get(k, 0), k)):
+        ai_lines.append(f"  {label}")
+        for pt in sorted(dev_by_subcat[label], key=lambda t: t.get("display_order") or 0):
+            progress = pt.get("progress", 0) or 0
+            if progress >= 1:
+                assignees = _assignee_names(pt)
+                status = pt.get("status", "") or "未着手"
+                ai_lines.append(f"　　{pt['task_name']}　（{assignees}：進捗{progress}%、{status}）")
+            else:
+                ai_lines.append(f"　　{pt['task_name']}")
     ai_section = "\n".join(ai_lines) if ai_lines else "  （開発中のタスクなし）"
 
     # ＜次回予定＞: マスタ自身の翌営業日予定（定例作業は除外）
@@ -595,9 +711,8 @@ def _build_master_body(
     for slot in ("am", "pm"):
         for item in next_schedule_data.get(next_dow, {}).get(slot, []):
             t = item.get("task_name", "").strip()
-            if t and t not in next_seen_list:
-                if master_tcm.get(t, {}).get("subcategory_name") != "定例作業":
-                    next_seen_list.append(t)
+            if t and t not in next_seen_list and not _is_routine(t, master_tcm):
+                next_seen_list.append(t)
     # 翌日のイベントを全メンバーから収集
     next_date_str = next_day.isoformat()
     next_events_seen: list[str] = []
@@ -632,7 +747,7 @@ def _build_master_body(
         parts.append("")
 
     parts.extend([
-        "□予定：100%（作業計画：100%）",
+        f"□予定：{schedule_entry_rate}%（週間予定を入力済みのメンバー：{schedule_entered}/{len(schedule_targets)}人）",
         f"■実績：{jisseki_rate}%（計画：{plan_rate}%　突発：{sudden_rate}%　リスケ：{resc_rate}%）",
         "\n".join(content_lines),
         "",
@@ -784,8 +899,7 @@ def download_eml():
 
     if role_type == "master":
         setting = get_mail_setting("マスタ")
-        dept = login_user.get("dept", "")
-        members = get_accessible_users(login_user["id"], login_user["role"], dept)
+        members = _get_master_mail_members(login_user)
         subject = _build_master_subject(_resolve_master_dept(login_user, members), target_date)
         greeting = setting.get("body_template", "")
         body = _build_master_body(login_user, target_date, members, greeting, _get_friday_report(login_user, target_date))
@@ -827,16 +941,16 @@ def preview():
         abort(404)
 
     login_role = session.get("user_role", "")
-    mgr_setting = get_mail_setting("管理職")
-    master_setting = get_mail_setting("マスタ")
+    uid = login_user["id"]
+    mgr_setting = _get_mgr_setting(uid)
+    master_setting = _get_master_setting(uid)
 
     # 管理職用: 固定テンプレート
     mgr_subject, mgr_body = _build_mgr_self_body(login_user, target_date)
     mgr_mailto = _build_mailto(mgr_setting, mgr_subject)
 
     # マスタ用: 動的生成（件名は曜日で自動判定、本文は大区分・中区分グループ化）
-    dept = login_user.get("dept", "")
-    members = get_accessible_users(login_user["id"], login_user["role"], dept)
+    members = _get_master_mail_members(login_user)
     master_subject = _build_master_subject(_resolve_master_dept(login_user, members), target_date)
     master_greeting = master_setting.get("body_template", "")
     master_body = _build_master_body(login_user, target_date, members, master_greeting, _get_friday_report(login_user, target_date))
@@ -893,10 +1007,9 @@ def print_master() -> object:
     if not login_user:
         abort(404)
 
-    dept = login_user.get("dept", "")
-    members = get_accessible_users(login_user["id"], login_user["role"], dept)
+    members = _get_master_mail_members(login_user)
     master_subject = _build_master_subject(_resolve_master_dept(login_user, members), target_date)
-    master_greeting = get_mail_setting("マスタ").get("body_template", "")
+    master_greeting = _get_master_setting(login_user["id"]).get("body_template", "")
     master_body = _build_master_body(login_user, target_date, members, master_greeting, _get_friday_report(login_user, target_date))
 
     escaped_body = html_mod.escape(master_body)
@@ -928,9 +1041,11 @@ def save_address() -> object:
     if role not in ("管理職", "マスタ"):
         abort(400)
 
-    current = get_mail_setting(role)
+    uid = int(session["user_id"])
+    setting_key = _mgr_setting_key(uid) if role == "管理職" else _master_setting_key(uid)
+    current = get_mail_setting(setting_key)
     save_mail_setting(
-        role=role,
+        role=setting_key,
         to_address=request.form.get("to_address", "").strip(),
         cc_address=request.form.get("cc_address", "").strip(),
         subject_template=current.get("subject_template", ""),
@@ -1043,6 +1158,36 @@ def _build_user_subject(user: dict, target_date: date) -> str:
     dow = WEEKDAY_JA[target_date.weekday()]
     last_name = user.get("last_name", "") or user.get("name", "")
     return f'日次作業報告「{last_name}」：{target_date.year}/{target_date.month:02d}/{target_date.day:02d}（{dow}）'
+
+
+def _mgr_setting_key(user_id: int) -> str:
+    """管理職用タブのメール設定キー（ユーザー個別）を返す。"""
+    return f"管理職_{user_id}"
+
+
+def _master_setting_key(user_id: int) -> str:
+    """マスタ用タブのメール設定キー（ユーザー個別）を返す。"""
+    return f"マスタ_{user_id}"
+
+
+def _is_empty_setting(setting: dict) -> bool:
+    """メール設定が未保存（全項目空）かどうかを判定する。"""
+    return not any(
+        (setting.get(k) or "").strip()
+        for k in ("to_address", "cc_address", "bcc_address", "subject_template", "body_template")
+    )
+
+
+def _get_mgr_setting(user_id: int) -> dict:
+    """管理職用タブのメール設定を取得する（個人未保存ならロール共通設定にフォールバック）。"""
+    personal = get_mail_setting(_mgr_setting_key(user_id))
+    return personal if not _is_empty_setting(personal) else get_mail_setting("管理職")
+
+
+def _get_master_setting(user_id: int) -> dict:
+    """マスタ用タブのメール設定を取得する（個人未保存ならロール共通設定にフォールバック）。"""
+    personal = get_mail_setting(_master_setting_key(user_id))
+    return personal if not _is_empty_setting(personal) else get_mail_setting("マスタ")
 
 
 def _get_user_mail_setting(user_id: int) -> dict:

@@ -16,7 +16,7 @@
   </h5>
   <a class="btn btn-outline-secondary btn-sm nav-confirm" href="{{ url_for('schedule.weekly') }}?week={{ next_week }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user_id }}{% endif %}">次週 ▶</a>
   <a class="btn btn-outline-primary btn-sm ms-2 nav-confirm" href="{{ url_for('schedule.weekly') }}{% if is_admin_view is defined and is_admin_view %}?user_id={{ target_user_id }}{% endif %}">今週</a>
-  {% if (session.user_role == '管理職' or session.user_role == 'システム管理者') and all_users is defined and all_users %}
+  {% if role_is_privileged and all_users is defined and all_users %}
   <div class="input-group input-group-sm ms-auto" style="width:auto;">
     <span class="input-group-text">切り替え：</span>
     <select class="form-select form-select-sm" style="width:auto;"
@@ -33,6 +33,8 @@
 {# 操作ボタン行                                                         #}
 {# ------------------------------------------------------------------ #}
 <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+  {# 当週は運用中の予定を誤って上書きする事故を防ぐため、コピーボタンを表示しない #}
+  {% if week_start != today_monday %}
   <form method="post" action="{{ url_for('schedule.copy_last_week') }}">
     <input type="hidden" name="week_start" value="{{ week_start }}">
     {% if is_admin_view is defined and is_admin_view %}
@@ -40,6 +42,7 @@
     {% endif %}
     <button type="submit" class="btn btn-outline-secondary btn-sm">先週の予定をコピー</button>
   </form>
+  {% endif %}
 
   {% if has_data %}
   <a id="excel-export-link"
@@ -50,6 +53,8 @@
   </a>
   {% endif %}
 
+  {# 当週は運用中の予定を誤って全消去する事故を防ぐため、クリアボタンを表示しない #}
+  {% if week_start != today_monday %}
   <form method="post" action="{{ url_for('schedule.clear_schedule') }}" id="clear-form">
     <input type="hidden" name="week_start" value="{{ week_start }}">
     {% if is_admin_view is defined and is_admin_view %}
@@ -59,6 +64,7 @@
       🗑️ 週間予定をクリア
     </button>
   </form>
+  {% endif %}
 
   {# ガントチャート反映（ガント登録期間のタスク＋イベント＋定例を同時取込。運用中の当週は事故防止のため使用不可） #}
   {% if week_start == today_monday %}
@@ -278,6 +284,44 @@
     {% endif %}
   </div>
 </form>
+
+{# ---- 直近の振り返り・上長コメント（本日実績入力済みなら本日分、未入力なら直近の入力日） ---- #}
+{% if latest_comment is defined and latest_comment.date %}
+<div class="row g-3 mt-3">
+  <div class="col-md-6">
+    <div class="card border-info h-100">
+      <div class="card-header bg-info text-white py-2">
+        <strong>💬 前回振返り</strong>
+        <small class="ms-2 opacity-75">（{{ latest_comment.date }}）</small>
+      </div>
+      <div class="card-body p-2">
+        <div class="mb-1">
+          <div style="max-height:70px;overflow-y:auto;white-space:pre-wrap;background:#f8f9fa;padding:0.4rem;border-radius:4px;font-size:0.85em;">{{- latest_comment.reflection or '（未記入）' -}}</div>
+        </div>
+        <div>
+          <div style="max-height:70px;overflow-y:auto;white-space:pre-wrap;background:#f8f9fa;padding:0.4rem;border-radius:4px;font-size:0.85em;">{{- latest_comment.action or '（未記入）' -}}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card border-success h-100">
+      <div class="card-header bg-success text-white py-2 d-flex justify-content-between align-items-center">
+        <strong>📝 上長コメント</strong>
+        {% if latest_comment.admin_comment and latest_comment.updated_at %}
+        <small class="text-white-50">
+          最終更新: {{ latest_comment.updated_at[:16] | replace('T', ' ') }}
+          {% if latest_comment.updated_by %}（{{ latest_comment.updated_by }}）{% endif %}
+        </small>
+        {% endif %}
+      </div>
+      <div class="card-body p-2">
+        <div style="max-height:145px;overflow-y:auto;white-space:pre-wrap;background:#f8f9fa;padding:0.4rem;border-radius:4px;font-size:0.85em;">{{- latest_comment.admin_comment or '' -}}</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {# ---- 上長コメント確認モーダル ---- #}
 <div class="modal fade" id="adminCommentModal" tabindex="-1" aria-labelledby="adminCommentModalLabel" aria-hidden="true">

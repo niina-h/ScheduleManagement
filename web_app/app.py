@@ -30,6 +30,7 @@ def create_app() -> Flask:
     from .routes.project_tasks import project_tasks_bp
     from .routes.api import api_bp
     from .routes.planner import planner_bp
+    from .routes.survey import survey_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(schedule_bp)
@@ -42,6 +43,7 @@ def create_app() -> Flask:
     app.register_blueprint(project_tasks_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(planner_bp)
+    app.register_blueprint(survey_bp)
 
     @app.after_request
     def _no_cache(response: Response) -> Response:
@@ -56,6 +58,28 @@ def create_app() -> Flask:
         """全リクエスト前にCSRFトークンをセッションに生成する（なければ）。"""
         if "csrf_token" not in session:
             session["csrf_token"] = secrets.token_hex(32)
+
+    @app.before_request
+    def _require_survey() -> Response | None:
+        """未回答のログイン中ユーザーをアンケート画面へ強制的に誘導する。
+
+        アンケート画面自体・ログアウト・静的ファイルは無限リダイレクトを避けるため対象外。
+        「次回回答する」で見送った場合は、session["survey_skipped"] が立ち、
+        今回のログインセッション中は再表示しない（ログアウト・再ログインで再度表示される）。
+        """
+        from flask import request as _request
+
+        if _request.endpoint in (None, "survey_bp.survey", "survey_bp.survey_skip", "auth.logout", "static"):
+            return None
+        user_id = session.get("user_id")
+        if not user_id:
+            return None
+        if session.get("survey_skipped"):
+            return None
+        from .models import has_answered_survey
+        if not has_answered_survey(int(user_id)):
+            return redirect(url_for("survey_bp.survey"))
+        return None
 
     @app.context_processor
     def _inject_globals() -> dict:

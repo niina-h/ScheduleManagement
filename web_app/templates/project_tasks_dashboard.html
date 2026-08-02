@@ -321,7 +321,7 @@
     for (var i = 0; i < data.task_names.length; i++) {
       if (hideCompleted && data.task_statuses[i] === '完了') continue;
       var n = data.task_names[i];
-      names.push(n.length > 18 ? n.substring(0, 16) + '…' : n);
+      names.push(n.length > 40 ? n.substring(0, 38) + '…' : n);
       progresses.push(data.task_progresses[i]);
       colors.push(data.task_colors[i]);
     }

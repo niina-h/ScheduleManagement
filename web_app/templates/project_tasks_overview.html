@@ -61,9 +61,18 @@
       </div>
       <div class="col-md-8">
         <div class="card shadow-sm">
-          <div class="card-header bg-light fw-semibold small">カテゴリ別 平均進捗率</div>
+          <div class="card-header bg-light d-flex align-items-center justify-content-between">
+            <span class="fw-semibold small">カテゴリ別 平均進捗率</span>
+            <span class="small text-muted d-flex align-items-center gap-2">
+              <span class="d-inline-flex align-items-center gap-1"><span style="width:10px;height:10px;background:#9ca3af;display:inline-block;border-radius:2px;"></span>0〜29%</span>
+              <span class="d-inline-flex align-items-center gap-1"><span style="width:10px;height:10px;background:#f59e0b;display:inline-block;border-radius:2px;"></span>30〜49%</span>
+              <span class="d-inline-flex align-items-center gap-1"><span style="width:10px;height:10px;background:#3b82f6;display:inline-block;border-radius:2px;"></span>50〜79%</span>
+              <span class="d-inline-flex align-items-center gap-1"><span style="width:10px;height:10px;background:#10b981;display:inline-block;border-radius:2px;"></span>80%〜</span>
+            </span>
+          </div>
           <div class="card-body p-2" style="overflow-y:auto; max-height:300px;">
             <canvas id="categoryChart"></canvas>
+            <p class="small text-muted mt-1 mb-0">バーの長さと色はカテゴリの平均進捗率を表します（状態「未着手」を示す色ではありません）。</p>
           </div>
         </div>
       </div>
