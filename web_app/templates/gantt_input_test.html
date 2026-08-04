@@ -2,7 +2,7 @@
 {% block title %}ガントチャート{% endblock %}
 {% block content %}
 <style>
-  :root { --dayw: 30px; --namew: 480px; --rowh: 32px; --headh: 40px; }
+  :root { --dayw: 30px; --namew: 300px; --rowh: 32px; --headh: 40px; }
   /* 縦横スクロール可能なコンテナ。縦スクロール時も日付ヘッダー(.g-head)を
      コンテナ上端に固定表示するため、max-height と overflow-y を持たせる。 */
   .gantt-scroll { overflow: auto; max-height: calc(100vh - 220px); border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; }
@@ -77,8 +77,9 @@
   .asgn-btn.none { color: #94a3b8; border-color: #e2e8f0; background: #f8fafc; }
   .asgn-btn .cnt { font-size: .62rem; font-weight: 700; }
   /* 状態＋進捗率メタ（クリックで編集） */
-  .g-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 3px; font-size: .6rem; min-width: 52px; justify-content: flex-end; cursor: pointer; padding: 0 2px; border-radius: 3px; }
+  .g-meta { flex: 0 0 auto; display: flex; align-items: center; gap: 3px; font-size: .6rem; min-width: 78px; justify-content: flex-end; cursor: pointer; padding: 0 2px; border-radius: 3px; }
   .g-meta:hover { background: #eef2ff; }
+  .g-meta .days { color: #94a3b8; }
   .g-meta .st { font-weight: 700; }
   .g-meta .pct { color: #64748b; }
   .g-track { position: relative; flex: 0 0 auto; cursor: crosshair; }
@@ -244,6 +245,9 @@
   var RANGE_START = {{ range_start | tojson }};
   var DAYS = {{ days | length }};
   var DAY_META = {{ days | tojson }};
+  var HOLIDAY_DATES = {{ holiday_dates | tojson }};
+  var HOLIDAY_SET = {};
+  HOLIDAY_DATES.forEach(function (iso) { HOLIDAY_SET[iso] = true; });
   var TASKS = {{ tasks | tojson }};
   var ASSIGN_USERS = {{ assign_users | tojson }};
   var DAYW = 30, INDENT = 18;
@@ -330,15 +334,32 @@
   function clampIdx(i) { return Math.max(0, Math.min(DAYS-1, i)); }
   function inRange(iso) { var i = dayIndexOf(iso); return i >= 0 && i < DAYS; }
 
+  /* 営業日数（土日・会社休日を除く）を算出する。開始日・終了日を含む日数。 */
+  function calcBusinessDays(start, end) {
+    if (!start || !end) return 0;
+    var s = toDate(start), e = toDate(end);
+    if (e < s) return 0;
+    var count = 0;
+    var cur = new Date(s);
+    while (cur <= e) {
+      var wd = cur.getDay();
+      var iso = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0') + '-' + String(cur.getDate()).padStart(2, '0');
+      if (wd !== 0 && wd !== 6 && !HOLIDAY_SET[iso]) count++;
+      cur.setDate(cur.getDate() + 1);
+    }
+    return count;
+  }
+
   var STATUSES = ['未着手', '着手', '順調', '遅れ', '完了', '停止'];
-  /* 順調＝経過日数からの自動進捗率（%） */
+  /* 順調＝経過日数からの自動進捗率（%）。着手した開始日当日も最小限の進捗（1日分）が
+     付くよう、経過日数に+1した値を使う（着手直後が常に0%に見えないようにするため）。 */
   function autoProgressByDate(start, end) {
     if (!start || !end) return 0;
     var s = toDate(start), e = toDate(end);
     var total = Math.max(1, Math.round((e - s) / 86400000));
     var elapsed = Math.round((today - s) / 86400000);
-    if (elapsed <= 0) return 0;
-    return Math.max(0, Math.min(99, Math.round(elapsed / total * 100)));
+    if (elapsed < 0) return 0;
+    return Math.max(0, Math.min(99, Math.round((elapsed + 1) / total * 100)));
   }
   /* 行の実効状態・進捗率を算出（状態は手動選択を尊重）。
      - 未着手=0 / 完了=100 / 停止=入力値保持
@@ -611,7 +632,7 @@
     }
     var ab = document.createElement('button'); ab.type = 'button'; ab.className = 'asgn-btn'; name.appendChild(ab);
     var meta = document.createElement('span'); meta.className = 'g-meta'; meta.title = 'クリックで状態・進捗を編集';
-    meta.innerHTML = '<span class="st"></span><span class="pct"></span>'; name.appendChild(meta);
+    meta.innerHTML = '<span class="days"></span><span class="st"></span><span class="pct"></span>'; name.appendChild(meta);
     if (editable) meta.addEventListener('click', function (e) { e.stopPropagation(); openDetail(row); });
     row.appendChild(name);
 
@@ -677,9 +698,11 @@
   function updateMeta(row) {
     var meta = row.querySelector('.g-meta'); if (!meta) return;
     var eff = effOf(row);
-    var stEl = meta.querySelector('.st'), pctEl = meta.querySelector('.pct');
+    var daysEl = meta.querySelector('.days'), stEl = meta.querySelector('.st'), pctEl = meta.querySelector('.pct');
+    var hasRange = row.dataset.start && row.dataset.end;
+    daysEl.textContent = hasRange ? (calcBusinessDays(row.dataset.start, row.dataset.end) + '日 ') : '';
     stEl.textContent = eff.status || ''; stEl.style.color = STATUS_COLORS[eff.status] || '#64748b';
-    pctEl.textContent = (row.dataset.start && row.dataset.end) ? (' ' + eff.progress + '%') : '';
+    pctEl.textContent = hasRange ? (' ' + eff.progress + '%') : '';
   }
 
   function addBar(track, row, si, ei) {

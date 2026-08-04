@@ -563,6 +563,30 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE routine_schedule ADD COLUMN fill_direction TEXT DEFAULT 'top'")
         logger.info("routine_schedule.fill_direction カラムを追加しました。")
 
+    # routine_schedule に頻度種別（daily=曜日ベース／weekly_spot=週次スポット日付／
+    # weekly_pattern=週次の週番号+曜日／yearly=年次の対象月日）を追加（なければ）。
+    if "freq_type" not in rs_cols:
+        db.execute("ALTER TABLE routine_schedule ADD COLUMN freq_type TEXT DEFAULT 'daily'")
+        logger.info("routine_schedule.freq_type カラムを追加しました。")
+    if "spot_date" not in rs_cols:
+        db.execute("ALTER TABLE routine_schedule ADD COLUMN spot_date TEXT DEFAULT ''")
+        logger.info("routine_schedule.spot_date カラムを追加しました。")
+    if "week_numbers" not in rs_cols:
+        db.execute("ALTER TABLE routine_schedule ADD COLUMN week_numbers TEXT DEFAULT ''")
+        logger.info("routine_schedule.week_numbers カラムを追加しました。")
+    if "yearly_month" not in rs_cols:
+        db.execute("ALTER TABLE routine_schedule ADD COLUMN yearly_month INTEGER DEFAULT 0")
+        logger.info("routine_schedule.yearly_month カラムを追加しました。")
+    if "yearly_day" not in rs_cols:
+        db.execute("ALTER TABLE routine_schedule ADD COLUMN yearly_day INTEGER DEFAULT 0")
+        logger.info("routine_schedule.yearly_day カラムを追加しました。")
+    # weekly_spot / weekly_pattern / yearly は row_number（11以降）だけでは
+    # AM/PM区分を判定できない（daily は row_number<=5=AM の暗黙ルールに依存）ため、
+    # 明示的な区分カラムを追加する。
+    if "period" not in rs_cols:
+        db.execute("ALTER TABLE routine_schedule ADD COLUMN period TEXT DEFAULT ''")
+        logger.info("routine_schedule.period カラムを追加しました。")
+
     # user_survey テーブル（ログイン時アンケート、ユーザー1人につき1回のみ回答）を作成（なければ）。
     if "user_survey" not in tables:
         db.execute("""CREATE TABLE user_survey (

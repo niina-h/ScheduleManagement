@@ -465,6 +465,7 @@ def planner() -> Any:
         role=login_role,
         is_master=master,
         display_days=_DISPLAY_DAYS,
+        holiday_dates=sorted(holiday_dates),
         csrf_token=session.get("csrf_token", ""),
         show_done=show_done,
     )

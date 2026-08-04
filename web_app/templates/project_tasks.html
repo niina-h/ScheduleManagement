@@ -53,7 +53,7 @@
         {% if page == 'events' and privileged is defined and privileged and selectable_users %}
         <div class="d-flex align-items-center gap-1">
           <label class="form-label small fw-semibold mb-0">担当者：</label>
-          <select id="userSwitch" class="form-select form-select-sm" style="width:140px; font-size:0.8rem;"
+          <select id="userSwitch" class="form-select form-select-sm" style="width:auto; min-width:140px; font-size:0.8rem;"
                   onchange="location.href='{{ page_url }}?user_id='+this.value">
             <option value="0" {% if target_user_id == 0 %}selected{% endif %}>全員</option>
             {% for u in selectable_users %}
@@ -65,7 +65,7 @@
         {% set routine_target_id = target_user_id if target_user_id else session.user_id %}
         <div class="d-flex align-items-center gap-1">
           <label class="form-label small fw-semibold mb-0">担当者：</label>
-          <select id="userSwitch" class="form-select form-select-sm" style="width:140px; font-size:0.8rem;"
+          <select id="userSwitch" class="form-select form-select-sm" style="width:auto; min-width:140px; font-size:0.8rem;"
                   onchange="location.href='{{ page_url }}?user_id='+this.value">
             {% for u in selectable_users %}
             <option value="{{ u.id }}" {% if routine_target_id == u.id %}selected{% endif %}>{{ u.last_name or u.name }}{% if u.id == session.user_id %}（自分）{% endif %}</option>
@@ -75,7 +75,7 @@
         {% elif privileged is defined and privileged and selectable_users and page != 'routine' %}
         <div class="d-flex align-items-center gap-1">
           <label class="form-label small fw-semibold mb-0">担当者：</label>
-          <select id="userSwitch" class="form-select form-select-sm" style="width:140px; font-size:0.8rem;"
+          <select id="userSwitch" class="form-select form-select-sm" style="width:auto; min-width:140px; font-size:0.8rem;"
                   onchange="location.href='{{ page_url }}?user_id='+this.value">
             <option value="0" {% if target_user_id == 0 %}selected{% endif %}>全員</option>
             {% for u in selectable_users %}
@@ -218,7 +218,7 @@
       <div class="card-body p-1 pb-0">
         <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
           <label class="form-label small fw-semibold mb-0">絞り込み：</label>
-          <select id="filterSubcat" class="form-select form-select-sm" style="width:180px; font-size:0.8rem;">
+          <select id="filterSubcat" class="form-select form-select-sm" style="width:auto; min-width:180px; font-size:0.8rem;">
             <option value="">すべて</option>
             {% set used_subcats = tasks | rejectattr('is_event') | map(attribute='subcategory_name') | select | unique | sort %}
             {% for sn in used_subcats %}
@@ -384,10 +384,14 @@
           </div>
           <div class="collapse" id="addRoutineForm">
             <div class="card-body border-bottom p-2">
-              <form method="post" action="{{ url_for('project_tasks_bp.save_routine') }}">
+              <form method="post" action="{{ url_for('project_tasks_bp.save_routine') }}" id="routineForm">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="target_user_id" value="{{ target_user_id if target_user_id else session.user_id }}">
-                <div class="row g-1 align-items-end">
+                <input type="hidden" name="editing_id" id="routineEditingId" value="">
+                <div class="row g-1 align-items-end mb-1">
+                  <div class="col-auto">
+                    <span id="routineEditingBadge" class="badge text-bg-info d-none">編集中</span>
+                  </div>
                   <div class="col">
                     <label class="form-label small mb-0">作業名</label>
                     <input type="text" name="task_name" class="form-control form-control-sm"
@@ -399,24 +403,24 @@
                            style="width:90px;" step="0.25" min="0" max="24" value="1" required>
                   </div>
                   <div class="col-auto">
-                    {# 行番号は手入力せず、区分（午前/午後）を選ぶだけ。空き行はサーバーが自動割当（各最大3件）。 #}
-                    {% set am_used = used_rows | select('le', 3) | list | length %}
-                    {% set pm_used = used_rows | select('ge', 6) | select('le', 8) | list | length %}
-                    <label class="form-label small mb-0">区分</label>
-                    <select name="period" class="form-select form-select-sm" style="width:140px;" required>
-                      <option value="AM" {% if am_used >= 3 %}disabled{% endif %}>午前（AM {{ am_used }}/3）</option>
-                      <option value="PM" {% if pm_used >= 3 %}disabled{% endif %}>午後（PM {{ pm_used }}/3）</option>
+                    <label class="form-label small mb-0">頻度</label>
+                    <select name="freq_type" id="routineFreqType" class="form-select form-select-sm" style="width:200px;"
+                            onchange="routineToggleFreq(this.value)">
+                      <option value="daily">日次（曜日ごと）</option>
+                      <option value="weekly_spot">週次（日付指定）</option>
+                      <option value="weekly_pattern">週次（第何週＋曜日）</option>
+                      <option value="yearly">年次（対象月日）</option>
                     </select>
                   </div>
                   <div class="col-auto">
-                    <label class="form-label small mb-0">曜日</label>
-                    <div class="d-flex gap-1">
-                      {% for di, dname in [(0,'月'),(1,'火'),(2,'水'),(3,'木'),(4,'金')] %}
-                      <label class="form-check-label small" style="cursor:pointer;">
-                        <input type="checkbox" name="day_{{ di }}" value="1" checked class="form-check-input" style="width:14px;height:14px;">{{ dname }}
-                      </label>
-                      {% endfor %}
-                    </div>
+                    {# 行番号は手入力せず、区分（午前/午後）を選ぶだけ。日次は空き行をサーバーが自動割当（各最大3件）。 #}
+                    {% set am_used = used_rows | select('le', 3) | list | length %}
+                    {% set pm_used = used_rows | select('ge', 6) | select('le', 8) | list | length %}
+                    <label class="form-label small mb-0">区分</label>
+                    <select name="period" id="routinePeriod" class="form-select form-select-sm" style="width:190px;" required>
+                      <option value="AM" {% if am_used >= 3 %}disabled{% endif %}>午前（AM {{ am_used }}/3）</option>
+                      <option value="PM" {% if pm_used >= 3 %}disabled{% endif %}>午後（PM {{ pm_used }}/3）</option>
+                    </select>
                   </div>
                   <div class="col-auto">
                     <label class="form-label small mb-0">詰め方向</label>
@@ -426,7 +430,57 @@
                     </select>
                   </div>
                   <div class="col-auto">
-                    <button type="submit" class="btn btn-sm btn-warning">登録</button>
+                    <button type="submit" class="btn btn-sm btn-warning" id="routineSubmitBtn">登録</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="routineCancelBtn"
+                            onclick="routineCancelEdit()">キャンセル</button>
+                  </div>
+                </div>
+                <div class="row g-1 align-items-end">
+                  {# 日次: 曜日チェックボックス #}
+                  <div class="col-auto routine-freq-block" data-freq="daily">
+                    <label class="form-label small mb-0">曜日</label>
+                    <div class="d-flex gap-1">
+                      {% for di, dname in [(0,'月'),(1,'火'),(2,'水'),(3,'木'),(4,'金')] %}
+                      <label class="form-check-label small" style="cursor:pointer;">
+                        <input type="checkbox" name="day_{{ di }}" value="1" checked class="form-check-input" style="width:14px;height:14px;">{{ dname }}
+                      </label>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  {# 週次（スポット日付） #}
+                  <div class="col-auto routine-freq-block d-none" data-freq="weekly_spot">
+                    <label class="form-label small mb-0">日付</label>
+                    <input type="date" name="spot_date" class="form-control form-control-sm">
+                  </div>
+                  {# 週次（第何週＋曜日パターン） #}
+                  <div class="col-auto routine-freq-block d-none" data-freq="weekly_pattern">
+                    <label class="form-label small mb-0">曜日（複数可）</label>
+                    <div class="d-flex gap-1 mb-1">
+                      {% for di, dname in [(0,'月'),(1,'火'),(2,'水'),(3,'木'),(4,'金'),(5,'土'),(6,'日')] %}
+                      <label class="form-check-label small" style="cursor:pointer;">
+                        <input type="checkbox" name="wp_day_{{ di }}" value="1" class="form-check-input" style="width:14px;height:14px;">{{ dname }}
+                      </label>
+                      {% endfor %}
+                    </div>
+                    <label class="form-label small mb-0">週番号（複数可・未選択は毎週）</label>
+                    <div class="d-flex gap-1">
+                      {% for w in [1,2,3,4,5] %}
+                      <label class="form-check-label small" style="cursor:pointer;">
+                        <input type="checkbox" name="week_numbers" value="{{ w }}" class="form-check-input" style="width:14px;height:14px;">第{{ w }}
+                      </label>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  {# 年次 #}
+                  <div class="col-auto routine-freq-block d-none" data-freq="yearly">
+                    <label class="form-label small mb-0">対象月</label>
+                    <select name="yearly_month" class="form-select form-select-sm" style="width:90px;">
+                      {% for m in range(1, 13) %}<option value="{{ m }}">{{ m }}月</option>{% endfor %}
+                    </select>
+                    <label class="form-label small mb-0 ms-1">対象日</label>
+                    <select name="yearly_day" class="form-select form-select-sm" style="width:90px;">
+                      {% for d in range(1, 32) %}<option value="{{ d }}">{{ d }}日</option>{% endfor %}
+                    </select>
                   </div>
                 </div>
               </form>
@@ -437,30 +491,62 @@
             <table class="table table-sm table-hover mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width:10%">行</th>
+                  <th style="width:9%">区分</th>
+                  <th style="width:12%">頻度</th>
                   <th>作業名</th>
-                  <th style="width:18%">曜日</th>
-                  <th style="width:10%">工数h</th>
-                  <th style="width:10%">詰め方向</th>
+                  <th style="width:20%">条件</th>
+                  <th style="width:9%">工数h</th>
+                  <th style="width:9%">詰め方向</th>
                   <th style="width:8%"></th>
                 </tr>
               </thead>
               <tbody>
                 {% for r in routine_schedules %}
                 {% set day_flags = (r.days or '1,1,1,1,1').split(',') %}
-                <tr>
+                {% set freq_type = r.freq_type or 'daily' %}
+                <tr
+                    data-id="{{ r.id }}"
+                    data-task-name="{{ r.task_name }}"
+                    data-subcategory-name="{{ r.subcategory_name or '' }}"
+                    data-default-hours="{{ '%g'|format(r.default_hours|float) }}"
+                    data-period="{{ r.period or 'AM' }}"
+                    data-fill-direction="{{ r.fill_direction or 'top' }}"
+                    data-freq-type="{{ freq_type }}"
+                    data-days="{{ r.days or '1,1,1,1,1' }}"
+                    data-spot-date="{{ r.spot_date or '' }}"
+                    data-week-numbers="{{ r.week_numbers or '' }}"
+                    data-yearly-month="{{ r.yearly_month or 0 }}"
+                    data-yearly-day="{{ r.yearly_day or 0 }}">
+                  <td class="small text-center">{{ r.period or 'AM' }}</td>
                   <td class="small text-center">
-                    {% if r.row_number <= 5 %}AM{{ r.row_number }}{% else %}PM{{ r.row_number - 5 }}{% endif %}
+                    {% if freq_type == 'weekly_spot' %}週次（日付）
+                    {% elif freq_type == 'weekly_pattern' %}週次（曜日）
+                    {% elif freq_type == 'yearly' %}年次
+                    {% else %}日次{% endif %}
                   </td>
                   <td class="small">{{ r.task_name }}</td>
                   <td class="small text-center">
-                    {% for di, dn in [(0,'月'),(1,'火'),(2,'水'),(3,'木'),(4,'金')] %}
-                    <span class="{% if day_flags[di]|trim == '1' %}text-primary fw-bold{% else %}text-muted{% endif %}" style="margin:0 1px;">{{ dn }}</span>
-                    {% endfor %}
+                    {% if freq_type == 'daily' %}
+                      {% for di, dn in [(0,'月'),(1,'火'),(2,'水'),(3,'木'),(4,'金')] %}
+                      <span class="{% if day_flags[di]|trim == '1' %}text-primary fw-bold{% else %}text-muted{% endif %}" style="margin:0 1px;">{{ dn }}</span>
+                      {% endfor %}
+                    {% elif freq_type == 'weekly_spot' %}
+                      {{ r.spot_date }}
+                    {% elif freq_type == 'weekly_pattern' %}
+                      {% set wn = (r.week_numbers or '').split(',') | map('trim') | select | list %}
+                      {% if wn %}{% for w in wn %}第{{ w }}{% endfor %}{% else %}毎週{% endif %}
+                      {% for di, dn in [(0,'月'),(1,'火'),(2,'水'),(3,'木'),(4,'金'),(5,'土'),(6,'日')] %}
+                      {% if di < day_flags|length and day_flags[di]|trim == '1' %}{{ dn }}{% endif %}
+                      {% endfor %}
+                    {% elif freq_type == 'yearly' %}
+                      {{ r.yearly_month }}月{{ r.yearly_day }}日
+                    {% endif %}
                   </td>
                   <td class="small text-center">{{ '%g'|format(r.default_hours|float) }}h</td>
                   <td class="small text-center">{{ '上から' if (r.fill_direction or 'top') == 'top' else '下から' }}</td>
                   <td class="text-center">
+                    <button type="button" class="btn btn-outline-primary btn-sm py-0 px-1 me-1"
+                            onclick="routineStartEdit(this.closest('tr'))">編集</button>
                     <form method="post" action="{{ url_for('project_tasks_bp.delete_routine', routine_id=r.id) }}"
                           class="d-inline" onsubmit="return confirm('削除しますか？')">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -470,7 +556,7 @@
                   </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="text-center text-muted small py-2">定例が登録されていません</td></tr>
+                <tr><td colspan="7" class="text-center text-muted small py-2">定例が登録されていません</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -484,7 +570,7 @@
 
     {# ══════════════ イベントタブ（左＝月カレンダー、右＝一覧） ══════════════ #}
     <div class="tab-pane fade {% if page == 'events' %}show active{% endif %}" id="tab-events" role="tabpanel">
-    {% set events = tasks | selectattr('is_event') | list %}
+    {% set events = tasks | selectattr('is_event') | list | sort(attribute='start_date') %}
     <div class="row g-3">
 
     {# ── 左: 月カレンダー ── #}
@@ -891,6 +977,68 @@
 #tab-routine .form-control, #tab-routine .form-select { font-size: .92rem; }
 </style>
 <script>
+/* ── 定例作業: 頻度種別に応じて入力欄を切り替える ── */
+function routineToggleFreq(freq) {
+  document.querySelectorAll('.routine-freq-block').forEach(function (el) {
+    el.classList.toggle('d-none', el.dataset.freq !== freq);
+  });
+}
+
+/* ── 定例作業: 一覧行の「編集」クリックでフォームに値を投入する ── */
+function routineStartEdit(tr) {
+  var d = tr.dataset;
+  var form = document.getElementById('routineForm');
+  form.querySelector('[name="task_name"]').value = d.taskName || '';
+  form.querySelector('[name="default_hours"]').value = d.defaultHours || '1';
+  form.querySelector('[name="period"]').value = d.period || 'AM';
+  form.querySelector('[name="fill_direction"]').value = d.fillDirection || 'top';
+  var freqSel = document.getElementById('routineFreqType');
+  freqSel.value = d.freqType || 'daily';
+  routineToggleFreq(freqSel.value);
+
+  var dayFlags = (d.days || '1,1,1,1,1').split(',');
+  for (var i = 0; i < 5; i++) {
+    var cb = form.querySelector('[name="day_' + i + '"]');
+    if (cb) cb.checked = dayFlags[i] === '1';
+  }
+  for (var j = 0; j < 7; j++) {
+    var wcb = form.querySelector('[name="wp_day_' + j + '"]');
+    if (wcb) wcb.checked = dayFlags[j] === '1';
+  }
+  var weekNumbers = (d.weekNumbers || '').split(',').filter(function (w) { return w.trim(); });
+  form.querySelectorAll('[name="week_numbers"]').forEach(function (cb) {
+    cb.checked = weekNumbers.indexOf(cb.value) !== -1;
+  });
+  var spotInput = form.querySelector('[name="spot_date"]');
+  if (spotInput) spotInput.value = d.spotDate || '';
+  var monthSel = form.querySelector('[name="yearly_month"]');
+  if (monthSel) monthSel.value = d.yearlyMonth || '1';
+  var daySel = form.querySelector('[name="yearly_day"]');
+  if (daySel) daySel.value = d.yearlyDay || '1';
+
+  document.getElementById('routineEditingId').value = d.id;
+  document.getElementById('routineEditingBadge').classList.remove('d-none');
+  document.getElementById('routineSubmitBtn').textContent = '更新';
+  document.getElementById('routineCancelBtn').classList.remove('d-none');
+
+  var collapseEl = document.getElementById('addRoutineForm');
+  new bootstrap.Collapse(collapseEl, { show: true });
+  form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+/* ── 定例作業: 編集をキャンセルしてフォームを新規登録状態に戻す ── */
+function routineCancelEdit() {
+  var form = document.getElementById('routineForm');
+  form.reset();
+  document.getElementById('routineEditingId').value = '';
+  document.getElementById('routineEditingBadge').classList.add('d-none');
+  document.getElementById('routineSubmitBtn').textContent = '登録';
+  document.getElementById('routineCancelBtn').classList.add('d-none');
+  var freqSel = document.getElementById('routineFreqType');
+  freqSel.value = 'daily';
+  routineToggleFreq('daily');
+}
+
 /* ── 中区分フィルター + 完了非表示（URLパラメータで保持） ── */
 (function() {
   var filterSel = document.getElementById('filterSubcat');

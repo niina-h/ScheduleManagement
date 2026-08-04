@@ -462,51 +462,20 @@ def _build_master_body(
 
     # 業務内容セクション（project_task の登録タスクを表示）
     # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ、イベント除外）。
-    # 完了タスクは、終了日が対象日より前（過去の業務報告で表示済み）のみ除外する。
-    # 終了日が対象日と同じ（＝当日完了）は「対応中」に残す。
     member_ids = [m["id"] for m in members]
     target_date_str: str = target_date.isoformat()
     project_tasks = [
         t for t in get_all_project_tasks(user_ids=member_ids)
         if not t.get("is_event", 0)
-        and not (
-            t.get("status") == "完了"
-            and (t.get("end_date") or "") < target_date_str
-        )
     ]
 
-    # 「対応中」判定: 基本は区分（大区分／中区分）で結合する。本日の週間予定・
-    # 日次実績に登場したタスク名を、各メンバーの task_cat_map（タスクマスタの
-    # 区分登録）で区分に変換し、その区分に属する project_task をすべて
-    # 「対応中」の対象にする（タスク名がガント側と一致しなくても表示される）。
-    # ただし task_master の区分登録が進んでいないユーザーも多いため、区分で
-    # 判定できない場合に備えてタスク名の完全一致もフォールバックとして残す
-    # （区分未登録でも「対応中」が0件のまま表示されない不具合を防ぐ）。
-    active_subcats: set[str] = set()
-    active_names: set[str] = set()
-    for md in member_data:
-        names: set[str] = set(md["scheduled_tasks"])
-        for slot in ("am", "pm"):
-            for item in md["result"].get(slot, []):
-                t = item.get("task_name", "").strip()
-                if t:
-                    names.add(t)
-        active_names |= names
-        for name in names:
-            info = md["task_cat_map"].get(name)
-            if info and info.get("subcategory_name"):
-                active_subcats.add(info["subcategory_name"])
-
-    in_progress_tasks = [
-        t for t in project_tasks
-        if (t.get("subcategory_name") or "") in active_subcats
-        or t.get("task_name", "") in active_names
-    ]
-
-    # 親タスク（バー無しの見出し行）は、ガントチャート・進捗ダッシュボードと表示を
-    # 一致させるため、子タスクの状況から状態・進捗を自動判定する（DBの生値のまま
-    # だと常に「未着手・0%」に見えてしまう）。子は絞り込み前の全タスクから解決する
-    # （子の担当者がメール対象メンバーと異なる場合も正しく集計するため）。
+    # 「対応中」判定: 週間予定・日次実績のタスク名一致には一切依存せず、
+    # ガントチャートの登録内容から対象日時点の状況を判定する（実績・予定の
+    # 入力有無に関わらず、所属メンバー全員のガント登録が反映される）。
+    # 子・単独タスク（担当者を持つ末端）が対象。親（見出し行、バー無し）は子の
+    # 状況で判定する（親自身に start_date/end_date が無いことが多いため）。
+    # 子は絞り込み前の全タスクから解決する（子の担当者がメール対象メンバーと
+    # 異なる場合も正しく集計するため）。
     _all_tasks_for_children = get_all_project_tasks()
     all_tasks_by_id: dict[int, dict] = {t["id"]: t for t in _all_tasks_for_children}
     _children_by_parent: dict[int, list[dict]] = {}
@@ -514,6 +483,38 @@ def _build_master_body(
         _pid = _t.get("parent_task_id")
         if _pid:
             _children_by_parent.setdefault(_pid, []).append(_t)
+
+    def _in_progress_on_target_date(t: dict) -> bool:
+        """このタスク（子・単独）が対象日時点で「対応中」に該当するか判定する。
+
+        未完了タスクは開始日〜終了日に対象日が含まれるかで判定する。完了タスクは
+        「完了にした日」を実態の作業日とみなす：終了日以前に完了していれば
+        updated_at（完了操作日）が対象日と一致するか、終了日より後にずれ込んで
+        完了していれば終了日が対象日と一致するかで判定する。
+        """
+        start = (t.get("start_date") or "").strip()
+        end = (t.get("end_date") or "").strip()
+        if not start or not end:
+            return False
+        if t.get("status") != "完了":
+            return start <= target_date_str <= end
+        updated_date = (t.get("updated_at") or "").strip()[:10]
+        if updated_date and updated_date <= end:
+            return updated_date == target_date_str
+        return end == target_date_str
+
+    in_progress_tasks = [
+        t for t in project_tasks
+        if _in_progress_on_target_date(t)
+        or any(
+            _in_progress_on_target_date(c)
+            for c in _children_by_parent.get(t["id"], [])
+        )
+    ]
+
+    # 親タスク（バー無しの見出し行）は、ガントチャート・進捗ダッシュボードと表示を
+    # 一致させるため、子タスクの状況から状態・進捗を自動判定する（DBの生値のまま
+    # だと常に「未着手・0%」に見えてしまう）。
     for pt in in_progress_tasks:
         _kids = _children_by_parent.get(pt["id"])
         if _kids:
@@ -539,15 +540,59 @@ def _build_master_body(
             names.append(pt.get("assigned_last_name_2") or pt.get("assigned_name_2"))
         return "、".join(names) if names else "担当者未設定"
 
-    # 中区分ごとにグループ化する（大区分「開発」以外も対象。理想形の「AI開発[配筋]」
-    # 「販路開拓」のように、区分名そのものを見出しとして使う）。
-    # 中区分が未設定のタスクは大区分名、両方未設定なら「その他」にまとめる。
+    def _effective_category(pt: dict) -> dict:
+        """区分表示用の情報（中区分名・大区分名・並び順）を返す。
+
+        タスク自身に区分が未設定の場合、親タスクの区分をフォールバックとして使う
+        （「その他」への集約を減らすため。子は業務内容までは登録するが区分登録が
+        後回しになりがちで、親には区分が設定済みのケースが多いことが判明したため）。
+        """
+        if pt.get("subcategory_name") or pt.get("category_name"):
+            return pt
+        parent_id = pt.get("parent_task_id")
+        parent = all_tasks_by_id.get(parent_id) if parent_id else None
+        if parent and (parent.get("subcategory_name") or parent.get("category_name")):
+            return parent
+        return pt
+
+    def _root_ancestor(pt: dict) -> dict:
+        """タスクの最上位（ルート）の祖先タスクを返す（親を持たなければ自分自身）。
+
+        ガントチャートは3階層以上の親子関係を持つことがあり（例：配筋システム開発→
+        Revit運用環境開発設計→Revit連携システム開発）、メールの見出しはガント画面
+        最上段の項目名と一致させる必要があるため、1階層だけでなくルートまで辿る。
+        循環参照があっても無限ループしないよう、訪問済みIDを記録して打ち切る。
+        """
+        seen: set[int] = set()
+        cur = pt
+        while True:
+            parent_id = cur.get("parent_task_id")
+            if not parent_id or parent_id in seen:
+                return cur
+            parent = all_tasks_by_id.get(parent_id)
+            if not parent:
+                return cur
+            seen.add(parent_id)
+            cur = parent
+
+    def _group_label(pt: dict) -> str:
+        """「対応中」の見出しラベルを返す（ガントチャート最上位の親タスク名を使う）。
+
+        単独タスク（親を持たない）は自分自身のタスク名を見出しとする（1件だけの
+        見出しになる）。タスク区分マスタ（大区分・中区分）には依存しない——区分の
+        登録有無に関わらずガントチャートの見た目と一致させる。
+        """
+        return _root_ancestor(pt)["task_name"]
+
+    # ガントチャート上の親タスク名ごとにグループ化する（区分マスタの登録有無に
+    # 関わらず、ガントチャートで見えている親子構造とメールの見出しを一致させる）。
     tasks_by_subcat: dict[str, list[dict]] = {}
     subcat_order: dict[str, int] = {}
     for pt in in_progress_tasks:
-        label = (pt.get("subcategory_name") or pt.get("category_name") or "").strip() or "その他"
+        label = _group_label(pt)
         tasks_by_subcat.setdefault(label, []).append(pt)
-        order = pt.get("subcat_order") or pt.get("cat_order") or 0
+        cat_src = _effective_category(pt)
+        order = cat_src.get("subcat_order") or cat_src.get("cat_order") or 0
         if label not in subcat_order or order < subcat_order[label]:
             subcat_order[label] = order
 
@@ -556,8 +601,20 @@ def _build_master_body(
     content_lines: list[str] = []
     content_lines.append(f"対応中 全{total_count}件")
     for label in sorted(tasks_by_subcat.keys(), key=lambda k: (subcat_order.get(k, 0), k)):
+        group = sorted(tasks_by_subcat[label], key=lambda t: t.get("display_order") or 0)
+        # 単独タスク（親を持たず、見出し自体がそのタスク名）の場合は、見出し行に
+        # 直接進捗情報を付記し、名前が重複する子行は出さない。
+        if len(group) == 1 and group[0]["task_name"] == label:
+            pt = group[0]
+            progress = pt.get("progress", 0) or 0
+            status = pt.get("status", "") or "未着手"
+            if progress >= 1:
+                content_lines.append(f"　・{label}　（{_assignee_names(pt)}：進捗{progress}%、{status}）")
+            else:
+                content_lines.append(f"　・{label}")
+            continue
         content_lines.append(f"　・{label}")
-        for pt in sorted(tasks_by_subcat[label], key=lambda t: t.get("display_order") or 0):
+        for pt in group:
             progress = pt.get("progress", 0) or 0
             status = pt.get("status", "") or "未着手"
             if progress >= 1:
@@ -670,7 +727,11 @@ def _build_master_body(
     #   project_task を情報源にする。）
     #   形式: 「  中区分　タスク名　（姓：進捗X%、状態）」
     # 担当者名は _assignee_names（姓のみ表示、上の「対応中」セクションで定義済み）を再利用する。
-    dev_tasks = [pt for pt in project_tasks if (pt.get("category_name") or "") == "開発"]
+    dev_tasks = [
+        pt for pt in project_tasks
+        if (_effective_category(pt).get("category_name") or "") == "開発"
+        and _in_progress_on_target_date(pt)
+    ]
     # 中区分ごとにグループ化する。進捗1%以上のタスクのみ担当者・進捗・状態を付記し、
     # それ以外（未着手）はタスク名のみを列記して情報量を抑える。
     # 並び順はガントチャートと同じ表示順（subcategory の display_order）で統一する
@@ -679,9 +740,10 @@ def _build_master_body(
     dev_by_subcat: dict[str, list[dict]] = {}
     dev_subcat_order: dict[str, int] = {}
     for pt in dev_tasks:
-        label = (pt.get("subcategory_name") or "").strip() or "開発"
+        cat_src = _effective_category(pt)
+        label = (cat_src.get("subcategory_name") or "").strip() or "開発"
         dev_by_subcat.setdefault(label, []).append(pt)
-        order = pt.get("subcat_order") or 0
+        order = cat_src.get("subcat_order") or 0
         if label not in dev_subcat_order or order < dev_subcat_order[label]:
             dev_subcat_order[label] = order
 

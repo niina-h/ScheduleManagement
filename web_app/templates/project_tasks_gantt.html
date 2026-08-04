@@ -9,7 +9,7 @@
       <div class="d-flex gap-2 align-items-center flex-wrap">
         {% if privileged and selectable_users %}
         <label class="form-label small mb-0 fw-semibold">担当者：</label>
-        <select id="ganttUserSelect" class="form-select form-select-sm" style="width:120px; font-size:0.8rem;">
+        <select id="ganttUserSelect" class="form-select form-select-sm" style="width:auto; min-width:120px; font-size:0.8rem;">
           <option value="0" {% if initial_target_user_id == 0 %}selected{% endif %}>全員</option>
           {% for u in selectable_users %}
           <option value="{{ u.id }}" {% if initial_target_user_id == u.id %}selected{% endif %}>{{ u.last_name or u.name }}</option>
@@ -17,7 +17,7 @@
         </select>
         {% endif %}
         <label class="form-label small mb-0 fw-semibold">中区分：</label>
-        <select id="ganttSubcatFilter" class="form-select form-select-sm" style="width:160px; font-size:0.8rem;">
+        <select id="ganttSubcatFilter" class="form-select form-select-sm" style="width:auto; min-width:160px; font-size:0.8rem;">
           <option value="">すべて</option>
           {% for sn in subcat_options %}
           <option value="{{ sn }}" {% if sn == initial_subcat %}selected{% endif %}>{{ sn }}</option>

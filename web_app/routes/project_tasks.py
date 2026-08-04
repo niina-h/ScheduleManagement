@@ -31,6 +31,7 @@ from ..models import (
     get_all_subcategories,
     get_all_users,
     get_project_task_by_id,
+    get_next_routine_row_number,
     get_routine_schedules,
     get_subcategory_category_id,
     get_task_master,
@@ -882,6 +883,9 @@ def save_routine() -> object:
     subcategory_name = request.form.get("subcategory_name", "").strip()
     period = request.form.get("period", "").strip().upper()
     default_hours_str = request.form.get("default_hours", "0").strip()
+    freq_type = request.form.get("freq_type", "daily").strip()
+    if freq_type not in ("daily", "weekly_spot", "weekly_pattern", "yearly"):
+        freq_type = "daily"
 
     redirect_url = url_for("project_tasks_bp.routine_page") + "?add_open=1&tab=routine"
 
@@ -889,35 +893,79 @@ def save_routine() -> object:
         flash("作業名を選択してください。", "warning")
         return redirect(redirect_url)
 
-    # 区分（AM=1〜3 / PM=6〜8）から空いている行番号を自動割当する。各区分最大3件。
+    # 編集（既存定例の更新）の場合は、まず旧レコードを削除して行番号を空ける。
+    # 区分・頻度種別が変わっても矛盾なく再割当できるよう、削除後に新規登録と
+    # 同じ採番ロジックを通す（daily は空き行の自動割当、weekly・yearly は
+    # 11以降の自動連番）。
+    editing_id_str = request.form.get("editing_id", "").strip()
+    if editing_id_str.isdigit():
+        delete_routine_task(int(editing_id_str), user_id)
     if period not in ("AM", "PM"):
         flash("区分（午前／午後）を選択してください。", "warning")
-        return redirect(redirect_url)
-    used = {r["row_number"] for r in get_routine_schedules(user_id)}
-    candidates = [1, 2, 3] if period == "AM" else [6, 7, 8]
-    row_number = next((n for n in candidates if n not in used), None)
-    if row_number is None:
-        label = "午前" if period == "AM" else "午後"
-        flash(f"{label}の定例は最大3件までです。既存を削除してから追加してください。", "warning")
         return redirect(redirect_url)
     try:
         default_hours = max(0.0, float(default_hours_str))
     except ValueError:
         default_hours = 0.0
 
-    # 曜日フラグ（チェックボックスから取得）
-    days_list = []
-    for di in range(5):
-        days_list.append("1" if request.form.get(f"day_{di}") else "0")
-    days = ",".join(days_list)
-
     # 詰め方向（空きスロットへの割当を上から/下からのどちらにするか）
     fill_direction = request.form.get("fill_direction", "top").strip()
     if fill_direction not in ("top", "bottom"):
         fill_direction = "top"
 
+    days = "1,1,1,1,1"
+    spot_date = ""
+    week_numbers = ""
+    yearly_month = 0
+    yearly_day = 0
+
+    if freq_type == "daily":
+        # 区分（AM=1〜3 / PM=6〜8）から空いている行番号を自動割当する。各区分最大3件。
+        used = {r["row_number"] for r in get_routine_schedules(user_id)}
+        candidates = [1, 2, 3] if period == "AM" else [6, 7, 8]
+        row_number = next((n for n in candidates if n not in used), None)
+        if row_number is None:
+            label = "午前" if period == "AM" else "午後"
+            flash(f"{label}の定例は最大3件までです。既存を削除してから追加してください。", "warning")
+            return redirect(redirect_url)
+        # 曜日フラグ（チェックボックスから取得）
+        days_list = []
+        for di in range(5):
+            days_list.append("1" if request.form.get(f"day_{di}") else "0")
+        days = ",".join(days_list)
+    elif freq_type == "weekly_spot":
+        spot_date = request.form.get("spot_date", "").strip()
+        if not spot_date:
+            flash("週次（スポット）の日付を入力してください。", "warning")
+            return redirect(redirect_url)
+        row_number = get_next_routine_row_number(user_id)
+    elif freq_type == "weekly_pattern":
+        days_list = []
+        for di in range(7):
+            days_list.append("1" if request.form.get(f"wp_day_{di}") else "0")
+        days = ",".join(days_list)
+        if "1" not in days_list:
+            flash("週次（曜日パターン）の曜日を選択してください。", "warning")
+            return redirect(redirect_url)
+        week_numbers = ",".join(
+            w for w in request.form.getlist("week_numbers") if w.strip().isdigit()
+        )
+        row_number = get_next_routine_row_number(user_id)
+    else:  # yearly
+        try:
+            yearly_month = int(request.form.get("yearly_month", "0"))
+            yearly_day = int(request.form.get("yearly_day", "0"))
+        except ValueError:
+            yearly_month = yearly_day = 0
+        if not (1 <= yearly_month <= 12 and 1 <= yearly_day <= 31):
+            flash("年次の対象月・日を正しく指定してください。", "warning")
+            return redirect(redirect_url)
+        row_number = get_next_routine_row_number(user_id)
+
     ok = save_routine_task(
-        user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction
+        user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction,
+        freq_type=freq_type, spot_date=spot_date, week_numbers=week_numbers,
+        yearly_month=yearly_month, yearly_day=yearly_day, period=period,
     )
     flash("定例スケジュールを登録しました。" if ok else "登録に失敗しました（行番号重複の可能性）。",
           "success" if ok else "warning")

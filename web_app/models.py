@@ -4211,7 +4211,13 @@ def get_routine_schedules(user_id: int) -> list[dict]:
         "SELECT rs.id, rs.user_id, rs.task_name, rs.subcategory_name,"
         " COALESCE(tm.default_hours, rs.default_hours, 0.0) AS default_hours,"
         " rs.row_number, rs.days,"
-        " COALESCE(rs.fill_direction, 'top') AS fill_direction"
+        " COALESCE(rs.fill_direction, 'top') AS fill_direction,"
+        " COALESCE(rs.freq_type, 'daily') AS freq_type,"
+        " COALESCE(rs.spot_date, '') AS spot_date,"
+        " COALESCE(rs.week_numbers, '') AS week_numbers,"
+        " COALESCE(rs.yearly_month, 0) AS yearly_month,"
+        " COALESCE(rs.yearly_day, 0) AS yearly_day,"
+        " COALESCE(NULLIF(rs.period, ''), CASE WHEN rs.row_number <= 5 THEN 'AM' ELSE 'PM' END) AS period"
         " FROM routine_schedule rs"
         " LEFT JOIN task_master tm"
         "   ON tm.user_id = rs.user_id AND tm.task_name = rs.task_name"
@@ -4230,6 +4236,12 @@ def save_routine_task(
     row_number: int,
     days: str = "1,1,1,1,1",
     fill_direction: str = "top",
+    freq_type: str = "daily",
+    spot_date: str = "",
+    week_numbers: str = "",
+    yearly_month: int = 0,
+    yearly_day: int = 0,
+    period: str = "",
 ) -> bool:
     """定例スケジュールを登録（または上書き）する。
 
@@ -4240,35 +4252,78 @@ def save_routine_task(
         task_name: 作業名
         subcategory_name: 中区分名
         default_hours: デフォルト工数
-        row_number: 行番号（1〜10）
-        days: 曜日フラグ（"1,1,1,1,1" = 月〜金すべて）
+        row_number: 行番号（daily=1〜10／weekly・yearly=11以降の自動採番）
+        days: 曜日フラグ（"1,1,1,1,1" = 月〜金すべて。weekly_pattern では対象曜日）
         fill_direction: 空きスロットへの詰め方向（'top'=上から / 'bottom'=下から）
+        freq_type: 頻度種別（'daily'／'weekly_spot'／'weekly_pattern'／'yearly'）
+        spot_date: weekly_spot 用のスポット日付（YYYY-MM-DD）
+        week_numbers: weekly_pattern 用の対象週番号（"2,4" など。空文字は毎週）
+        yearly_month: yearly 用の対象月（1〜12）
+        yearly_day: yearly 用の対象日（1〜31）
+        period: AM/PM区分。daily では row_number から自動判定するため空文字でよいが、
+                weekly・yearly では row_number が11以降で判定できないため必須。
 
     Returns:
         bool: 成功時 True
     """
-    if not 1 <= row_number <= 10:
+    if freq_type == "daily":
+        if not 1 <= row_number <= 10:
+            return False
+    elif row_number < 11:
         return False
     if fill_direction not in ("top", "bottom"):
         fill_direction = "top"
+    if freq_type not in ("daily", "weekly_spot", "weekly_pattern", "yearly"):
+        freq_type = "daily"
+    if period not in ("AM", "PM"):
+        period = "AM" if row_number <= 5 else "PM"
     db = get_db()
     try:
         db.execute(
             "INSERT INTO routine_schedule"
-            " (user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " (user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction,"
+            "  freq_type, spot_date, week_numbers, yearly_month, yearly_day, period)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(user_id, row_number) DO UPDATE SET"
             "   task_name=excluded.task_name,"
             "   subcategory_name=excluded.subcategory_name,"
             "   default_hours=excluded.default_hours,"
             "   days=excluded.days,"
-            "   fill_direction=excluded.fill_direction",
-            (user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction),
+            "   fill_direction=excluded.fill_direction,"
+            "   freq_type=excluded.freq_type,"
+            "   spot_date=excluded.spot_date,"
+            "   week_numbers=excluded.week_numbers,"
+            "   yearly_month=excluded.yearly_month,"
+            "   yearly_day=excluded.yearly_day,"
+            "   period=excluded.period",
+            (user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction,
+             freq_type, spot_date, week_numbers, yearly_month, yearly_day, period),
         )
         db.commit()
         return True
     except Exception:
         return False
+
+
+def get_next_routine_row_number(user_id: int) -> int:
+    """weekly・yearly 用の次の自動採番行番号（11以降）を返す。
+
+    Args:
+        user_id: ユーザーID
+
+    Returns:
+        int: 未使用の行番号（11以降）
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT row_number FROM routine_schedule WHERE user_id = ? AND row_number >= 11",
+        (user_id,),
+    ).fetchall()
+    used = {r["row_number"] for r in rows}
+    n = 11
+    while n in used:
+        n += 1
+    return n
 
 
 def delete_routine_task(routine_id: int, user_id: int) -> None:
@@ -4305,13 +4360,50 @@ def get_reserved_row_numbers(user_id: int) -> set[int]:
     return {r["row_number"] for r in rows}
 
 
+def _routine_matches_date(routine: dict, target: "date") -> bool:
+    """定例スケジュールが指定日に発生するかを頻度種別に応じて判定する。
+
+    Args:
+        routine: get_routine_schedules() の1件
+        target: 判定対象の日付
+
+    Returns:
+        bool: この日に発生する定例であれば True
+    """
+    freq_type = routine.get("freq_type") or "daily"
+    if freq_type == "daily":
+        days_str = routine.get("days") or "1,1,1,1,1"
+        day_flags = [x.strip() == "1" for x in days_str.split(",")]
+        return target.weekday() < len(day_flags) and day_flags[target.weekday()]
+    if freq_type == "weekly_spot":
+        return (routine.get("spot_date") or "") == target.isoformat()
+    if freq_type == "weekly_pattern":
+        days_str = routine.get("days") or ""
+        day_flags = [x.strip() == "1" for x in days_str.split(",")]
+        if not (target.weekday() < len(day_flags) and day_flags[target.weekday()]):
+            return False
+        week_numbers = (routine.get("week_numbers") or "").strip()
+        if not week_numbers:
+            return True  # 毎週（週番号指定なし）
+        occurrence = (target.day - 1) // 7 + 1  # その月内で target.weekday() が何回目か
+        selected = {int(w) for w in week_numbers.split(",") if w.strip().isdigit()}
+        return occurrence in selected
+    if freq_type == "yearly":
+        return (
+            target.month == (routine.get("yearly_month") or 0)
+            and target.day == (routine.get("yearly_day") or 0)
+        )
+    return False
+
+
 def apply_routine_to_week(user_id: int, week_start: str, updated_by: str = "") -> None:
     """定例スケジュールを週間予定の空きスロットに詰めて適用する。
 
-    定例は row_number（1〜3=AM区分／6〜8=PM区分）で区分を判定し、AM区分の定例は
-    AMスロットへ、PM区分の定例はPMスロットへのみ配置する。定例ごとに
-    fill_direction（'top'=上から／'bottom'=下から）を設定でき、区分内の空き
-    スロットをその方向から順に詰めて配置する。
+    定例は period（'AM'／'PM'）で区分を判定し、AM区分の定例はAMスロットへ、
+    PM区分の定例はPMスロットへのみ配置する。定例ごとに fill_direction
+    （'top'=上から／'bottom'=下から）を設定でき、区分内の空きスロットを
+    その方向から順に詰めて配置する。頻度種別（freq_type）に応じて、その日に
+    発生する定例かどうかを _routine_matches_date で判定してから対象に含める。
 
     Args:
         user_id: ユーザーID
@@ -4324,6 +4416,7 @@ def apply_routine_to_week(user_id: int, week_start: str, updated_by: str = "") -
 
     db = get_db()
     now = datetime.now().isoformat()
+    week_start_date = date.fromisoformat(week_start)
 
     def _free_slots(day_idx: int, slot: str) -> list[int]:
         free = []
@@ -4339,20 +4432,15 @@ def apply_routine_to_week(user_id: int, week_start: str, updated_by: str = "") -
         return free
 
     for day_idx in range(5):
-        # この曜日に配置対象となる定例を row_number 昇順（区分内の配置順）で抽出
-        day_routines = []
-        for r in routines:
-            days_str = r.get("days") or "1,1,1,1,1"
-            day_flags = [x.strip() == "1" for x in days_str.split(",")]
-            if day_idx < len(day_flags) and not day_flags[day_idx]:
-                continue  # この曜日は対象外
-            day_routines.append(r)
+        target_date = week_start_date + timedelta(days=day_idx)
+        # この日に発生する定例を row_number 昇順（区分内の配置順）で抽出
+        day_routines = [r for r in routines if _routine_matches_date(r, target_date)]
         if not day_routines:
             continue
 
-        # AM区分（row_number 1-5）とPM区分（6-10）に分けて、区分内でのみ配置する
-        am_routines = [r for r in day_routines if r["row_number"] <= 5]
-        pm_routines = [r for r in day_routines if r["row_number"] > 5]
+        # AM区分・PM区分に分けて、区分内でのみ配置する
+        am_routines = [r for r in day_routines if (r.get("period") or "AM") == "AM"]
+        pm_routines = [r for r in day_routines if (r.get("period") or "AM") == "PM"]
 
         for slot, slot_routines in (("am", am_routines), ("pm", pm_routines)):
             if not slot_routines:
