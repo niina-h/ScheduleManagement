@@ -1559,13 +1559,49 @@ def get_all_depts() -> list[dict]:
     """部署マスタの全件を display_order 昇順で取得する。
 
     Returns:
-        list[dict]: [{id, dept_name, display_order}]
+        list[dict]: [{id, dept_name, display_order, enable_dev_summary}]
     """
     db = get_db()
     rows = db.execute(
-        "SELECT id, dept_name, display_order FROM dept_master ORDER BY display_order ASC, id ASC"
+        "SELECT id, dept_name, display_order, enable_dev_summary"
+        " FROM dept_master ORDER BY display_order ASC, id ASC"
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def is_dev_summary_enabled(dept_name: str) -> bool:
+    """指定部署で、日報メール＜開発状況＞セクションの機能が有効かどうかを返す。
+
+    部署が dept_master に存在しない場合は無効（False）とする。
+
+    Args:
+        dept_name: 部署名。
+
+    Returns:
+        bool: 有効なら True。
+    """
+    if not dept_name:
+        return False
+    db = get_db()
+    row = db.execute(
+        "SELECT enable_dev_summary FROM dept_master WHERE dept_name = ?", (dept_name,)
+    ).fetchone()
+    return bool(row and row["enable_dev_summary"])
+
+
+def set_dev_summary_enabled(dept_id: int, enabled: bool) -> None:
+    """部署の＜開発状況＞機能の有効/無効を設定する。
+
+    Args:
+        dept_id: 部署マスタID。
+        enabled: True で有効化。
+    """
+    db = get_db()
+    db.execute(
+        "UPDATE dept_master SET enable_dev_summary = ? WHERE id = ?",
+        (1 if enabled else 0, dept_id),
+    )
+    db.commit()
 
 
 def get_user_affiliations(user_id: int) -> list[str]:
@@ -2150,7 +2186,7 @@ def save_mail_setting(
 
 # 状態の選択肢（表示順）
 PROJECT_TASK_STATUSES: list[str] = [
-    "未着手", "着手", "順調", "遅れ", "完了", "停止",
+    "未着手", "着手", "順調", "遅れ", "完了", "中断",
 ]
 
 
@@ -2165,7 +2201,7 @@ def _normalize_progress(
     未着手→0、完了→100 のみ強制。
     「順調」「着手」は開始日・終了日・今日の日付から自動計算する
     （予定工数（planned_hours）が未設定のタスクでも進捗が0%のまま
-    止まらないようにするため）。それ以外（遅れ・停止）はユーザー入力値をそのまま返す。
+    止まらないようにするため）。それ以外（遅れ・中断）はユーザー入力値をそのまま返す。
 
     Args:
         status: タスク状態
@@ -2181,14 +2217,14 @@ def _normalize_progress(
     if status == "完了":
         return 100
     if status in ("順調", "着手") and start_date and end_date:
-        return _calc_progress_by_date(start_date, end_date)
+        return calc_progress_by_date(start_date, end_date)
     return max(0, progress)
 
 
 def get_task_plan_vs_actual(user_id: int) -> dict[int, dict]:
     """ユーザーのタスクごとに「予定進捗率」と「実績進捗率」を比較して返す。
 
-    - 予定進捗率: 開始日〜終了日から算出した本日時点であるべき進捗（``_calc_progress_by_date``）。
+    - 予定進捗率: 開始日〜終了日から算出した本日時点であるべき進捗（``calc_progress_by_date``）。
     - 実績進捗率: そのタスクに紐づく実績時間合計 ÷ 予定工数 × 100。
     - 差分（実績 − 予定）から 遅れ/予定通り/前倒し を判定する。
 
@@ -2213,10 +2249,10 @@ def get_task_plan_vs_actual(user_id: int) -> dict[int, dict]:
     }
     result: dict[int, dict] = {}
     for t in get_all_project_tasks(assigned_to=user_id):
-        # イベント/マイルストーン・完了/停止タスクは進捗比較の対象外。
+        # イベント/マイルストーン・完了/中断タスクは進捗比較の対象外。
         if t.get("is_event") or t.get("is_milestone"):
             continue
-        if t.get("status") in ("完了", "停止"):
+        if t.get("status") in ("完了", "中断"):
             continue
         planned_hours = t.get("planned_hours") or 0
         start = t.get("start_date")
@@ -2224,7 +2260,7 @@ def get_task_plan_vs_actual(user_id: int) -> dict[int, dict]:
         if not start or not end or planned_hours <= 0:
             result[t["id"]] = {"planned": None, "actual": None, "diff": 0, "state": "none"}
             continue
-        planned_pct = _calc_progress_by_date(start, end)
+        planned_pct = calc_progress_by_date(start, end)
         actual_pct = min(100, round(actual_hours.get(t["id"], 0.0) / planned_hours * 100))
         diff = actual_pct - planned_pct
         if diff <= -5:
@@ -2296,18 +2332,21 @@ def get_daily_plan_vs_actual_for_users(user_ids: list[int], date_str: str) -> li
     return result
 
 
-def _calc_progress_by_date(start_date: str, end_date: str) -> int:
+def calc_progress_by_date(start_date: str, end_date: str) -> int:
     """開始日・終了日・今日の日付から進捗率を自動計算する。
 
-    計算式: (今日 - 開始日) / (終了日 - 開始日) × 100
-    開始日前は0%、終了日以降は100%にクランプする。
+    ガントチャート画面（gantt_input_test.html の autoProgressByDate）と
+    同じ計算式に統一している：経過日数に+1した値を使うことで、着手した
+    開始日当日から最小限の進捗が付くようにする（#49で統一）。
+    計算式: (経過日数+1) / 全体日数 × 100（上限99%）。
+    開始日より前は0%。全体日数は終了日−開始日（日数差）。
 
     Args:
         start_date: 開始日（YYYY-MM-DD）
         end_date: 終了日（YYYY-MM-DD）
 
     Returns:
-        int: 0〜100の進捗率
+        int: 0〜99の進捗率
     """
     try:
         s = date.fromisoformat(start_date)
@@ -2315,15 +2354,11 @@ def _calc_progress_by_date(start_date: str, end_date: str) -> int:
     except (ValueError, TypeError):
         return 0
     today_d = date.today()
-    if today_d <= s:
-        return 0
-    if today_d >= e:
-        return 100
-    total_days = (e - s).days
-    if total_days <= 0:
-        return 0
+    total_days = max(1, (e - s).days)
     elapsed = (today_d - s).days
-    return max(0, min(100, round(elapsed / total_days * 100)))
+    if elapsed < 0:
+        return 0
+    return max(0, min(99, round((elapsed + 1) / total_days * 100)))
 
 
 def get_all_project_tasks(
@@ -2591,6 +2626,7 @@ def update_project_task(
     import_to_schedule_2: int = 1,
     event_member_ids: str = "",
     assigned_ids: str | None = None,
+    include_in_dev_summary: int | None = None,
 ) -> None:
     """プロジェクトタスクを更新する。
 
@@ -2615,6 +2651,8 @@ def update_project_task(
         planned_hours: 予定工数（時間）
         assigned_ids: 子タスクの担当者（2名以上対応、カンマ区切りユーザーID）。
             None の場合は既存値を変更しない（呼び出し元の大半が未対応のため）。
+        include_in_dev_summary: 日報メール＜開発状況＞への集計対象フラグ
+            （親タスクのみ意味を持つ）。None の場合は既存値を変更しない。
     """
     db = get_db()
     calc_progress = _normalize_progress(status, progress, start_date, end_date)
@@ -2652,6 +2690,11 @@ def update_project_task(
              import_to_schedule_1, import_to_schedule_2, event_member_ids, assigned_ids,
              updated_by, task_id),
         )
+    if include_in_dev_summary is not None:
+        db.execute(
+            "UPDATE project_task SET include_in_dev_summary=? WHERE id=?",
+            (1 if include_in_dev_summary else 0, task_id),
+        )
     db.commit()
 
 
@@ -2686,7 +2729,7 @@ def get_active_tasks_for_user(user_id: int) -> list[dict]:
         "LEFT JOIN task_category tc ON pt.category_id = tc.id "
         "LEFT JOIN task_subcategory ts ON pt.subcategory_id = ts.id "
         "WHERE (pt.assigned_to = ? OR pt.assigned_to_2 = ?) "
-        "  AND pt.status NOT IN ('完了', '停止') "
+        "  AND pt.status NOT IN ('完了', '中断') "
         "  AND pt.is_event = 0 "
         "ORDER BY tc.display_order, ts.display_order, pt.display_order",
         (user_id, user_id),
@@ -2778,20 +2821,41 @@ def import_tasks_to_weekly_schedule(
     #   担当2としての対象は import_to_schedule_2=1 のとき
     raw_rows = db.execute(
         "SELECT pt.id, pt.task_name, COALESCE(ts.name,'') AS subcategory_name,"
-        "       pt.start_date, pt.end_date, pp.task_name AS parent_task_name "
+        "       pt.start_date, pt.end_date, pt.parent_task_id "
         "FROM project_task pt "
         "LEFT JOIN task_subcategory ts ON ts.id = pt.subcategory_id "
-        "LEFT JOIN project_task pp ON pp.id = pt.parent_task_id "
         "WHERE ((pt.assigned_to = ? AND pt.import_to_schedule_1 = 1)"
         "    OR (pt.assigned_to_2 = ? AND pt.import_to_schedule_2 = 1)) "
         "  AND pt.is_event = 0 "
-        "  AND pt.status NOT IN ('完了', '停止') "
+        "  AND pt.status NOT IN ('完了', '中断') "
         "  AND pt.start_date <= ? AND pt.end_date >= ? "
         "ORDER BY pt.id DESC",
         (user_id, user_id, week_end, week_start),
     ).fetchall()
-    # 週間予定に表示するタスク名は「親タスク名　子タスク名」の形式にする
-    # （直接の親のみを前置きし、どの大項目の作業か一目でわかるようにする）。
+
+    # 祖先チェーン解決用に、全タスクの id→(task_name, parent_task_id) を1回だけ取得する。
+    _ancestor_map: dict[int, tuple[str, int | None]] = {
+        row["id"]: (row["task_name"], row["parent_task_id"])
+        for row in db.execute("SELECT id, task_name, parent_task_id FROM project_task").fetchall()
+    }
+
+    def _ancestor_chain_name(pid: int | None, leaf_name: str) -> str:
+        """親タスクをルート（最上位）まで遡り、「祖先…　直接の親　子タスク名」の
+        形式で連結した名称を返す（循環参照があっても無限ループしないよう防御）。
+        """
+        names: list[str] = []
+        seen: set[int] = set()
+        cur = pid
+        while cur and cur not in seen and cur in _ancestor_map:
+            seen.add(cur)
+            name, cur = _ancestor_map[cur]
+            names.append(name)
+        names.reverse()
+        names.append(leaf_name)
+        return "　".join(names)
+
+    # 週間予定に表示するタスク名は「祖先…　子タスク名」の形式にする
+    # （ルート（最上位の親）まで遡って連結し、どの大項目の作業か一目でわかるようにする）。
     # 元の子タスク名（親名を付ける前）は、旧形式で手動入力されたスロットの
     # クリア判定にも使うため別途保持する。
     rows = []
@@ -2799,9 +2863,9 @@ def import_tasks_to_weekly_schedule(
     for r in raw_rows:
         row = dict(r)
         original_names.add(row["task_name"])
-        parent_name = row.pop("parent_task_name", None)
-        if parent_name:
-            row["task_name"] = f"{parent_name}　{row['task_name']}"
+        parent_id = row.pop("parent_task_id", None)
+        if parent_id:
+            row["task_name"] = _ancestor_chain_name(parent_id, row["task_name"])
         rows.append(row)
 
     # 取込対象タスクの task_name と一致する手動入力スロットもクリア
@@ -3023,7 +3087,7 @@ def sync_daily_progress_to_task(
 
     project_task_id が紐づいている実績スロットの作業時間を集計し、
     タスクの planned_hours に対する実績比率で進捗を更新する。
-    ステータスが「完了」「停止」のタスクは更新しない。
+    ステータスが「完了」「中断」のタスクは更新しない。
 
     Args:
         user_id: ユーザーID
@@ -3051,7 +3115,7 @@ def sync_daily_progress_to_task(
         task = get_project_task_by_id(pt_id)
         if not task:
             continue
-        if task["status"] in ("完了", "停止"):
+        if task["status"] in ("完了", "中断"):
             continue
 
         planned = task.get("planned_hours") or 0.0
@@ -3070,7 +3134,7 @@ def sync_daily_progress_to_task(
         new_progress = max(0, min(100, round(total_hours / planned * 100)))
         # 進捗100%到達時にステータスを「完了」へ昇格
         new_status = task["status"]
-        if new_progress >= 100 and task["status"] not in ("完了", "停止"):
+        if new_progress >= 100 and task["status"] not in ("完了", "中断"):
             new_status = "完了"
         if new_progress != (task.get("progress") or 0) or new_status != task["status"]:
             db.execute(
@@ -3135,8 +3199,8 @@ def _map_brabio_status(status_str: str, progress: int) -> str:
     s = status_str.strip()
     if s == "完了":
         return "完了"
-    if s == "停止":
-        return "停止"
+    if s == "中断":
+        return "中断"
     if s == "未着手":
         return "未着手"
     if s in ("作業中", ""):

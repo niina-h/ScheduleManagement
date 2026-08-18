@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>利用者アンケート改善対応一覧</title>
+<style>
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --ink: #1f2933;
+  --ink-soft: #52606d;
+  --line: #d9dfe4;
+  --accent: #2d4a6b;
+  --accent-soft: #e5ecf3;
+  --done-bg: #e4f2ea;
+  --done-ink: #276749;
+  --done-dot: #3d7a5c;
+  --pending-bg: #fdf1e0;
+  --pending-ink: #92551a;
+  --pending-dot: #c9812f;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181d;
+    --surface: #1c2229;
+    --ink: #e6eaee;
+    --ink-soft: #9aa7b2;
+    --line: #2e363f;
+    --accent: #7fa8d1;
+    --accent-soft: #223247;
+    --done-bg: #163325;
+    --done-ink: #7fd6a6;
+    --done-dot: #4fae7c;
+    --pending-bg: #3a2a13;
+    --pending-ink: #e8b878;
+    --pending-dot: #d99a41;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14181d;
+  --surface: #1c2229;
+  --ink: #e6eaee;
+  --ink-soft: #9aa7b2;
+  --line: #2e363f;
+  --accent: #7fa8d1;
+  --accent-soft: #223247;
+  --done-bg: #163325;
+  --done-ink: #7fd6a6;
+  --done-dot: #4fae7c;
+  --pending-bg: #3a2a13;
+  --pending-ink: #e8b878;
+  --pending-dot: #d99a41;
+}
+:root[data-theme="light"] {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --ink: #1f2933;
+  --ink-soft: #52606d;
+  --line: #d9dfe4;
+  --accent: #2d4a6b;
+  --accent-soft: #e5ecf3;
+  --done-bg: #e4f2ea;
+  --done-ink: #276749;
+  --done-dot: #3d7a5c;
+  --pending-bg: #fdf1e0;
+  --pending-ink: #92551a;
+  --pending-dot: #c9812f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Yu Gothic UI", "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", system-ui, sans-serif;
+  line-height: 1.7;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+.page {
+  max-width: 780px;
+  margin: 0 auto;
+}
+
+.header {
+  margin-bottom: 2rem;
+}
+
+.eyebrow {
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+h1 {
+  font-size: 1.6rem;
+  margin: 0.4rem 0 0.5rem;
+  text-wrap: balance;
+  letter-spacing: 0.01em;
+}
+
+.meta {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.2rem;
+}
+
+.summary {
+  display: flex;
+  gap: 0.75rem;
+  margin: 1.75rem 0 2.25rem;
+  flex-wrap: wrap;
+}
+
+.summary-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9rem 1.15rem;
+  flex: 1 1 140px;
+  min-width: 130px;
+}
+
+.summary-num {
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  line-height: 1.1;
+}
+
+.summary-label {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  margin-top: 0.25rem;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.item {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1.15rem 1.3rem;
+}
+
+.item-top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.55rem;
+}
+
+.item-no {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.85rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 0.1rem 0.5rem;
+}
+
+.item-title {
+  font-weight: 700;
+  font-size: 1.02rem;
+  flex: 1 1 auto;
+  min-width: 200px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.badge.done { background: var(--done-bg); color: var(--done-ink); }
+.badge.done::before { background: var(--done-dot); }
+.badge.pending { background: var(--pending-bg); color: var(--pending-ink); }
+.badge.pending::before { background: var(--pending-dot); }
+
+.item-meta {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin-bottom: 0.6rem;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.item-body {
+  font-size: 0.92rem;
+  color: var(--ink);
+}
+
+.item-body p {
+  margin: 0 0 0.5rem;
+}
+.item-body p:last-child { margin-bottom: 0; }
+
+.tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.05rem 0.4rem;
+  margin-right: 0.3rem;
+}
+
+footer {
+  margin-top: 2.5rem;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div class="eyebrow">Schedule Management &mdash; 対応報告</div>
+    <h1>利用者アンケート改善対応一覧</h1>
+    <div class="meta">
+      <span>アンケート実施：2026-07-28（商品開発室 一般メンバー7名・全員回答）</span>
+      <span>集計時点：2026-08-18</span>
+    </div>
+  </div>
+
+  <div class="summary">
+    <div class="summary-card">
+      <div class="summary-num">7</div>
+      <div class="summary-label">抽出した改善候補</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-num">7</div>
+      <div class="summary-label">解決・本番反映済み</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-num">0</div>
+      <div class="summary-label">対応中・未着手</div>
+    </div>
+  </div>
+
+  <div class="list">
+
+    <div class="item">
+      <div class="item-top">
+        <span class="item-no">#32</span>
+        <span class="item-title">週間予定を反映し直すと、入力済みの実績・予定時間がリセットされる</span>
+        <span class="badge done">解決・本番反映済み</span>
+      </div>
+      <div class="item-meta">
+        <span>指摘者：回答者A・D（2名）</span>
+        <span>解決日：2026-08-05</span>
+      </div>
+      <div class="item-body">
+        <p>「ガントチャート反映」ボタンの実装が、UI説明文に反して対象週の週間予定を無条件に全削除してから再構築していたことが原因の実不具合。全削除処理を撤去し、既存の温存ロジック（空きスロットのみ埋める・紐付き行のみクリア・重複回避で追加）に一本化した。</p>
+        <p><span class="tag">web_app/routes/schedule.py</span>手動入力予定を変更せず定例のみ正しく追加されることをDEVで検証。</p>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="item-top">
+        <span class="item-no">#33</span>
+        <span class="item-title">タスク管理・イベント登録機能が初見で分かりにくい</span>
+        <span class="badge done">解決・本番反映済み</span>
+      </div>
+      <div class="item-meta">
+        <span>指摘者：回答者C・E（2名）</span>
+        <span>解決日：2026-08-06</span>
+      </div>
+      <div class="item-body">
+        <p>タスク管理・定例作業・イベントの3タブ共通画面に、ガントチャートと同じ「▶使い方」の折りたたみヘルプを追加。表示中タブに応じて内容を切り替える。ヘルプ画面全体も現行実装に合わせて更新した。</p>
+        <p><span class="tag">project_tasks.html</span><span class="tag">help.html</span>対応中に発見した進捗計算の不一致は#49として別管理。</p>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="item-top">
+        <span class="item-no">#34</span>
+        <span class="item-title">中断中タスクの運用ルールが不明確</span>
+        <span class="badge done">解決・本番反映済み</span>
+      </div>
+      <div class="item-meta">
+        <span>指摘者：回答者F（1名）</span>
+        <span>解決日：2026-08-06</span>
+      </div>
+      <div class="item-body">
+        <p>既存の「停止」ステータスが実質「中断」機能（進捗率を凍結・遅延警告の対象外）を提供していたが、名称が伝わっていなかったことが原因。「停止」を「中断」に名称変更し、運用ルールをヘルプ・ガントチャート画面に明記した。</p>
+        <p><span class="tag">models.py</span>本番・DEV双方に旧ステータスの残存データがないことを確認済み。</p>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="item-top">
+        <span class="item-no">#35</span>
+        <span class="item-title">タスク名が長いと表示が省略され、何の作業か分かりにくい</span>
+        <span class="badge done">解決・本番反映済み</span>
+      </div>
+      <div class="item-meta">
+        <span>指摘者：回答者F</span>
+        <span>解決日：2026-08-06</span>
+      </div>
+      <div class="item-body">
+        <p>ホバーで全文表示する仕組み自体は実装済みだったが気付かれにくいことが原因。列幅変更ハンドルの視認性を高める「↔」アイコンを見出しに追加し、ヘルプにも操作方法を追記した。</p>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="item-top">
+        <span class="item-no">#36</span>
+        <span class="item-title">担当者が3名以上のタスクに対応できない</span>
+        <span class="badge done">解決済み（既存実装で対応済みと確認）</span>
+      </div>
+      <div class="item-meta">
+        <span>#27と同一指摘</span>
+        <span>確認日：2026-08-06</span>
+      </div>
+      <div class="item-body">
+        <p>#27で実装済みの複数担当者対応（<code>assigned_ids</code>）が本番DB・本番コードとも既に反映済みであることを確認。4名の担当者設定で動作を再検証し、追加対応は不要と判断した。</p>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="item-top">
+        <span class="item-no">#37</span>
+        <span class="item-title">ガントチャートと週間予定表を同時に見たい</span>
+        <span class="badge done">解決・本番反映済み</span>
+      </div>
+      <div class="item-meta">
+        <span>指摘者：回答者G（1名）</span>
+        <span>本番反映：2026-08-17</span>
+      </div>
+      <div class="item-body">
+        <p>画面分割よりも軽量な「該当週のガントチャートへのリンク」方式を採用。週間予定画面の操作ボタン行に「この週のガントチャートを見る」リンクを追加し、<code>window.open()</code>で確実に新規ウィンドウとして開くよう調整した（ボタン位置は右側に配置）。</p>
+        <p><span class="tag">schedule.html</span>管理者が他ユーザーを切り替えて閲覧中の場合も対象ユーザーを引き継ぐ。</p>
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="item-top">
+        <span class="item-no">#49</span>
+        <span class="item-title">タスク管理画面とガントチャート画面で進捗率の自動計算ロジックが不一致</span>
+        <span class="badge done">解決・本番反映済み</span>
+      </div>
+      <div class="item-meta">
+        <span>#33対応中に発見</span>
+        <span>解決日：2026-08-07</span>
+      </div>
+      <div class="item-body">
+        <p>タスク管理画面側の進捗自動計算式をガントチャート側の式に統一（公開関数<code>calc_progress_by_date</code>化）。あわせてガントチャートと同じ「遅延警告」（理想進捗を下回ると赤字太字表示）をタスク管理画面にも追加した。</p>
+        <p><span class="tag">models.py</span><span class="tag">project_tasks.py</span>DBへの保存値計算・予定実績比較の両方に影響する箇所のため、事前に影響範囲を確認した上で統一。</p>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    出典：<code>docs/進捗管理/改善タスク台帳.md</code> §11「利用者アンケート（2026-07-28）から抽出した改善候補」。全項目 DEV 検証後、本番環境へ反映済み。
+  </footer>
+</div>
+</body>
+</html>

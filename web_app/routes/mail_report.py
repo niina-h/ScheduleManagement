@@ -503,11 +503,25 @@ def _build_master_body(
             return updated_date == target_date_str
         return end == target_date_str
 
+    def _progress_updated_on_target_date(t: dict) -> bool:
+        """このタスクが対象日時点で「進捗のある対応中」に該当するか判定する。
+
+        対象日が開始日〜終了日の期間内であることに加え、進捗が0より大きい
+        ことを条件とする（期間内に入っているだけで作業実態のないタスク＝
+        進捗0%のまま着手前のタスクをメールから除外するため）。
+        project_task.updated_at はタスク更新のたびに書き換わり「対象日に
+        実際に作業したか」の判定には使えないため、日付一致条件は設けない。
+        """
+        if not _in_progress_on_target_date(t):
+            return False
+        progress = t.get("progress") or 0
+        return progress >= 1
+
     in_progress_tasks = [
         t for t in project_tasks
-        if _in_progress_on_target_date(t)
+        if _progress_updated_on_target_date(t)
         or any(
-            _in_progress_on_target_date(c)
+            _progress_updated_on_target_date(c)
             for c in _children_by_parent.get(t["id"], [])
         )
     ]
@@ -589,6 +603,10 @@ def _build_master_body(
     tasks_by_subcat: dict[str, list[dict]] = {}
     subcat_order: dict[str, int] = {}
     for pt in in_progress_tasks:
+        # 子を持つ親タスク自身は見出し行としてのみ扱い、子の並びには含めない
+        # （子の進捗更新により親が in_progress_tasks に混入するケースの重複表示防止）。
+        if _children_by_parent.get(pt["id"]):
+            continue
         label = _group_label(pt)
         tasks_by_subcat.setdefault(label, []).append(pt)
         cat_src = _effective_category(pt)
@@ -603,13 +621,13 @@ def _build_master_body(
     for label in sorted(tasks_by_subcat.keys(), key=lambda k: (subcat_order.get(k, 0), k)):
         group = sorted(tasks_by_subcat[label], key=lambda t: t.get("display_order") or 0)
         # 単独タスク（親を持たず、見出し自体がそのタスク名）の場合は、見出し行に
-        # 直接進捗情報を付記し、名前が重複する子行は出さない。
+        # 直接状態を付記し、名前が重複する子行は出さない。
         if len(group) == 1 and group[0]["task_name"] == label:
             pt = group[0]
             progress = pt.get("progress", 0) or 0
             status = pt.get("status", "") or "未着手"
             if progress >= 1:
-                content_lines.append(f"　・{label}　（{_assignee_names(pt)}：進捗{progress}%、{status}）")
+                content_lines.append(f"　・{label}　（{_assignee_names(pt)}：{status}）")
             else:
                 content_lines.append(f"　・{label}")
             continue
@@ -618,7 +636,7 @@ def _build_master_body(
             progress = pt.get("progress", 0) or 0
             status = pt.get("status", "") or "未着手"
             if progress >= 1:
-                content_lines.append(f"　　└{pt['task_name']}　（{_assignee_names(pt)}：進捗{progress}%、{status}）")
+                content_lines.append(f"　　└{pt['task_name']}　（{_assignee_names(pt)}：{status}）")
             else:
                 content_lines.append(f"　　└{pt['task_name']}")
 
@@ -720,44 +738,37 @@ def _build_master_body(
     master_comment = get_daily_comment(login_id, date_str)
     reflection = _wrap_text(master_comment.get("reflection", "").strip() or "（未入力）")
 
-    # ＜開発状況＞: 大区分「開発」の project_task を対象に、誰が何を対応しているかを
-    # 進捗率・状態とあわせて表示する。
-    # （日次実績の自由入力タスク名はタスクマスタに区分登録されていないことが多く、
-    #   実績ベースの集計では常に空になりがちなため、大区分が確実に設定されている
-    #   project_task を情報源にする。）
-    #   形式: 「  中区分　タスク名　（姓：進捗X%、状態）」
-    # 担当者名は _assignee_names（姓のみ表示、上の「対応中」セクションで定義済み）を再利用する。
+    # ＜開発状況＞: ガントチャートで「開発集計に入れる」チェックが付いた親タスクの
+    # ツリー（自身＋子孫）に属し、当日対応中の project_task を対象に、誰が当日
+    # 何を対応しているかを状態とあわせて表示する（進捗率は載せない）。
+    # 見出しは「対応中」と同じ考え方で、ガントチャート最上位の親タスク名を使う
+    # （区分マスタの登録有無には依存しない）。
     dev_tasks = [
         pt for pt in project_tasks
-        if (_effective_category(pt).get("category_name") or "") == "開発"
-        and _in_progress_on_target_date(pt)
+        if bool(_root_ancestor(pt).get("include_in_dev_summary"))
+        and _progress_updated_on_target_date(pt)
+        and not _children_by_parent.get(pt["id"])
     ]
-    # 中区分ごとにグループ化する。進捗1%以上のタスクのみ担当者・進捗・状態を付記し、
-    # それ以外（未着手）はタスク名のみを列記して情報量を抑える。
-    # 並び順はガントチャートと同じ表示順（subcategory の display_order）で統一する
-    # （現状は開発の中区分が全て display_order=0 のため実質アルファベット順になって
-    #   いたので、rows挿入順にも依存しない安定した順序を明示する）。
-    dev_by_subcat: dict[str, list[dict]] = {}
-    dev_subcat_order: dict[str, int] = {}
+    dev_by_root: dict[str, list[dict]] = {}
+    dev_root_order: dict[str, int] = {}
     for pt in dev_tasks:
-        cat_src = _effective_category(pt)
-        label = (cat_src.get("subcategory_name") or "").strip() or "開発"
-        dev_by_subcat.setdefault(label, []).append(pt)
-        order = cat_src.get("subcat_order") or 0
-        if label not in dev_subcat_order or order < dev_subcat_order[label]:
-            dev_subcat_order[label] = order
+        root = _root_ancestor(pt)
+        label = root["task_name"]
+        dev_by_root.setdefault(label, []).append(pt)
+        order = root.get("display_order") or 0
+        if label not in dev_root_order or order < dev_root_order[label]:
+            dev_root_order[label] = order
 
     ai_lines: list[str] = []
-    for label in sorted(dev_by_subcat.keys(), key=lambda k: (dev_subcat_order.get(k, 0), k)):
+    for label in sorted(dev_by_root.keys(), key=lambda k: (dev_root_order.get(k, 0), k)):
         ai_lines.append(f"  {label}")
-        for pt in sorted(dev_by_subcat[label], key=lambda t: t.get("display_order") or 0):
-            progress = pt.get("progress", 0) or 0
-            if progress >= 1:
-                assignees = _assignee_names(pt)
-                status = pt.get("status", "") or "未着手"
-                ai_lines.append(f"　　{pt['task_name']}　（{assignees}：進捗{progress}%、{status}）")
-            else:
-                ai_lines.append(f"　　{pt['task_name']}")
+        children = sorted(dev_by_root[label], key=lambda t: t.get("display_order") or 0)
+        child_entries = [
+            f"{pt['task_name']}（{_assignee_names(pt)}：{pt.get('status') or '未着手'}）"
+            for pt in children
+        ]
+        if child_entries:
+            ai_lines.append(_wrap_text("　　" + "、".join(child_entries)))
     ai_section = "\n".join(ai_lines) if ai_lines else "  （開発中のタスクなし）"
 
     # ＜次回予定＞: マスタ自身の翌営業日予定（定例作業は除外）

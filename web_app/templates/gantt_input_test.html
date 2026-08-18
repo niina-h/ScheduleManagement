@@ -38,6 +38,10 @@
   .col-resizer { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize;
     z-index: 7; background: transparent; }
   .col-resizer:hover, .col-resizer.dragging { background: #4338ca33; }
+  /* 列幅変更が可能なことを示す視覚的なヒント（タスク名が長いと省略されるため、
+     列幅を広げられることに気付いてもらうためのアイコン）。 */
+  .col-resize-hint { flex: 0 0 auto; margin-left: 4px; margin-right: 10px; color: #64748b;
+    font-size: .8rem; cursor: help; user-select: none; }
   .g-timehead { position: relative; }
   .g-dcell { position: absolute; top: 0; width: var(--dayw); height: var(--headh); text-align: center;
     font-size: .6rem; line-height: 1.1; color: #475569; padding-top: 3px; }
@@ -90,6 +94,9 @@
   .g-bar.done { background: linear-gradient(180deg,#6ee7b7,#10b981); border-color: #059669; }
   .g-bar.stop { background: linear-gradient(180deg,#e5e7eb,#d1d5db); border-color: #9ca3af; }
   .g-bar.unsaved { outline: 2px solid #f59e0b; }
+  /* 遅延警告：状態を手動で「遅れ」にしていなくても、今日時点の理想進捗に対して
+     実績が下回っている場合に計画枠を赤枠にする（進捗0%の未着手でも一目で分かるように）。 */
+  .g-bar.plan.behind { border-color: #ef4444; box-shadow: 0 0 0 1px #ef4444 inset; }
   /* マイルストーンの行自体にはバーを表示しない（背景レイヤーの全体貫通線で表現するため） */
   .g-bar.milestone { display: none; }
   .g-bar .g-prog { position: absolute; left: 0; top: 0; bottom: 0; z-index: 1;
@@ -131,6 +138,7 @@
   <summary class="small text-primary" style="cursor:pointer">▶ 使い方</summary>
   <ol class="small text-muted mb-0 mt-1">
     <li>一番下の空欄に<b>タスク名を入力</b>して <b>Enter</b>（その行の直後に新しい行が挿入されます）。</li>
+    <li>タスク名が長くて見切れる場合は、見出し「タスク（親子ツリー） / 担当」の右端（<b>↔</b>）を<b>左右にドラッグ</b>すると列の幅を広げられます。ホバーすると全文もポップアップ表示されます。</li>
     <li>行左の <b>⠿</b> を<b>上下にドラッグ</b>すると順番を入れ替えできます（子タスクも一緒に移動）。</li>
     <li><b>＞</b> で<b>1つ上の行の子タスク</b>に、<b>＜</b> で<b>親レベルに戻す</b>（字下げ／字上げ／最大4階層）。<b>×</b> で行を削除。</li>
     <li><b>👤</b> ボタン：<b>親＝メンバー（関係ユーザー・複数）</b>、<b>子＝担当者（2名以上も可）</b>を設定。ホバーで氏名を表示。</li>
@@ -138,6 +146,7 @@
     <li>表示範囲：システム管理者＝全件／所属長・管理職＝自分がメンバーの親／一般＝自分が担当の子。</li>
     <li>右のタイムラインを<b>左→右にドラッグ</b>してバーを描く（期間）。<b>中央で移動 / 端で伸縮</b>。</li>
     <li>バーは項目名を出さず、<b>計画（枠）に対する進捗（塗り）</b>と<b>進捗率・状態</b>で表示します（現行ガントと同じ）。</li>
+    <li>完了せずに<b>作業を中断</b>する場合は、新規タスクの作り直しやバーの引き伸ばしをせず、状態を<b>「中断」</b>にしてください（進捗率が凍結され、再開時は続きから計算されます）。</li>
     <li><b>💾保存</b>で反映。未保存の変更があるまま画面を離れると警告が出ます。</li>
   </ol>
 </details>
@@ -165,9 +174,9 @@
   </div>
   <span class="ms-auto"></span>
   <a class="btn btn-success btn-sm"
-     href="{{ url_for('planner_bp.export', start=range_start, user_id=(selected_user_id if selected_user_id else None)) }}">📥 Excel出力</a>
+     href="{{ url_for('planner_bp.export', start=range_start, user_id=(selected_user_id if selected_user_id else None), show_done=('1' if show_done else None)) }}">📥 Excel出力</a>
   <a class="btn btn-danger btn-sm"
-     href="{{ url_for('planner_bp.export_pdf', start=range_start, user_id=(selected_user_id if selected_user_id else None)) }}">📄 PDF出力</a>
+     href="{{ url_for('planner_bp.export_pdf', start=range_start, user_id=(selected_user_id if selected_user_id else None), show_done=('1' if show_done else None)) }}">📄 PDF出力</a>
   {% if is_master %}
   <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#importExcelForm"
           title="タスク管理一覧画面の「タスク移行Excel出力」で出力したファイルを取り込みます">
@@ -197,7 +206,7 @@
   <div class="gantt" id="gantt">
     <div class="g-bg" id="gbg"></div>
     <div class="g-head">
-      <div class="g-name-head">タスク（親子ツリー） / 担当<span class="col-resizer" id="colResizer" title="ドラッグで列幅を変更"></span></div>
+      <div class="g-name-head">タスク（親子ツリー） / 担当<span class="col-resize-hint" title="右端をドラッグして列幅を変更できます">↔</span><span class="col-resizer" id="colResizer" title="ドラッグで列幅を変更"></span></div>
       <div class="g-timehead" id="gtimehead"></div>
     </div>
     <div id="rows"></div>
@@ -220,11 +229,15 @@
         <select class="dt-status">
           <option value="未着手">未着手</option><option value="着手">着手</option>
           <option value="順調">順調</option><option value="遅れ">遅れ</option>
-          <option value="完了">完了</option><option value="停止">停止</option>
+          <option value="完了">完了</option><option value="中断">中断</option>
         </select>
       </div>
       <div class="fld dt-delay-row"><label>遅延</label><input type="number" class="dt-delay" min="0" step="1"><span>日</span></div>
       <div class="fld"><label>進捗</label><input type="number" class="dt-prog" min="0" max="100" step="1"><span>%</span></div>
+      <div class="fld dt-devsum-row" style="display:none;">
+        <label>&nbsp;</label>
+        <label style="cursor:pointer;"><input type="checkbox" class="dt-devsum"> 日報メールの開発状況に集計する</label>
+      </div>
       <div class="note dt-note"></div>
     </div>
     <div class="pl-modal-ft">
@@ -250,11 +263,12 @@
   HOLIDAY_DATES.forEach(function (iso) { HOLIDAY_SET[iso] = true; });
   var TASKS = {{ tasks | tojson }};
   var ASSIGN_USERS = {{ assign_users | tojson }};
+  var DEV_SUMMARY_ENABLED = {{ dev_summary_enabled | tojson }};  // 部門で「開発集計」機能が有効か
   var DAYW = 30, INDENT = 18;
 
   var STATUS_COLORS = {
     '未着手': '#9ca3af', '着手': '#60a5fa', '順調': '#34d399',
-    '遅れ': '#f87171', '完了': '#10b981', '停止': '#9ca3af'
+    '遅れ': '#f87171', '完了': '#10b981', '中断': '#9ca3af'
   };
 
   var gantt = document.getElementById('gantt'), timehead = document.getElementById('gtimehead');
@@ -350,7 +364,7 @@
     return count;
   }
 
-  var STATUSES = ['未着手', '着手', '順調', '遅れ', '完了', '停止'];
+  var STATUSES = ['未着手', '着手', '順調', '遅れ', '完了', '中断'];
   /* 順調＝経過日数からの自動進捗率（%）。着手した開始日当日も最小限の進捗（1日分）が
      付くよう、経過日数に+1した値を使う（着手直後が常に0%に見えないようにするため）。 */
   function autoProgressByDate(start, end) {
@@ -362,7 +376,7 @@
     return Math.max(0, Math.min(99, Math.round((elapsed + 1) / total * 100)));
   }
   /* 行の実効状態・進捗率を算出（状態は手動選択を尊重）。
-     - 未着手=0 / 完了=100 / 停止=入力値保持
+     - 未着手=0 / 完了=100 / 中断=入力値保持
      - 順調＝経過日数から自動
      - 遅れ＝(経過日数−遅延日数)/期間 で自動計算（遅延日数を入力）
      - 着手＝入力値 */
@@ -384,8 +398,15 @@
       var total = Math.max(1, Math.round((e - s) / 86400000));
       var elapsed = Math.round((today - s) / 86400000);
       prog = Math.max(0, Math.min(99, Math.round((elapsed - delay) / total * 100)));
-    } else prog = p;  // 停止＝入力値
-    return { status: st, progress: prog };
+    } else prog = p;  // 中断＝入力値
+    // 遅延警告：状態を「遅れ」に手動変更していなくても、今日時点の理想進捗（経過日数
+    // ベース）に対して実際の進捗が下回っていれば、見た目だけ「遅れ」相当の赤にする
+    // （完了・中断・期間未設定は対象外）。
+    var behind = false;
+    if (st !== '完了' && st !== '中断' && start && end) {
+      behind = prog < autoProgressByDate(start, end);
+    }
+    return { status: st, progress: prog, behind: behind };
   }
 
   // 背景・ヘッダー
@@ -436,20 +457,31 @@
     return p;
   }
   var MAX_LEVEL = 3;   // 子は3世代まで（親=0／子=1／孫=2／曾孫=3）
-  /* レベル（インデント）を見た目に反映するだけ（変更フラグは立てない） */
-  function applyLevel(row, lv) {
+  /* レベル（インデント）を見た目に反映するだけ（変更フラグは立てない）。
+     skipMinLevel=true のときは MIN_LEVEL 制約をかけない（一般ユーザーの画面で、
+     サーバーから届いた既存の親タスク（level=0）をそのまま表示するための初期表示専用）。
+     新規作成・字上げ字下げ・並べ替え操作では常に false（一般ユーザーは新規に
+     親を作れない・親位置へ移動できない制約を維持する）。 */
+  function applyLevel(row, lv, skipMinLevel) {
+    var minLv = skipMinLevel ? 0 : MIN_LEVEL;
     var prev = prevRowOf(row);
-    var maxLv = Math.min(prev ? (parseInt(prev.dataset.level) + 1) : MIN_LEVEL, MAX_LEVEL);
-    maxLv = Math.max(maxLv, MIN_LEVEL);
-    lv = Math.max(MIN_LEVEL, Math.min(lv, maxLv));
+    var maxLv = Math.min(prev ? (parseInt(prev.dataset.level) + 1) : minLv, MAX_LEVEL);
+    maxLv = Math.max(maxLv, minLv);
+    lv = Math.max(minLv, Math.min(lv, maxLv));
     row.dataset.level = lv;
+    refreshRowVisual(row, lv, maxLv);
+  }
+  /* applyLevel から見た目更新だけを切り出したもの（level 自体は変更しない）。
+     ドラッグでの並べ替え後は、階層（親子関係）を変えずに位置だけ動かすため、
+     applyLevel（level を再計算してしまう）ではなくこちらを呼ぶ。 */
+  function refreshRowVisual(row, lv, maxLv) {
     row.classList.toggle('lv0', lv === 0);
     row.querySelector('.g-name').style.paddingLeft = (4 + lv * INDENT) + 'px';
     var txt = row.querySelector('.nm-txt'); if (txt) txt.classList.toggle('parent', lv === 0);
     var tree = row.querySelector('.tree'); if (tree) tree.textContent = lv > 0 ? '└' : '';
     var outB = row.querySelector('.tw.out'), inB = row.querySelector('.tw.in');
     if (outB) outB.disabled = (lv <= MIN_LEVEL);
-    if (inB) inB.disabled = (lv >= maxLv);
+    if (inB) inB.disabled = (maxLv !== undefined && lv >= maxLv);
     refreshPeopleBtn(row);  // 親↔子でメンバー/担当の表示を切替
   }
   /* ユーザー操作によるレベル変更（変更フラグを立てる） */
@@ -507,6 +539,7 @@
       var r = rows[i], lv = +r.dataset.level;
       var nxt = rows[i + 1];
       var hasChildren = nxt && (+nxt.dataset.level > lv);
+      r.dataset.isParent = hasChildren ? '1' : '0';
       var cx = r.querySelector('.cx');
       if (cx) {
         cx.textContent = hasChildren ? (r.dataset.collapsed === '1' ? '▸' : '▾') : '';
@@ -525,8 +558,34 @@
     return dropInd;
   }
   var drag = null;
+  /* ドラッグの移動先候補を「同じ階層・同じ親を持つ兄弟の範囲内」に限定する。
+     階層をまたいだ移動を許可すると、別のタスクの子に紛れ込む・親が見つからず
+     孤立するなどの事故につながるため、並べ替えは兄弟内の順序変更のみに絞る。 */
   function candidateRows() {
-    return Array.prototype.slice.call(rowsEl.querySelectorAll('.g-row')).filter(function (r) { return drag.block.indexOf(r) < 0; });
+    var lv = +drag.root.dataset.level;
+    var all = Array.prototype.slice.call(rowsEl.querySelectorAll('.g-row'));
+    var start = all.indexOf(drag.block[0]);
+    // 兄弟範囲の開始位置：自身より手前にある、同レベルの直近の行の直後
+    // （見つからなければ配列の先頭、つまり同レベルの最初のグループ）。
+    var rangeStart = 0;
+    for (var i = start - 1; i >= 0; i--) {
+      var elLv = +all[i].dataset.level;
+      if (elLv < lv) { rangeStart = i + 1; break; }
+      if (elLv === lv) { rangeStart = i; }
+    }
+    // 兄弟範囲の終了位置：自身のブロックより後ろで、自身より浅い level が
+    // 最初に現れる直前まで（そこまでは同じ親を持つ兄弟または、その子孫）。
+    var afterBlock = all.indexOf(drag.block[drag.block.length - 1]) + 1;
+    var rangeEnd = all.length;
+    for (var j = afterBlock; j < all.length; j++) {
+      if (+all[j].dataset.level < lv) { rangeEnd = j; break; }
+    }
+    var siblings = all.slice(rangeStart, rangeEnd).filter(function (r) { return +r.dataset.level === lv; });
+    var result = [];
+    siblings.forEach(function (s) {
+      if (drag.block.indexOf(s) < 0) result.push(s);
+    });
+    return result;
   }
   function startRowDrag(rootRow, e) {
     pushUndoSnapshot(snapshotRows());
@@ -539,6 +598,16 @@
     document.addEventListener('mouseup', onDragUp);
     onDragMove(e);
   }
+  /* candidateRows() は兄弟のみを返すため、ref（挿入基準）が兄弟の1行を指す場合は
+     そのままその行の直前へ、null（兄弟の末尾より下にドロップ）の場合は最後の
+     兄弟の子孫ブロックの直後（＝兄弟範囲の本当の末尾）を実際の挿入位置とする。 */
+  function resolveInsertRef(cands, ref) {
+    if (ref) return ref;
+    if (!cands.length) return drag.origRef;  // 兄弟が他に無ければ元の位置のまま
+    var lastSibling = cands[cands.length - 1];
+    var lastBlock = rowBlock(lastSibling);
+    return lastBlock[lastBlock.length - 1].nextElementSibling;
+  }
   function onDragMove(e) {
     var cands = candidateRows(), ref = null;
     for (var i = 0; i < cands.length; i++) {
@@ -546,10 +615,11 @@
       if (e.clientY < rc.top + rc.height / 2) { ref = cands[i]; break; }
     }
     drag.ref = ref;
-    var idx = ref ? cands.indexOf(ref) : cands.length;
-    var prevCand = idx > 0 ? cands[idx - 1] : null;
-    var maxLv = prevCand ? (+prevCand.dataset.level + 1) : 0;
-    var lv = Math.min(+drag.root.dataset.level, maxLv);
+    drag.cands = cands;
+    // ドラッグでは階層（親子関係）を変えないため、インジケータの表示位置も
+    // 常に移動元（drag.root）の現在の level のまま表示する（移動先の直前行に
+    // 応じて予測レベルが変わるように見せると、実際の挙動と食い違うため）。
+    var lv = +drag.root.dataset.level;
     var ind = ensureInd();
     ind.style.top = (ref ? ref.offsetTop : (drag.block[drag.block.length - 1].offsetTop + drag.block[drag.block.length - 1].offsetHeight)) + 'px';
     ind.style.left = (6 + lv * INDENT) + 'px';
@@ -562,12 +632,17 @@
     document.body.style.cursor = '';
     if (dropInd) dropInd.style.display = 'none';
     drag.block.forEach(function (el) { el.classList.remove('dragging'); });
-    var changed = drag.ref !== drag.origRef;
+    var insertRef = resolveInsertRef(drag.cands || [], drag.ref);
+    var changed = insertRef !== drag.origRef;
     if (changed) {
-      drag.block.forEach(function (el) { rowsEl.insertBefore(el, drag.ref); });
+      drag.block.forEach(function (el) { rowsEl.insertBefore(el, insertRef); });
       if (dropInd) rowsEl.appendChild(dropInd);  // インジケータは常に末尾へ
+      // ドラッグでの並べ替えは、階層（親子関係）を変えずに位置だけを動かす
+      // （移動先の直前行の level に応じて自動的に階層が変わってしまい、
+      //   別のタスクの子に紛れ込む不具合を防ぐため、level はブロック内の
+      //   相対構造をそのまま維持し、見た目だけ更新する）。
       drag.block.forEach(function (el) {
-        applyLevel(el, +el.dataset.level);
+        refreshRowVisual(el, +el.dataset.level);
         if (el.dataset.id) el.dataset.dirty = '1';
       });
       markDirty();
@@ -601,6 +676,8 @@
     row.dataset.statusRaw = opts.isNew ? '未着手' : (opts.status || '未着手');
     row.dataset.progressRaw = opts.isNew ? '0' : String(opts.progress || 0);
     row.dataset.delayRaw = opts.isNew ? '0' : String(opts.delay || 0);
+    row.dataset.isParent = opts.isParent ? '1' : '0';
+    row.dataset.devSummary = opts.devSummary ? '1' : '0';
     var editable = opts.editable !== false;   // 既存の読取専用行（一般ユーザーの親など）
     row.dataset.editable = editable ? '1' : '0';
     if (!editable) row.classList.add('ro');
@@ -660,7 +737,10 @@
     }
     if (editable) setupDraw(track, row);
     rowsEl.appendChild(row);
-    applyLevel(row, +row.dataset.level);
+    // 既存タスクの初期表示は、サーバーから届いた level をそのまま使う（一般
+    // ユーザーでも既存の親タスク＝level 0 が正しい見た目で表示されるようにする）。
+    // 新規行（isNew）は MIN_LEVEL 制約を適用する（一般ユーザーは新規に親を作れない）。
+    applyLevel(row, +row.dataset.level, !opts.isNew);
     refreshPeopleBtn(row);
     updateMeta(row);
     return row;
@@ -681,13 +761,14 @@
       return;
     }
     var prog = bar.querySelector('.g-prog'), pct = bar.querySelector('.g-pct');
-    bar.classList.remove('plan', 'done', 'stop', 'milestone');
+    bar.classList.remove('plan', 'done', 'stop', 'milestone', 'behind');
     if (st === '完了') { bar.classList.add('done'); prog.style.width = '0'; }
-    else if (st === '停止') { bar.classList.add('stop'); prog.style.width = '0'; }
+    else if (st === '中断') { bar.classList.add('stop'); prog.style.width = '0'; }
     else {
       bar.classList.add('plan');
+      bar.classList.toggle('behind', eff.behind);
       prog.style.width = Math.min(eff.progress, 100) + '%';
-      prog.classList.toggle('late', st === '遅れ');
+      prog.classList.toggle('late', st === '遅れ' || eff.behind);
     }
     pct.textContent = eff.progress + '%';
     bar.classList.toggle('unsaved', row.dataset.new === '1' || row.dataset.dirty === '1');
@@ -701,7 +782,8 @@
     var daysEl = meta.querySelector('.days'), stEl = meta.querySelector('.st'), pctEl = meta.querySelector('.pct');
     var hasRange = row.dataset.start && row.dataset.end;
     daysEl.textContent = hasRange ? (calcBusinessDays(row.dataset.start, row.dataset.end) + '日 ') : '';
-    stEl.textContent = eff.status || ''; stEl.style.color = STATUS_COLORS[eff.status] || '#64748b';
+    stEl.textContent = eff.status || '';
+    stEl.style.color = eff.behind ? STATUS_COLORS['遅れ'] : (STATUS_COLORS[eff.status] || '#64748b');
     pctEl.textContent = hasRange ? (' ' + eff.progress + '%') : '';
   }
 
@@ -736,7 +818,7 @@
       var rect = bar.getBoundingClientRect();
       function mv(ev) {
         var pct = Math.max(0, Math.min(100, Math.round((ev.clientX - rect.left) / rect.width * 100)));
-        if (row.dataset.statusRaw !== '停止') row.dataset.statusRaw = '着手';  // 手動進捗として扱う
+        if (row.dataset.statusRaw !== '中断') row.dataset.statusRaw = '着手';  // 手動進捗として扱う
         row.dataset.progressRaw = String(pct);
         row.dataset.progressManual = '1';  // 以後、日数ベース自動計算より入力値を優先する
         styleBar(bar, row);
@@ -966,7 +1048,7 @@
   function detRefresh() {
     var st = q('.dt-status').value;
     q('.dt-delay-row').style.display = (st === '遅れ') ? 'flex' : 'none';
-    q('.dt-prog').disabled = !(st === '着手' || st === '停止');
+    q('.dt-prog').disabled = !(st === '着手' || st === '中断');
     q('.dt-note').textContent =
       st === '順調' ? '進捗は経過日数から自動計算されます' :
       st === '遅れ' ? '遅延日数から進捗を自動計算します' :
@@ -984,6 +1066,10 @@
     q('.dt-status').value = row.dataset.statusRaw || '未着手';
     q('.dt-delay').value = parseInt(row.dataset.delayRaw || '0') || 0;
     q('.dt-prog').value = effOf(row).progress;
+    var devsumRow = document.querySelector('.dt-devsum-row');
+    var isParentRow = row.dataset.isParent === '1';
+    devsumRow.style.display = (DEV_SUMMARY_ENABLED && isParentRow) ? '' : 'none';
+    q('.dt-devsum').checked = row.dataset.devSummary === '1';
     detRefresh();
     detModal.style.display = 'flex';
   }
@@ -1003,6 +1089,9 @@
     if (s && e && e < s) { var t = s; s = e; e = t; }
     detRow.dataset.statusRaw = q('.dt-status').value;
     detRow.dataset.delayRaw = String(Math.max(0, parseInt(q('.dt-delay').value) || 0));
+    if (DEV_SUMMARY_ENABLED && detRow.dataset.isParent === '1') {
+      detRow.dataset.devSummary = q('.dt-devsum').checked ? '1' : '0';
+    }
     if (!q('.dt-prog').disabled) detRow.dataset.progressRaw = String(Math.max(0, Math.min(100, parseInt(q('.dt-prog').value) || 0)));
     // 詳細編集画面で状態・進捗を明示的に選び直した場合は、進捗バードラッグ時に
     // 立てた「手動優先」フラグを解除し、状態に応じた通常の計算方法に戻す。
@@ -1055,7 +1144,8 @@
                dirty: row.dataset.dirty === '1',
                status: row.dataset.statusRaw || '未着手', progress: eff.progress,
                delay: parseInt(row.dataset.delayRaw || '0') || 0,
-               people: (row._people || []).map(function (a) { return a.id; }) };
+               people: (row._people || []).map(function (a) { return a.id; }),
+               devSummary: row.dataset.devSummary === '1' };
     });
     var rows = [];
     var invalid = false;
@@ -1080,7 +1170,8 @@
       // 既存行は並び順反映のため dirty でなくても送信する
       rows.push({ tmp: it.tmp, id: it.id, name: it.name, start: it.start, end: it.end,
                   level: it.level, parent_id: parent_id, parent_tmp: parent_tmp, dirty: it.dirty,
-                  status: it.status, progress: it.progress, delay: it.delay, people: it.people });
+                  status: it.status, progress: it.progress, delay: it.delay, people: it.people,
+                  dev_summary: it.devSummary });
     });
     if (invalid) { setMsg('バーを描いた行にタスク名を入力してください', 'danger'); return; }
     if (!rows.length) { setMsg('保存する変更がありません', 'muted'); return; }
@@ -1123,7 +1214,7 @@
   if (undoBtn) undoBtn.addEventListener('click', undoLastChange);
 
   // 初期描画
-  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable, isMilestone: t.is_milestone }); });
+  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable, isMilestone: t.is_milestone, isParent: t.is_parent, devSummary: t.include_in_dev_summary }); });
   renderMilestoneLines();  // マイルストーンの全体貫通縦線を描画
   ensureTrailing(false);  // 末尾に入力行
   // 前回の折りたたみ状態を復元（保存済みIDを collapsed=1 に）。

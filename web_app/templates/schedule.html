@@ -78,12 +78,23 @@
   </button>
   {% endif %}
 
-  {% if today >= week_dates[0] %}
-  <div class="btn-group btn-group-sm ms-auto" id="view-toggle" role="group">
-    <button type="button" class="btn btn-outline-primary" id="btn-plan-view" onclick="setViewMode('plan')">📋 予定</button>
-    <button type="button" class="btn btn-primary active" id="btn-result-view" onclick="setViewMode('result')">📊 実績</button>
+  <div class="ms-auto d-flex align-items-center gap-2">
+    {# この週のガントチャートを新規ウィンドウで開く（週間予定とガントチャートを並べて見比べたい、という要望への対応）。
+       target="_blank" だとブラウザ設定によりタブで開かれることがあるため、window.open にサイズを
+       指定して確実に別ウィンドウで開く。 #}
+    <a class="btn btn-outline-secondary btn-sm" href="#"
+       onclick="window.open('{{ url_for('planner_bp.planner', start=week_start) }}{% if is_admin_view is defined and is_admin_view %}&user_id={{ target_user_id }}{% endif %}', 'ganttWindow_{{ week_start }}', 'width=1400,height=900,noopener'); return false;"
+       title="この週のガントチャートを新規ウィンドウで開いて見比べられます">
+      🌳 この週のガントチャートを見る
+    </a>
+
+    {% if today >= week_dates[0] %}
+    <div class="btn-group btn-group-sm" id="view-toggle" role="group">
+      <button type="button" class="btn btn-outline-primary" id="btn-plan-view" onclick="setViewMode('plan')">📋 予定</button>
+      <button type="button" class="btn btn-primary active" id="btn-result-view" onclick="setViewMode('result')">📊 実績</button>
+    </div>
+    {% endif %}
   </div>
-  {% endif %}
 </div>
 
 {# ------------------------------------------------------------------ #}
@@ -367,7 +378,7 @@
           <p class="small mb-1">ガントチャートに登録した期間をもとに自動取込します。</p>
           <ul class="small text-muted mb-0">
             <li>担当者（1または2）にログインユーザーが設定されているタスク</li>
-            <li>ガントの登録期間（開始日〜終了日）が対象週と重なるもの（完了・停止除く）</li>
+            <li>ガントの登録期間（開始日〜終了日）が対象週と重なるもの（完了・中断除く）</li>
             <li>定例作業を空きスロットへ上から詰めて先に配置</li>
             <li>残りの空きにタスクをAM／PMへ均等配分</li>
             <li>イベントも対象週のものを自動配置</li>

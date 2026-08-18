@@ -43,6 +43,7 @@ from ..models import (
     get_project_task_by_id,
     get_user_by_id,
     import_migration_excel,
+    is_dev_summary_enabled,
     reassign_project_task_order,
     resolve_parent_progress,
     resolve_parent_status,
@@ -58,7 +59,7 @@ _WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
 _DISPLAY_DAYS = 63  # 画面表示日数（約9週）
 _EXPORT_DAYS = 28   # Excel出力日数（4週間）
 _SHIFT_DAYS = 7     # 前後ボタンの移動量（前週・次週）
-_STATUSES = {"未着手", "着手", "順調", "遅れ", "完了", "停止"}
+_STATUSES = {"未着手", "着手", "順調", "遅れ", "完了", "中断"}
 
 
 def _display_name(name: str, last_name: str | None) -> str:
@@ -102,7 +103,7 @@ def _get_visible_tree(
     master = is_master(login_role)
     manager = is_privileged(login_role) and not master
 
-    # 全タスク（マイルストーン・完了/停止も含む）をツリー化して表示する。
+    # 全タスク（マイルストーン・完了/中断も含む）をツリー化して表示する。
     # 期間（開始日・終了日）が無いものはバーを描けないが、タスク名・担当者の行としては
     # 表示する（ガントバーを削除しても行自体は残せるようにするため）。
     # ただし通常のイベント（会議・打合せ等、is_event=1 かつ is_milestone=0）は
@@ -290,6 +291,9 @@ def planner() -> Any:
         get_active_scope_dept, get_effective_depts, is_dept_head, is_system_admin,
     )
     scope_dept = get_active_scope_dept(login_role, login_dept, session.get("active_dept"))
+    # 日報メール＜開発状況＞の「開発集計に入れる」チェックを画面に出すかどうか
+    # （部門ごとに機能自体を有効化できる。既定は無効）。
+    dev_summary_enabled = is_dev_summary_enabled(scope_dept or login_dept)
     # 候補ユーザーの所属集合を役職別に決める（所属長は担当所属のみ・他所属を出さない）。
     if is_dept_head(login_role):
         _depts = get_effective_depts(
@@ -348,39 +352,79 @@ def planner() -> Any:
             return _parse_ids(ids_str)
         return [i for i in (t.get("assigned_to"), t.get("assigned_to_2")) if i]
 
-    def _leaf_visible(t: dict) -> bool:
-        """末端（子を持たないノード）が表示対象かどうか（完了・担当者絞り込みを判定）。"""
+    def _flatten_descendants(t: dict) -> list[dict]:
+        """このノード（自身含む）配下の全ノードをフラットなリストで返す。"""
+        out: list[dict] = []
+        stack = [t]
+        while stack:
+            n = stack.pop()
+            out.append(n)
+            stack.extend(children.get(n["id"]) or [])
+        return out
+
+    def _leaf_visible(t: dict, member_matched: bool = False) -> bool:
+        """末端（子を持たないノード）が表示対象かどうか（完了・担当者絞り込みを判定）。
+
+        Args:
+            member_matched: 祖先のいずれかの親の member_ids に対象ユーザーが
+                含まれる場合 True。この場合、子タスク自身の担当者に含まれて
+                いなくても表示対象とする（親のメンバーに割り当てられていれば
+                配下をすべて見られるようにするため）。
+        """
         status = t.get("status") or ""
         if not show_done and status == "完了":
             return False
-        if target_user_id and target_user_id not in _assignee_ids(t):
+        if target_user_id and not member_matched and target_user_id not in _assignee_ids(t):
             return False
         return True
 
-    _has_visible_cache: dict[int, bool] = {}
+    _has_visible_cache: dict[tuple[int, bool], bool] = {}
 
-    def _has_visible_descendant(t: dict) -> bool:
+    def _has_visible_descendant(t: dict, member_matched: bool = False) -> bool:
         """このノード（自身含む）の配下に、最終的に表示される末端が1つでもあるか。
 
         中間階層の見出し（子は持つが、配下が全員フィルタで除外された）が
         中身の無いまま表示され続けるのを防ぐため、事前にボトムアップで判定する。
+
+        Args:
+            member_matched: 祖先のいずれかの親の member_ids に対象ユーザーが
+                含まれる場合 True（_leaf_visible と同様の緩和を配下に伝える）。
         """
-        if t["id"] in _has_visible_cache:
-            return _has_visible_cache[t["id"]]
+        cache_key = (t["id"], member_matched)
+        if cache_key in _has_visible_cache:
+            return _has_visible_cache[cache_key]
+        matched = member_matched or (bool(target_user_id) and target_user_id in _members(t))
         kids = children.get(t["id"]) or []
         if not kids:
-            result = _leaf_visible(t)
+            result = _leaf_visible(t, matched)
         else:
-            # 完了ツリー（自身が完了ならサブツリーごと非表示）は先に判定する。
+            # 完了ツリーの非表示判定は、親自身にバー（start_date・end_date）が
+            # 設定されている場合のみ行う。バー無しの見出し行（子の状況から状態を
+            # 自動判定する行）は、たまたま今の子が全員完了でも、まだ新しい子を
+            # 追加できる「箱」として残したいため、子が全員完了でも消さない。
+            # この場合、配下の子がすべて個別に非表示（完了）でも、対象ユーザーが
+            # この親のメンバー・担当のいずれかに関与していれば親自身は表示する
+            # （_emit 側の完了非表示の緩和と揺れないよう、ここでも「箱」を残す）。
+            has_bar = bool((t.get("start_date") or "").strip() and (t.get("end_date") or "").strip())
             status = resolve_parent_status(t, kids)
-            if not show_done and status == "完了":
+            if has_bar and not show_done and status == "完了":
                 result = False
             else:
-                result = any(_has_visible_descendant(c) for c in kids)
-        _has_visible_cache[t["id"]] = result
+                result = any(_has_visible_descendant(c, matched) for c in kids)
+                if not result and not has_bar and target_user_id:
+                    # 配下がすべて完了で個別に非表示でも、対象ユーザーがこの親の
+                    # メンバー（matched）か、配下いずれかの担当者であれば、この親
+                    # （箱）自体は表示する（完了タスクを全部やり切った直後、
+                    # 担当者本人の画面からもツリーが消えてしまう不具合を防ぐ）。
+                    result = matched or any(
+                        target_user_id in _assignee_ids(c)
+                        for c in _flatten_descendants(t)
+                        if not (children.get(c["id"]) or [])
+                    )
+        _has_visible_cache[cache_key] = result
         return result
 
-    def _emit(t: dict, level: int) -> None:
+    def _emit(t: dict, level: int, member_matched: bool = False) -> None:
         # 「親」は level ではなく「実際に子を持つか」で判定する（保存側と統一）。
         kids = children.get(t["id"]) or []
         is_parent = bool(kids)
@@ -393,16 +437,29 @@ def planner() -> Any:
         # 完了タスクの表示切替：終了日に関わらず、状態が「完了」ならその行（配下の
         # 子孫も含む）を非表示にする。子の有無に関係なく判定するため、一部の子だけ
         # 間引かれてDOM順・level構造が崩れることはない（サブツリーごと消える）。
-        if not show_done and status == "完了":
+        # ただし、子を持つ親自身にバー（start_date・end_date）が無い場合（子の
+        # 状況から状態を自動判定する見出し行）は、たまたま今の子が全員完了でも
+        # 非表示にしない。まだ新しい子タスクを追加できる「箱」であり、子が1件だけ
+        # 完了した途端にツリーごと消えると分かりにくいため。
+        has_bar = bool((t.get("start_date") or "").strip() and (t.get("end_date") or "").strip())
+        if (not is_parent or has_bar) and not show_done and status == "完了":
             return
+        # このノード自身が親で、member_ids に対象ユーザーを含む場合、以降（自身の
+        # 配下）は「メンバー一致」扱いとし、子タスクの担当者に入っていなくても
+        # 表示対象にする（親のメンバーに割り当てられていれば配下をすべて見られる
+        # ようにするため）。
+        member_matched = member_matched or (
+            bool(target_user_id) and is_parent and target_user_id in _members(t)
+        )
         # 担当者プルダウンで個別ユーザーに絞り込んでいる場合：
-        # - 末端（子・単独）は、そのユーザーが担当者でなければ間引く。
+        # - 末端（子・単独）は、そのユーザーが担当者でなく、祖先のメンバー一致も
+        #   無ければ間引く。
         # - 中間階層（子を持つ）は、配下に表示対象の末端が1つも無ければ、
         #   中身の無い見出しとして残さず間引く。
         if target_user_id:
-            if not is_parent and target_user_id not in _assignee_ids(t):
+            if not is_parent and not member_matched and target_user_id not in _assignee_ids(t):
                 return
-            if is_parent and not _has_visible_descendant(t):
+            if is_parent and not _has_visible_descendant(t, member_matched):
                 return
         tasks.append({
             "id": t["id"],
@@ -418,9 +475,11 @@ def planner() -> Any:
             "parent_id": t.get("parent_task_id") or None,
             "editable": editable,
             "is_milestone": bool(t.get("is_milestone")),
+            "is_parent": is_parent,
+            "include_in_dev_summary": bool(t.get("include_in_dev_summary")),
         })
         for c in sorted(children.get(t["id"], []), key=_sortkey):
-            _emit(c, level + 1)
+            _emit(c, level + 1, member_matched)
 
     for r in sorted(visible_roots, key=_sortkey):
         _emit(r, 0)
@@ -468,6 +527,7 @@ def planner() -> Any:
         holiday_dates=sorted(holiday_dates),
         csrf_token=session.get("csrf_token", ""),
         show_done=show_done,
+        dev_summary_enabled=dev_summary_enabled,
     )
 
 
@@ -486,6 +546,7 @@ def export() -> Any:
     login_role = session.get("user_role", "")
     login_dept = session.get("user_dept", "")
     target_user_id = _resolve_target(login_user_id)
+    show_done = request.args.get("show_done", "").strip() == "1"
 
     raw_start = request.args.get("start", "").strip()
     try:
@@ -495,7 +556,10 @@ def export() -> Any:
 
     visible_roots, children = _get_visible_tree(login_user_id, login_role, target_user_id, login_dept)
     # Excel出力は4週間（28日）分のみ出力する（画面表示の9週とは別）。
-    wb = _build_gantt_excel_by_tree(visible_roots, children, range_start, _EXPORT_DAYS, login_dept=login_dept)
+    wb = _build_gantt_excel_by_tree(
+        visible_roots, children, range_start, _EXPORT_DAYS,
+        login_dept=login_dept, show_completed=show_done,
+    )
 
     import io
     buf = io.BytesIO()
@@ -520,6 +584,7 @@ def export_pdf() -> Any:
     login_role = session.get("user_role", "")
     login_dept = session.get("user_dept", "")
     target_user_id = _resolve_target(login_user_id)
+    show_done = request.args.get("show_done", "").strip() == "1"
 
     raw_start = request.args.get("start", "").strip()
     try:
@@ -529,7 +594,10 @@ def export_pdf() -> Any:
 
     visible_roots, children = _get_visible_tree(login_user_id, login_role, target_user_id, login_dept)
     # PDFもExcelと同じ4週間（28日）分を出力する。
-    buf = _build_gantt_pdf_by_tree(visible_roots, children, range_start, _EXPORT_DAYS, login_dept=login_dept)
+    buf = _build_gantt_pdf_by_tree(
+        visible_roots, children, range_start, _EXPORT_DAYS,
+        login_dept=login_dept, show_completed=show_done,
+    )
 
     return send_file(
         buf, as_attachment=True, download_name=f"{_export_file_stem(login_dept)}.pdf",
@@ -780,6 +848,7 @@ def save() -> Any:
                     is_event=existing.get("is_event", 0) or 0,
                     planned_hours=existing.get("planned_hours", 0.0) or 0.0,
                     assigned_ids=assigned_ids_update,
+                    include_in_dev_summary=(int(bool(row.get("dev_summary"))) if is_parent else None),
                 )
             set_project_task_parent(tid, parent_real)
             updated += 1

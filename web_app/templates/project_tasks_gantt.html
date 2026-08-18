@@ -162,11 +162,11 @@
           <canvas id="ganttCanvas"></canvas>
           {# ── インライン編集用オーバーレイ（コンテナ内に配置） ── #}
           <div id="editOverlay" style="display:none; position:absolute; z-index:100;">
-            {# 状態は進捗・日程から自動判定するため、手動指定は「自動判定／完了／停止」のみ #}
+            {# 状態は進捗・日程から自動判定するため、手動指定は「自動判定／完了／中断」のみ #}
             <select id="editStatus" class="form-select form-select-sm" style="display:none; font-size:11px; padding:1px 4px; height:26px; width:84px;">
               <option value="__auto__">自動判定</option>
               <option value="完了">完了</option>
-              <option value="停止">停止</option>
+              <option value="中断">中断</option>
             </select>
             <input id="editNumber" type="number" class="form-control form-control-sm" style="display:none; font-size:11px; padding:1px 4px; height:26px; width:56px; text-align:center;" min="0">
           </div>
@@ -197,12 +197,12 @@
   var UPDATE_URL_BASE = '{{ url_for("project_tasks_bp.gantt_update_dates", task_id=0) }}'.replace('/0', '/');
   var FIELDS_URL_BASE = '{{ url_for("project_tasks_bp.gantt_update_fields", task_id=0) }}'.replace('/0', '/');
   var REORDER_URL = '{{ url_for("project_tasks_bp.gantt_reorder") }}';
-  var STATUSES = ['未着手','着手','順調','遅れ','完了','停止'];
+  var STATUSES = ['未着手','着手','順調','遅れ','完了','中断'];
 
   /* ステータス色 */
   var STATUS_COLORS = {
     '未着手': '#9ca3af', '着手': '#60a5fa', '順調': '#34d399',
-    '遅れ': '#f87171', '完了': '#10b981', '停止': '#d1d5db'
+    '遅れ': '#f87171', '完了': '#10b981', '中断': '#d1d5db'
   };
 
   /* タスクが「実完了」かを判定する。
@@ -215,14 +215,14 @@
   /* 進捗の自動算出（予定どおり自動進行）。
      本日(today)と日程(start/end)から「今日あるべき予定進捗%」を返し、
      時間の経過に応じてバーが自動で進む。
-     - 実完了は100%、「停止」は実進捗を保持
+     - 実完了は100%、「中断」は実進捗を保持
      - 開始日前は0%
      - 未完了タスクは最大99%でクランプ（100%＝完了は実完了のみ）。
        これにより期限超過の未完了タスクが自動完了→非表示になるのを防ぐ。
      マイルストーンには適用しない（呼び出し側で判定）。 */
   function autoProgress(task) {
     if (isDone(task)) return 100;
-    if (task.status === '停止') return task.progress || 0;
+    if (task.status === '中断') return task.progress || 0;
     var tStart = parseDate(task.start);
     var tEnd = parseDate(task.end);
     if (!tStart || !tEnd) return task.progress || 0;
@@ -233,13 +233,13 @@
   }
 
   /* 状態の自動判定。
-     - 「停止」「実完了」はそのまま尊重
+     - 「中断」「実完了」はそのまま尊重
      - 開始日前（elapsed<=0） → 未着手
      - 終了日超過かつ未完了 → 遅れ（期限超過。非表示にはしない）
      - 期間内 → 予定どおり進行中なので 順調
      マイルストーンには適用しない（呼び出し側で判定）。 */
   function autoStatus(task) {
-    if (task.status === '停止') return '停止';
+    if (task.status === '中断') return '中断';
     if (isDone(task)) return '完了';
     var tStart = parseDate(task.start);
     var tEnd = parseDate(task.end);
@@ -700,8 +700,8 @@
     overlay.style.display = 'block';
 
     if (cell.field === 'status') {
-      /* 完了・停止は手動指定として保持。それ以外は「自動判定」を選択状態にする */
-      editSelect.value = (cell.task.status === '完了' || cell.task.status === '停止')
+      /* 完了・中断は手動指定として保持。それ以外は「自動判定」を選択状態にする */
+      editSelect.value = (cell.task.status === '完了' || cell.task.status === '中断')
         ? cell.task.status : '__auto__';
       editSelect.style.display = 'block';
       editSelect.style.width = cell.w + 'px';
@@ -1225,7 +1225,7 @@
         ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 2;
 
         /* 予定バー */
-        if (effStatus === '停止') {
+        if (effStatus === '中断') {
           ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#e5e7eb', '#d1d5db');
         } else if (effStatus === '完了') {
           ctx.fillStyle = barGradient(ctx, barX, barY, barH, '#6ee7b7', '#10b981');
@@ -1237,14 +1237,14 @@
         ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
 
         /* 予定バー枠線 */
-        if (effStatus === '停止') { ctx.strokeStyle = '#9ca3af'; }
+        if (effStatus === '中断') { ctx.strokeStyle = '#9ca3af'; }
         else if (effStatus === '完了') { ctx.strokeStyle = '#059669'; }
         else { ctx.strokeStyle = '#3b82f6'; }
         ctx.lineWidth = 0.8;
         roundRect(ctx, barX, barY, barW, barH, barR); ctx.stroke();
 
         /* 進捗バー */
-        if (effProgress > 0 && effStatus !== '停止' && effStatus !== '完了') {
+        if (effProgress > 0 && effStatus !== '中断' && effStatus !== '完了') {
           var progW = barW * Math.min(effProgress, 100) / 100;
           if (progW > 3) {
             if (effStatus === '遅れ') {

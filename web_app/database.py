@@ -297,6 +297,14 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         """)
         logger.info("dept_master テーブルを作成し、既存部署データを移行しました。")
 
+    # dept_master に enable_dev_summary を追加（なければ）。日報メールの
+    # ＜開発状況＞セクション自体を部門ごとに表示/非表示切替できるようにする
+    # フラグ。既定は無効（0）＝現状どおり非表示。
+    dm_cols = {row[1] for row in db.execute("PRAGMA table_info(dept_master)").fetchall()}
+    if "enable_dev_summary" not in dm_cols:
+        db.execute("ALTER TABLE dept_master ADD COLUMN enable_dev_summary INTEGER NOT NULL DEFAULT 0")
+        logger.info("dept_master.enable_dev_summary カラムを追加しました。")
+
     # users.role '管理者' → '管理職' にリネーム
     count = db.execute("SELECT COUNT(*) FROM users WHERE role = '管理者'").fetchone()[0]
     if count > 0:
@@ -453,6 +461,12 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         if "assigned_ids" not in pt_cols2:
             db.execute("ALTER TABLE project_task ADD COLUMN assigned_ids TEXT NOT NULL DEFAULT ''")
             logger.info("project_task.assigned_ids カラムを追加しました。")
+        # 親タスク（見出し行）を日報メールの＜開発状況＞集計に含めるかどうかの
+        # フラグ。既定は含めない（0）。部門ごとに機能自体の表示/非表示を切替
+        # できるようにするため、対応する dept_master.enable_dev_summary も参照する。
+        if "include_in_dev_summary" not in pt_cols2:
+            db.execute("ALTER TABLE project_task ADD COLUMN include_in_dev_summary INTEGER NOT NULL DEFAULT 0")
+            logger.info("project_task.include_in_dev_summary カラムを追加しました。")
 
     # weekly_schedule に project_task_id を追加（なければ）
     ws_cols = {row[1] for row in db.execute("PRAGMA table_info(weekly_schedule)").fetchall()}

@@ -386,6 +386,7 @@
               <tr>
                 <th>部署名</th>
                 <th style="width:100px;">表示順</th>
+                <th class="text-center" style="width:110px;">開発状況<br>集計機能</th>
                 <th class="text-center" style="width:130px;">操作</th>
               </tr>
             </thead>
@@ -397,6 +398,7 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="dept_name"      id="dept-hidden-name-{{ dept.id }}">
                 <input type="hidden" name="display_order"  id="dept-hidden-order-{{ dept.id }}">
+                <input type="hidden" name="enable_dev_summary" id="dept-hidden-devsum-{{ dept.id }}">
               </form>
               <tr>
                 <td>
@@ -406,6 +408,11 @@
                 <td>
                   <input type="number" id="dept-order-{{ dept.id }}" value="{{ dept.display_order }}"
                          class="form-control form-control-sm">
+                </td>
+                <td class="text-center">
+                  <input type="checkbox" id="dept-devsum-{{ dept.id }}" class="form-check-input"
+                         title="日報メールの＜開発状況＞セクションで、ガントチャートの「開発集計に入れる」チェックを使えるようにする"
+                         {% if dept.enable_dev_summary %}checked{% endif %}>
                 </td>
                 <td class="text-center d-flex gap-1 justify-content-center">
                   <button type="button" class="btn btn-sm btn-outline-primary"
@@ -625,9 +632,11 @@ function saveOrder() {
 function submitDeptUpdate(deptId) {
   const name = document.getElementById('dept-name-' + deptId).value.trim();
   const order = document.getElementById('dept-order-' + deptId).value;
+  const devSum = document.getElementById('dept-devsum-' + deptId).checked;
   if (!name) { alert('部署名を入力してください'); return; }
   document.getElementById('dept-hidden-name-' + deptId).value = name;
   document.getElementById('dept-hidden-order-' + deptId).value = order;
+  document.getElementById('dept-hidden-devsum-' + deptId).value = devSum ? '1' : '0';
   document.getElementById('dept-update-form-' + deptId).submit();
 }
 </script>

@@ -42,6 +42,7 @@ from ..models import (
     get_user_affiliations,
     get_all_users_schedule_status,
     get_company_holidays,
+    set_dev_summary_enabled,
     get_mail_setting,
     get_operation_logs,
     get_user_by_id,
@@ -136,8 +137,8 @@ def dashboard() -> str:
     login_role: str = session.get("user_role", "")
     login_dept: str = session.get("user_dept", "")
 
-    # スコープ制限: マスタ・管理職ともに自部署のみ
-    dept_filter: str | None = login_dept if login_dept else None
+    # スコープ制限: システム管理者は全部署対象、所属長・管理職は自部署のみ
+    dept_filter: str | None = None if is_system_admin(login_role) else (login_dept or None)
     status_list = get_all_users_schedule_status(week_start, dept_filter=dept_filter)
     all_users = get_all_users(dept_filter=dept_filter)
 
@@ -518,6 +519,7 @@ def update_dept_route(dept_id: int) -> str:
         flash("部署名を入力してください", "warning")
         return _redirect_dashboard()
     update_dept(dept_id, dept_name, display_order)
+    set_dev_summary_enabled(dept_id, request.form.get("enable_dev_summary") == "1")
     flash("部署情報を更新しました", "success")
     return _redirect_dashboard()
 
@@ -596,8 +598,9 @@ def api_daily_status():
     Returns:
         Response: {items: [{id, name, dept, role, has_result, filled_slots, updated_at}]}
     """
+    login_role: str = session.get("user_role", "")
     login_dept: str = session.get("user_dept", "")
-    dept_filter: str | None = login_dept if login_dept else None
+    dept_filter: str | None = None if is_system_admin(login_role) else (login_dept or None)
     today_str: str = date.today().isoformat()
     daily_status = get_all_users_daily_status(today_str, dept_filter=dept_filter)
     return jsonify(items=daily_status, date=today_str)

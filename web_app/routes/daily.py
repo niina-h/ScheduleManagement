@@ -70,7 +70,7 @@ def _build_project_tasks_json(user_id: int) -> str:
             "progress": t.get("progress", 0),
         }
         for t in tasks
-        if t["status"] not in ("完了", "停止")
+        if t["status"] not in ("完了", "中断")
     ]
     return json.dumps(result, ensure_ascii=False)
 

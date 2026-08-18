@@ -38,7 +38,10 @@ from ..models import (
     get_user_by_id,
     get_task_overview_summary,
     get_task_progress_summary,
+    calc_progress_by_date,
     import_brabio_excel,
+    resolve_parent_progress,
+    resolve_parent_status,
     save_routine_task,
     update_project_task,
 )
@@ -349,6 +352,22 @@ def _render_task_page(only_tab: str | None) -> str:
                 or t.get("assigned_to_2") == login_id
             )
             t["can_edit"] = related
+
+    # 遅延警告：ガントチャート画面（gantt_input_test.html の effOf）と同じ基準で、
+    # 今日時点の理想進捗（開始日・終了日からの自動計算）に対して実際の進捗が
+    # 下回っている場合に t["behind"] = True を付与する（完了・中断・イベント・
+    # 期間未設定は対象外）。状態を手動で「遅れ」にしていなくても警告できるようにする。
+    if not is_events:
+        for t in tasks:
+            t["behind"] = False
+            status = t.get("status") or ""
+            start = t.get("start_date")
+            end = t.get("end_date")
+            if status in ("完了", "中断") or not start or not end:
+                continue
+            ideal = calc_progress_by_date(start, end)
+            actual = t.get("progress") or 0
+            t["behind"] = actual < ideal
 
     # 定例スケジュール（作業名は自由入力のため、作業マスタからの候補取得は不要）
     # 「切り替え」中は代理操作対象（target_user_id）の定例を表示する。
@@ -1002,7 +1021,7 @@ _STATUS_COLOR_MAP: dict[str, str] = {
     "順調": "#34d399",
     "遅れ": "#f87171",
     "完了": "#10b981",
-    "停止": "#d1d5db",
+    "中断": "#d1d5db",
 }
 
 
@@ -1638,7 +1657,7 @@ _STATUS_FILL: dict[str, str] = {
     "順調":   "6EE7B7",
     "遅れ":   "FCA5A5",
     "完了":   "1E40AF",
-    "停止":   "E5E7EB",
+    "中断":   "E5E7EB",
 }
 
 # 進捗バーの色
@@ -1942,7 +1961,7 @@ def _build_gantt_excel(
                     if t_start <= dt <= t_end:
                         if status == "完了":
                             cell.fill = PatternFill("solid", fgColor="1E40AF")
-                        elif status == "停止":
+                        elif status == "中断":
                             cell.fill = PatternFill("solid", fgColor="E5E7EB")
                         else:
                             # 進捗バー計算
@@ -1980,7 +1999,7 @@ def _build_gantt_excel(
         ("34D399", "進捗（実績）"),
         ("FCA5A5", "遅延"),
         ("1E40AF", "完了"),
-        ("E5E7EB", "停止"),
+        ("E5E7EB", "中断"),
         ("C4B5FD", "◆ マイルストーン"),
     ]
     ws.cell(row, 1, "【凡例】").font = Font(size=8, name="游ゴシック", bold=True)
@@ -2089,6 +2108,7 @@ def _build_gantt_excel_by_tree(
     start_date: date,
     display_days: int,
     login_dept: str = "",
+    show_completed: bool = False,
 ) -> "openpyxl.Workbook":
     """親子ツリー（ガントチャート／親=大項目・子=タスク）のExcelを生成する。
 
@@ -2101,6 +2121,8 @@ def _build_gantt_excel_by_tree(
         start_date: 表示開始日。
         display_days: 表示日数。
         login_dept: ヘッダーに表示するログインユーザーの所属名（空なら所属名なし）。
+        show_completed: True なら完了タスクも出力する（画面の「完了案件も表示」
+            チェックと同じ挙動。既定は非表示）。
 
     Returns:
         openpyxl.Workbook: 生成済みワークブック。
@@ -2241,7 +2263,7 @@ def _build_gantt_excel_by_tree(
             if t_start <= dt <= t_end:
                 if status == "完了":
                     cell.fill = PatternFill("solid", fgColor="1E40AF")
-                elif status == "停止":
+                elif status == "中断":
                     cell.fill = PatternFill("solid", fgColor="E5E7EB")
                 else:
                     total_days = (t_end - t_start).days + 1
@@ -2254,18 +2276,51 @@ def _build_gantt_excel_by_tree(
                         cell.fill = PatternFill("solid", fgColor="93C5FD")
         row += 1
 
+    # 完了タスクの非表示判定は、ガントチャート画面（gantt_input_test.html の
+    # _emit/_has_visible_descendant）と一致させる。親自身にバー（start_date・
+    # end_date）が無い見出し行は、子の状況から状態を自動判定するため
+    # （resolve_parent_status）、子が全員完了でも非表示にしない（新しい子タスクを
+    # 追加できる「箱」として残す）。子・単独タスク自身は生の status で判定する。
+    def _effective_task(t: dict) -> dict:
+        """子を持つタスクは resolve_parent_status/progress で実効値に上書きした
+        コピーを返す（元の辞書は変更しない）。子を持たない場合はそのまま返す。
+        """
+        kids = children.get(t["id"]) or []
+        if not kids:
+            return t
+        eff = dict(t)
+        eff["status"] = resolve_parent_status(t, kids)
+        eff["progress"] = resolve_parent_progress(t, kids)
+        return eff
+
+    def _is_visible(t: dict) -> bool:
+        """このタスク（子孫を含めた最終描画対象）が表示対象かどうか。"""
+        if show_completed:
+            return True
+        kids = children.get(t["id"]) or []
+        has_bar = bool((t.get("start_date") or "").strip() and (t.get("end_date") or "").strip())
+        if not kids or has_bar:
+            return _effective_task(t)["status"] != "完了"
+        return True  # 子を持ちバー無し：完了でも「箱」として残す
+
     def _count_descendants(t: dict) -> int:
         total = 0
         for c in children.get(t["id"], []):
+            if not _is_visible(c):
+                continue
             total += 1 + _count_descendants(c)
         return total
 
     def _write_descendants(t: dict, root_name: str, indent: int) -> None:
         for c in sorted(children.get(t["id"], []), key=_sortkey):
-            _write_task_row(c, root_name, indent)
+            if not _is_visible(c):
+                continue
+            _write_task_row(_effective_task(c), root_name, indent)
             _write_descendants(c, root_name, indent + 1)
 
     for r in sorted(visible_roots, key=_sortkey):
+        if not _is_visible(r):
+            continue
         desc_count = _count_descendants(r)
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=fixed_cols + display_days)
         cell = ws.cell(row, 1, f"▼ {r.get('task_name', '')}（{desc_count}件）")
@@ -2273,7 +2328,7 @@ def _build_gantt_excel_by_tree(
         row += 1
         if desc_count == 0:
             # 子がない場合は親タスク自身を1行として出力する（期間データを失わないため）。
-            _write_task_row(r, r.get("task_name", ""), 0)
+            _write_task_row(_effective_task(r), r.get("task_name", ""), 0)
         else:
             _write_descendants(r, r.get("task_name", ""), 0)
 
@@ -2287,7 +2342,7 @@ def _build_gantt_excel_by_tree(
     legend_font = Font(size=8, name="游ゴシック")
     legend_items = [
         ("93C5FD", "予定期間"), ("34D399", "進捗（実績）"), ("FCA5A5", "遅延"),
-        ("1E40AF", "完了"), ("E5E7EB", "停止"),
+        ("1E40AF", "完了"), ("E5E7EB", "中断"),
     ]
     ws.cell(row, 1, "【凡例】").font = Font(size=8, name="游ゴシック", bold=True)
     ws.cell(row, 1).border = thin_border
@@ -2321,6 +2376,7 @@ def _build_gantt_pdf_by_tree(
     start_date: date,
     display_days: int,
     login_dept: str = "",
+    show_completed: bool = False,
 ) -> "io.BytesIO":
     """親子ツリーのガントチャートをPDF（A4横）で生成する。
 
@@ -2333,6 +2389,8 @@ def _build_gantt_pdf_by_tree(
         start_date: 表示開始日。
         display_days: 表示日数。
         login_dept: ヘッダーに表示するログインユーザーの所属名（空なら所属名なし）。
+        show_completed: True なら完了タスクも出力する（画面の「完了案件も表示」
+            チェックと同じ挙動。既定は非表示）。
 
     Returns:
         io.BytesIO: 生成済みPDFのバイナリ。
@@ -2378,19 +2436,44 @@ def _build_gantt_pdf_by_tree(
         if a2: n.append(a2)
         return "・".join(n)
 
+    # 完了タスクの非表示判定は Excel 出力（_build_gantt_excel_by_tree）・
+    # ガントチャート画面と一致させる。親自身にバーが無い見出し行は、子が全員
+    # 完了でも非表示にしない（新しい子タスクを追加できる「箱」として残す）。
+    def _effective_task(t: dict) -> dict:
+        kids = children.get(t["id"]) or []
+        if not kids:
+            return t
+        eff = dict(t)
+        eff["status"] = resolve_parent_status(t, kids)
+        eff["progress"] = resolve_parent_progress(t, kids)
+        return eff
+
+    def _is_visible(t: dict) -> bool:
+        if show_completed:
+            return True
+        kids = children.get(t["id"]) or []
+        has_bar = bool((t.get("start_date") or "").strip() and (t.get("end_date") or "").strip())
+        if not kids or has_bar:
+            return _effective_task(t)["status"] != "完了"
+        return True
+
     def _count_desc(t: dict) -> int:
-        return sum(1 + _count_desc(c) for c in children.get(t["id"], []))
+        return sum(1 + _count_desc(c) for c in children.get(t["id"], []) if _is_visible(c))
 
     rows: list[dict] = []  # {type:'cat'|'task', ...}
     def _emit_desc(t: dict, root_name: str, indent: int) -> None:
         for c in sorted(children.get(t["id"], []), key=_sortkey):
-            rows.append({"type": "task", "t": c, "root": root_name, "indent": indent})
+            if not _is_visible(c):
+                continue
+            rows.append({"type": "task", "t": _effective_task(c), "root": root_name, "indent": indent})
             _emit_desc(c, root_name, indent + 1)
     for r in sorted(visible_roots, key=_sortkey):
+        if not _is_visible(r):
+            continue
         dc = _count_desc(r)
         rows.append({"type": "cat", "name": f"▼ {r.get('task_name','')}（{dc}件）"})
         if dc == 0:
-            rows.append({"type": "task", "t": r, "root": r.get("task_name", ""), "indent": 0})
+            rows.append({"type": "task", "t": _effective_task(r), "root": r.get("task_name", ""), "indent": 0})
         else:
             _emit_desc(r, r.get("task_name", ""), 0)
 
@@ -2467,7 +2550,7 @@ def _build_gantt_pdf_by_tree(
             if ts and te and ts <= dt <= te:
                 if status == "完了":
                     fill = "1E40AF"
-                elif status == "停止":
+                elif status == "中断":
                     fill = "E5E7EB"
                 else:
                     total = (te - ts).days + 1

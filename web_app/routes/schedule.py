@@ -595,15 +595,13 @@ def import_tasks_and_events() -> Any:
             redirect_url += f"&user_id={target_user_id}"
         return redirect(redirect_url)
 
-    # 反映のたびに対象週の全スロットを一旦クリアしてから再構築する
-    # （手動入力分を含め、定例→タスク→イベントの順で最新状態を組み直す）
-    from ..database import get_db as _get_db
-    _db = _get_db()
-    _db.execute(
-        "DELETE FROM weekly_schedule WHERE user_id=? AND week_start=?",
-        (target_user_id, week_start),
-    )
-    _db.commit()
+    # 手動入力した予定（project_task_id が NULL の行）は保護する。ガントチャート
+    # から取り込んだタスク配置（project_task_id が設定された行）のクリアは
+    # import_tasks_to_weekly_schedule に、イベント配置の重複回避は
+    # import_events_to_weekly_schedule にそれぞれ委ねる（このルートでの
+    # 全レコード削除は行わない）。以前は対象週の全スロットを無条件削除しており、
+    # モーダルの説明文「手動入力したタスクには影響しません」に反して手動入力分も
+    # 消えてしまう不具合があったため撤去した。
 
     # 定例スケジュールを先に空きスロットへ詰めて配置する。
     # （定例が先に埋めたスロットは、後続のタスク・イベント配置で自然に回避される）

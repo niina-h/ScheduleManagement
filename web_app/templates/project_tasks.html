@@ -46,6 +46,34 @@
 <div class="row justify-content-center">
   <div class="col-lg-12">
 
+    <details class="mb-2">
+      <summary class="small text-primary" style="cursor:pointer">▶ 使い方</summary>
+      {% if page == 'routine' %}
+      <ol class="small text-muted mb-0 mt-1">
+        <li>「＋ 定例追加」で作業名・時間・頻度を指定して登録します。頻度は<b>日次</b>（曜日ごと・区分あたり最大3件）、<b>週次（日付指定）</b>（特定1日のみ）、<b>週次（第何週＋曜日）</b>（例：第2・第4水曜日）、<b>年次</b>（毎年同じ月日）の4種類です。</li>
+        <li>区分（午前／午後）を選ぶと、週間予定への反映時にその時間帯の空きスロットへ自動配置されます。</li>
+        <li>一覧の「編集」ボタンで既存の定例を修正できます（頻度・区分の変更も可）。「✕」で削除。</li>
+        <li>ここで登録した定例は<b>ガントチャートには表示されません</b>（週間予定専用）。週間予定画面の「ガントチャート反映」実行時に、その日の頻度条件に合う定例が自動配置されます。</li>
+      </ol>
+      {% elif page == 'events' %}
+      <ol class="small text-muted mb-0 mt-1">
+        <li>「＋ イベント追加」で会議・行事などを登録します（全ユーザーが登録可能）。開始日・終了日・時刻・関係者（複数選択）を設定できます。</li>
+        <li>関係者に自分が含まれるイベントのみ編集できます（他者のイベントは閲覧のみ）。</li>
+        <li>MSチェックを付けると、ガントチャート上でマイルストーン（縦線）として表示されます（バーは表示されません）。</li>
+        <li>「開催日が過ぎたものだけ表示」で終了済みイベントを絞り込めます。チェックボックスで選択して一括削除も可能です。</li>
+      </ol>
+      {% else %}
+      <ol class="small text-muted mb-0 mt-1">
+        <li>「＋ タスク追加」でタスクを登録します（大区分・中区分・タスク名・開始日・終了日は必須）。担当者1はログインユーザーが既定選択されます。</li>
+        <li>ここで登録したタスクは<b>ガントチャート・進捗ダッシュボード・日報メール</b>に反映されます。期間や担当者を変えたい場合はガントチャート画面から編集する方が親子関係も含めて分かりやすいです。</li>
+        <li>一覧の各行はインライン編集ができます（タスク名・日付・状態・進捗率など）。編集後は「一括保存」ボタンで反映してください。</li>
+        <li>中区分フィルター・完了表示チェックで絞り込みできます（絞り込み状態は保持されます）。</li>
+        <li>状態が「着手・順調」のタスクは、開始日・終了日から進捗率が自動計算されます（「遅れ」「中断」は入力値がそのまま使われます）。</li>
+        <li>今日時点の理想進捗より実際の進捗が下回っているタスクは、状態・進捗の文字が<span class="text-danger fw-bold">赤色</span>で表示されます（ガントチャートと同じ遅延警告。完了・中断のタスクは対象外）。</li>
+      </ol>
+      {% endif %}
+    </details>
+
     <div class="d-flex align-items-center justify-content-between mb-2">
       <div class="d-flex align-items-center gap-3">
         <h5 class="fw-bold mb-0">{% if page == 'routine' %}🔁 定例作業{% elif page == 'events' %}📅 イベント{% else %}タスク管理{% endif %}</h5>
@@ -311,9 +339,11 @@
               <td><input type="date" form="bulkForm" name="end_date_{{ t.id }}" value="{{ t.end_date }}" class="form-control form-control-sm px-1" style="width:100px;"></td>
               <td>
                 <select form="bulkForm" name="status_{{ t.id }}" data-tid="{{ t.id }}" class="form-select form-select-sm js-status
-                  {% if t.status == '完了' %}text-success
+                  {% if t.behind %}text-danger fw-bold
+                  {% elif t.status == '完了' %}text-success
                   {% elif t.status == '遅れ' %}text-danger
-                  {% elif t.status == '停止' %}text-secondary{% endif %}">
+                  {% elif t.status == '中断' %}text-secondary{% endif %}"
+                  {% if t.behind %}title="今日時点の理想進捗より実際の進捗が下回っています"{% endif %}>
                   {% for s in statuses %}
                   <option value="{{ s }}" {% if t.status == s %}selected{% endif %}>{{ s }}</option>
                   {% endfor %}
@@ -325,7 +355,9 @@
               </td>
               <td>
                 <div class="d-flex align-items-center gap-1">
-                  <input type="number" form="bulkForm" name="progress_{{ t.id }}" data-tid="{{ t.id }}" value="{{ t.progress }}" min="0" max="200" class="form-control form-control-sm js-progress" style="width:55px">
+                  <input type="number" form="bulkForm" name="progress_{{ t.id }}" data-tid="{{ t.id }}" value="{{ t.progress }}" min="0" max="200"
+                         class="form-control form-control-sm js-progress{% if t.behind %} border-danger text-danger{% endif %}" style="width:55px"
+                         {% if t.behind %}title="今日時点の理想進捗より実際の進捗が下回っています"{% endif %}>
                   <span class="small">%</span>
                 </div>
               </td>
@@ -337,11 +369,13 @@
               <td class="small">{{ t.start_date }}</td>
               <td class="small">{{ t.end_date }}</td>
               <td class="small
-                {% if t.status == '完了' %} text-success
+                {% if t.behind %} text-danger fw-bold
+                {% elif t.status == '完了' %} text-success
                 {% elif t.status == '遅れ' %} text-danger
-                {% elif t.status == '停止' %} text-secondary{% endif %}">{{ t.status }}</td>
+                {% elif t.status == '中断' %} text-secondary{% endif %}"
+                {% if t.behind %}title="今日時点の理想進捗より実際の進捗が下回っています"{% endif %}>{{ t.status }}</td>
               <td class="small">{{ t.delay_days or 0 }}日</td>
-              <td class="small">{{ t.progress }}%</td>
+              <td class="small{% if t.behind %} text-danger fw-bold{% endif %}">{{ t.progress }}%</td>
               {% endif %}
               <input type="hidden" form="bulkForm" name="is_milestone_{{ t.id }}" value="{{ '1' if t.is_milestone else '0' }}">
               <input type="hidden" form="bulkForm" name="planned_hours_{{ t.id }}" value="{{ t.planned_hours or 0 }}">
@@ -948,7 +982,7 @@
     </div>{# /tab-content #}
 
     <div class="mt-2 small text-muted">
-      <strong>状態：</strong>未着手＝0% / 着手＝10% / 順調 / 遅れ / 完了＝100% / 停止＝凍結
+      <strong>状態：</strong>未着手＝0% / 着手＝10% / 順調 / 遅れ / 完了＝100% / 中断＝凍結
       　<strong>MS</strong>＝マイルストーン（時刻・工数不要）
     </div>
 
@@ -1377,7 +1411,7 @@ document.addEventListener('DOMContentLoaded', function () {
       sel.className = 'form-select form-select-sm js-status';
       if (status === '完了') sel.classList.add('text-success');
       else if (status === '遅れ') sel.classList.add('text-danger');
-      else if (status === '停止') sel.classList.add('text-secondary');
+      else if (status === '中断') sel.classList.add('text-secondary');
       /* 遅延日数の自動計算: 状態が「遅れ」の場合、終了日から今日までの日数 */
       var delayHidden = document.querySelector('.delay-hidden[data-task-id="' + tid + '"]');
       if (delayHidden) {
