@@ -935,10 +935,16 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
   }
   if (!projectTasks.length) return;
 
-  /* タスク名 → {id, status, progress} のマップ、および ID → タスク名の逆引きマップ */
+  /* タスク名 → {id, status, progress} のマップ、および ID → 許容タスク名の逆引きマップ。
+     names には子タスク名単体と「祖先…　子タスク名」形式（週間予定から引き継いだ
+     作業名の表記）の両方が入るため、どちらの表記でも紐付けを判定できる。 */
   var taskMap = {};
-  var idToName = {};
-  projectTasks.forEach(function (t) { taskMap[t.name] = t; idToName[t.id] = t.name; });
+  var idToNames = {};
+  projectTasks.forEach(function (t) {
+    var variants = (t.names && t.names.length) ? t.names : [t.name];
+    idToNames[t.id] = variants;
+    variants.forEach(function (n) { if (n) taskMap[n] = t; });
+  });
 
   function updateBadge(slot, idx, ptId) {
     var badge = document.querySelector('.pt-link-badge[data-slot="' + slot + '"][data-idx="' + idx + '"]');
@@ -975,7 +981,8 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
          場合は古い紐付けを解除し、新しい名前で再判定する（タスク名だけ別作業に
          書き換えたのに古いタスクへの紐付けが残り続ける不具合を防ぐ）。 */
       if (hidden.value) {
-        if (idToName[hidden.value] === name) { updateBadge(slot, idx, hidden.value); return; }
+        var allowed = idToNames[hidden.value] || [];
+        if (allowed.indexOf(name) !== -1) { updateBadge(slot, idx, hidden.value); return; }
         hidden.value = '';
       }
 

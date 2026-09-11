@@ -2332,14 +2332,497 @@ def get_daily_plan_vs_actual_for_users(user_ids: list[int], date_str: str) -> li
     return result
 
 
+def get_task_hours_summary(user_id: int, parent_id: int | None = None) -> dict:
+    """タスクごとの計画期間・計画時間・実施時間を集計して返す（進捗ダッシュボード用）。
+
+    ガントチャートのタスク自体は「期間」しか持たず、時間は週間予定側にある。
+    そのためこの関数は次の考え方で集計する：
+
+    - 計画期間: ``project_task`` の開始日〜終了日（両端含む日数）
+    - 計画時間: ガント反映により ``weekly_schedule`` へ配置された予定時間の累積
+      （``weekly_schedule.project_task_id`` がそのタスクを指す行の合計）
+    - 実施時間: 上記の週間予定に対して入力された実績時間の累積
+      （同一ユーザー・同一週・同一作業名の ``daily_result`` を合計）
+
+    実施時間は作業名＋週で照合するため、``daily_result.project_task_id`` の
+    紐付け有無に依存せず集計できる。
+
+    既定ではガントチャート最上位の親タスク単位に集約し、``parent_id`` を指定
+    するとその配下タスクを個別行で返す（詳細画面のドリルダウン用）。
+
+    Args:
+        user_id: 対象ユーザーID。
+        parent_id: 指定時はその親タスク配下の子タスクを個別行で返す。
+                   None なら最上位の親タスク単位に集約する。
+
+    Returns:
+        dict: 以下のキーを持つ辞書。
+            - rows (list[dict]): 表示行。各要素は id/task_name/parent_name/
+              start_date/end_date/period_days/status/progress/
+              planned_hours/actual_hours/diff_hours/rate/
+              planned_days/actual_days/state/child_count/done_count を持つ。
+            - total_planned / total_actual / total_diff (float): 合計（h）
+            - total_planned_days / total_actual_days (float): 合計（日換算）
+            - total_period_days (int): 計画期間の合計日数
+            - std_hours (float): 日数換算に使った1日標準時間
+            - parent_name (str): parent_id 指定時の親タスク名（未指定なら空）
+    """
+    db = get_db()
+
+    user = get_user_by_id(user_id)
+    std_hours: float = float((user or {}).get("std_hours") or 0) or 8.0
+
+    # 週間予定に配置された予定時間と、それに対応する実績時間をタスク単位で集計する。
+    # 実績は「同一ユーザー・同一週・同一作業名」で照合する（project_task_id の
+    # 紐付けが欠けている実績も拾えるようにするため）。
+    rows_hours = db.execute(
+        "SELECT ws.project_task_id AS tid,"
+        "       SUM(ws.hours) AS plan_h,"
+        "       (SELECT COALESCE(SUM(dr.hours), 0) FROM daily_result dr"
+        "         WHERE dr.user_id = ws.user_id"
+        "           AND dr.task_name = ws.task_name"
+        "           AND dr.date BETWEEN ws.week_start"
+        "               AND date(ws.week_start, '+6 day')) AS act_h"
+        " FROM weekly_schedule ws"
+        " WHERE ws.user_id = ? AND ws.hours > 0 AND ws.project_task_id IS NOT NULL"
+        " GROUP BY ws.project_task_id, ws.week_start, ws.task_name",
+        (user_id,),
+    ).fetchall()
+
+    plan_by_task: dict[int, float] = {}
+    act_by_task: dict[int, float] = {}
+    for r in rows_hours:
+        tid = int(r["tid"])
+        plan_by_task[tid] = plan_by_task.get(tid, 0.0) + float(r["plan_h"] or 0)
+        act_by_task[tid] = act_by_task.get(tid, 0.0) + float(r["act_h"] or 0)
+
+    all_tasks: list[dict] = get_all_project_tasks()
+    task_by_id: dict[int, dict] = {t["id"]: t for t in all_tasks}
+
+    def _root_of(task: dict) -> dict:
+        """タスクの最上位（ルート）の祖先を返す（循環参照でも打ち切る）。"""
+        seen: set[int] = set()
+        cur = task
+        while True:
+            pid = cur.get("parent_task_id")
+            if not pid or pid in seen or pid not in task_by_id:
+                return cur
+            seen.add(pid)
+            cur = task_by_id[pid]
+
+    def _is_descendant_of(task: dict, ancestor_id: int) -> bool:
+        """task が ancestor_id の子孫（または本人）かを返す。"""
+        seen: set[int] = set()
+        cur = task
+        while True:
+            if cur["id"] == ancestor_id:
+                return True
+            pid = cur.get("parent_task_id")
+            if not pid or pid in seen or pid not in task_by_id:
+                return False
+            seen.add(pid)
+            cur = task_by_id[pid]
+
+    def _period_days(start: str | None, end: str | None) -> int:
+        """開始日〜終了日の日数（両端含む）を返す。未設定なら0。"""
+        if not start or not end:
+            return 0
+        try:
+            s_d = date.fromisoformat(start)
+            e_d = date.fromisoformat(end)
+        except (ValueError, TypeError):
+            return 0
+        return max(0, (e_d - s_d).days + 1)
+
+    def _metrics(planned: float, actual: float) -> dict:
+        """計画時間・実施時間から差分・消化率・状態を組み立てる。"""
+        diff = round(actual - planned, 2)
+        rate = round(actual / planned * 100, 1) if planned > 0 else 0.0
+        if planned <= 0:
+            state = "none"
+        elif diff <= -1.0:
+            state = "behind"
+        elif diff >= 1.0:
+            state = "ahead"
+        else:
+            state = "ontrack"
+        return {
+            "planned_hours": round(planned, 2),
+            "actual_hours": round(actual, 2),
+            "diff_hours": diff,
+            "rate": rate,
+            "planned_days": round(planned / std_hours, 1) if std_hours > 0 else 0.0,
+            "actual_days": round(actual / std_hours, 1) if std_hours > 0 else 0.0,
+            "state": state,
+        }
+
+    # 集計対象: 週間予定に時間が配置されているタスク（＝計画時間を持つもの）。
+    # ガントに登録しただけで週間予定へ反映していないタスクは計画時間0hのため、
+    # 予実比較の対象にならない（この画面の主旨に沿って除外する）。
+    targets: list[dict] = [
+        task_by_id[tid] for tid in plan_by_task if tid in task_by_id
+    ]
+    targets = [t for t in targets if not t.get("is_event") and not t.get("is_milestone")]
+
+    rows: list[dict] = []
+    parent_name: str = ""
+
+    if parent_id is not None:
+        # 詳細表示: 指定した親の配下タスクを個別行で返す
+        parent_name = (task_by_id.get(parent_id) or {}).get("task_name", "")
+        details = [
+            t for t in targets
+            if _is_descendant_of(t, parent_id) and t["id"] != parent_id
+        ]
+        details.sort(key=lambda t: (t.get("display_order") or 0, t["id"]))
+        for t in details:
+            direct_parent_id = t.get("parent_task_id")
+            direct_parent = task_by_id.get(direct_parent_id) if direct_parent_id else None
+            # 直近の親が指定親と異なる場合（3階層以上）は中間階層名を出す
+            mid_name = ""
+            if direct_parent and direct_parent["id"] != parent_id:
+                mid_name = direct_parent.get("task_name", "")
+            row = {
+                "id": t["id"],
+                "task_name": t.get("task_name", ""),
+                "parent_name": mid_name,
+                "start_date": t.get("start_date") or "",
+                "end_date": t.get("end_date") or "",
+                "period_days": _period_days(t.get("start_date"), t.get("end_date")),
+                "status": t.get("status") or "未着手",
+                "progress": t.get("progress") or 0,
+                "child_count": 0,
+                "done_count": 0,
+                "all_done": t.get("status") in ("完了", "中断"),
+            }
+            row.update(_metrics(plan_by_task.get(t["id"], 0.0),
+                                act_by_task.get(t["id"], 0.0)))
+            rows.append(row)
+    else:
+        # 集約表示: 最上位の親タスク単位に合計する
+        groups: dict[int, dict] = {}
+        for t in targets:
+            root = _root_of(t)
+            rid = root["id"]
+            g = groups.setdefault(rid, {
+                "id": rid,
+                "task_name": root.get("task_name", ""),
+                "display_order": root.get("display_order") or 0,
+                "planned": 0.0,
+                "actual": 0.0,
+                "child_count": 0,
+                "done_count": 0,
+                "start_dates": [],
+                "end_dates": [],
+                "progresses": [],
+                "has_delay": False,
+                "all_done": True,
+            })
+            g["planned"] += plan_by_task.get(t["id"], 0.0)
+            g["actual"] += act_by_task.get(t["id"], 0.0)
+            g["child_count"] += 1
+            if t.get("status") in ("完了", "中断"):
+                g["done_count"] += 1
+            else:
+                # 1件でも未完了があればツリー全体の完了とはみなさない
+                g["all_done"] = False
+            if t.get("start_date"):
+                g["start_dates"].append(t["start_date"])
+            if t.get("end_date"):
+                g["end_dates"].append(t["end_date"])
+            g["progresses"].append(float(t.get("progress") or 0))
+            if t.get("status") == "遅れ" or (t.get("delay_days") or 0) > 0:
+                g["has_delay"] = True
+
+        for g in sorted(groups.values(), key=lambda x: (x["display_order"], x["id"])):
+            progresses: list[float] = g["progresses"]
+            # 計画期間は配下の最早開始〜最遅終了（そのツリー全体の期間）
+            start = min(g["start_dates"]) if g["start_dates"] else ""
+            end = max(g["end_dates"]) if g["end_dates"] else ""
+            row = {
+                "id": g["id"],
+                "task_name": g["task_name"],
+                "parent_name": "",
+                "start_date": start,
+                "end_date": end,
+                "period_days": _period_days(start, end),
+                "status": "遅れ" if g["has_delay"] else "",
+                "progress": round(sum(progresses) / len(progresses)) if progresses else 0,
+                "child_count": g["child_count"],
+                "done_count": g["done_count"],
+                "all_done": g["all_done"],
+            }
+            row.update(_metrics(g["planned"], g["actual"]))
+            rows.append(row)
+
+    # ツリー完了判定の補正：計画時間を持たない（週間予定へ未反映の）配下タスクが
+    # 未完了で残っている場合は「全部完了」とみなさない。集約行のみ対象。
+    if parent_id is None and rows:
+        for row in rows:
+            if not row.get("all_done"):
+                continue
+            for t in all_tasks:
+                if t.get("is_event") or t.get("is_milestone"):
+                    continue
+                if not _is_descendant_of(t, row["id"]):
+                    continue
+                if t.get("status") not in ("完了", "中断"):
+                    row["all_done"] = False
+                    break
+
+    total_planned = round(sum(r["planned_hours"] for r in rows), 2)
+    total_actual = round(sum(r["actual_hours"] for r in rows), 2)
+    return {
+        "rows": rows,
+        "total_planned": total_planned,
+        "total_actual": total_actual,
+        "total_diff": round(total_actual - total_planned, 2),
+        "total_planned_days": round(total_planned / std_hours, 1) if std_hours > 0 else 0.0,
+        "total_actual_days": round(total_actual / std_hours, 1) if std_hours > 0 else 0.0,
+        "total_period_days": sum(r["period_days"] for r in rows),
+        "std_hours": std_hours,
+        "parent_name": parent_name,
+    }
+
+
+# タスクツリー完了時の最終評価の区分（表示順）
+TASK_EVALUATIONS: list[str] = [
+    "計画通り", "計画より短縮", "計画を超過", "計画の見直しが必要",
+]
+
+
+def get_task_evaluations(root_task_ids: list[int]) -> dict[int, dict]:
+    """指定したルート親タスクIDの最終評価をまとめて取得する。
+
+    Args:
+        root_task_ids: ルート親タスクIDのリスト。空なら空辞書を返す。
+
+    Returns:
+        dict[int, dict]: {root_task_id: {evaluation, comment, planned_hours,
+                          actual_hours, diff_hours, evaluated_by_name,
+                          created_at, updated_at}}
+    """
+    if not root_task_ids:
+        return {}
+    db = get_db()
+    placeholders = ",".join("?" * len(root_task_ids))
+    rows = db.execute(
+        f"SELECT root_task_id, evaluation, comment, planned_hours, actual_hours,"
+        f"       diff_hours, evaluated_by, evaluated_by_name, created_at, updated_at"
+        f"  FROM task_evaluation WHERE root_task_id IN ({placeholders})",
+        tuple(root_task_ids),
+    ).fetchall()
+    return {int(r["root_task_id"]): dict(r) for r in rows}
+
+
+def save_task_evaluation(
+    root_task_id: int,
+    evaluation: str,
+    comment: str,
+    planned_hours: float,
+    actual_hours: float,
+    evaluated_by: int,
+    evaluated_by_name: str,
+) -> bool:
+    """タスクツリーの最終評価を登録・更新する（ルート親タスクごとに1件）。
+
+    Args:
+        root_task_id: ルート親タスクID。
+        evaluation: 評価区分（``TASK_EVALUATIONS`` のいずれか）。
+        comment: 評価コメント（自由記述）。
+        planned_hours: 評価時点の計画時間（h）。後から集計条件が変わっても
+                       評価当時の値を残すため保存する。
+        actual_hours: 評価時点の実施時間（h）。
+        evaluated_by: 評価者のユーザーID。
+        evaluated_by_name: 評価者の氏名。
+
+    Returns:
+        bool: 成功時 True。評価区分が不正な場合は False。
+    """
+    if evaluation not in TASK_EVALUATIONS:
+        return False
+    db = get_db()
+    try:
+        db.execute(
+            "INSERT INTO task_evaluation"
+            " (root_task_id, evaluation, comment, planned_hours, actual_hours,"
+            "  diff_hours, evaluated_by, evaluated_by_name)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(root_task_id) DO UPDATE SET"
+            "   evaluation=excluded.evaluation,"
+            "   comment=excluded.comment,"
+            "   planned_hours=excluded.planned_hours,"
+            "   actual_hours=excluded.actual_hours,"
+            "   diff_hours=excluded.diff_hours,"
+            "   evaluated_by=excluded.evaluated_by,"
+            "   evaluated_by_name=excluded.evaluated_by_name,"
+            "   updated_at=datetime('now','localtime')",
+            (root_task_id, evaluation, comment.strip(),
+             round(float(planned_hours), 2), round(float(actual_hours), 2),
+             round(float(actual_hours) - float(planned_hours), 2),
+             evaluated_by, evaluated_by_name),
+        )
+        db.commit()
+        return True
+    except Exception:
+        logger.exception("最終評価の保存に失敗しました (root_task_id=%s)", root_task_id)
+        return False
+
+
+def delete_task_evaluation(root_task_id: int) -> None:
+    """タスクツリーの最終評価を削除する。
+
+    Args:
+        root_task_id: ルート親タスクID。
+    """
+    db = get_db()
+    db.execute("DELETE FROM task_evaluation WHERE root_task_id = ?", (root_task_id,))
+    db.commit()
+
+
+def _collect_descendant_task_ids(root_task_id: int) -> list[int]:
+    """指定タスクとその子孫すべてのIDを返す（循環参照があっても打ち切る）。
+
+    Args:
+        root_task_id: 起点となるタスクID。
+
+    Returns:
+        list[int]: 起点自身＋子孫のIDリスト。
+    """
+    db = get_db()
+    children_by_parent: dict[int, list[int]] = {}
+    for row in db.execute(
+        "SELECT id, parent_task_id FROM project_task WHERE parent_task_id IS NOT NULL"
+    ).fetchall():
+        children_by_parent.setdefault(int(row["parent_task_id"]), []).append(int(row["id"]))
+
+    result: list[int] = []
+    seen: set[int] = set()
+    stack: list[int] = [root_task_id]
+    while stack:
+        tid = stack.pop()
+        if tid in seen:
+            continue
+        seen.add(tid)
+        result.append(tid)
+        stack.extend(children_by_parent.get(tid, []))
+    return result
+
+
+def set_task_archived(root_task_id: int, archived: bool) -> int:
+    """タスクとその子孫のアーカイブ状態をまとめて切り替える。
+
+    完了案件がガントチャートに残り続けて見づらくなるのを防ぐための機能。
+    アーカイブしても行を非表示にするだけで、実績・評価の集計対象として
+    データ自体は保持する（削除ではない）。
+    親をアーカイブすると配下の子・孫も同時にアーカイブする。
+
+    Args:
+        root_task_id: 起点となるタスクID（通常は最上位の親）。
+        archived: True でアーカイブ、False で解除。
+
+    Returns:
+        int: 状態を変更したタスク件数。
+    """
+    task_ids = _collect_descendant_task_ids(root_task_id)
+    if not task_ids:
+        return 0
+    db = get_db()
+    placeholders = ",".join("?" * len(task_ids))
+    if archived:
+        db.execute(
+            f"UPDATE project_task"
+            f"   SET is_archived = 1, archived_at = datetime('now','localtime')"
+            f" WHERE id IN ({placeholders})",
+            tuple(task_ids),
+        )
+    else:
+        db.execute(
+            f"UPDATE project_task SET is_archived = 0, archived_at = ''"
+            f" WHERE id IN ({placeholders})",
+            tuple(task_ids),
+        )
+    db.commit()
+    return len(task_ids)
+
+
+def get_archived_task_trees() -> list[dict]:
+    """アーカイブ済みタスクを最上位の親ごとにまとめて返す（一覧・復元用）。
+
+    Returns:
+        list[dict]: [{root_id, root_name, task_count, archived_at,
+                      start_date, end_date}] をアーカイブ日時の新しい順で返す。
+    """
+    db = get_db()
+    rows = [dict(r) for r in db.execute(
+        "SELECT id, task_name, parent_task_id, start_date, end_date,"
+        "       COALESCE(archived_at, '') AS archived_at"
+        "  FROM project_task WHERE is_archived = 1"
+    ).fetchall()]
+    if not rows:
+        return []
+
+    all_parents: dict[int, int | None] = {
+        int(r["id"]): (int(r["parent_task_id"]) if r["parent_task_id"] else None)
+        for r in db.execute("SELECT id, parent_task_id FROM project_task").fetchall()
+    }
+    name_by_id: dict[int, str] = {
+        int(r["id"]): r["task_name"]
+        for r in db.execute("SELECT id, task_name FROM project_task").fetchall()
+    }
+
+    def _root_id(tid: int) -> int:
+        seen: set[int] = set()
+        cur = tid
+        while True:
+            pid = all_parents.get(cur)
+            if not pid or pid in seen:
+                return cur
+            seen.add(pid)
+            cur = pid
+
+    groups: dict[int, dict] = {}
+    for r in rows:
+        rid = _root_id(int(r["id"]))
+        g = groups.setdefault(rid, {
+            "root_id": rid,
+            "root_name": name_by_id.get(rid, ""),
+            "task_count": 0,
+            "archived_at": "",
+            "start_dates": [],
+            "end_dates": [],
+        })
+        g["task_count"] += 1
+        if r["archived_at"] > g["archived_at"]:
+            g["archived_at"] = r["archived_at"]
+        if r["start_date"]:
+            g["start_dates"].append(r["start_date"])
+        if r["end_date"]:
+            g["end_dates"].append(r["end_date"])
+
+    result: list[dict] = []
+    for g in groups.values():
+        result.append({
+            "root_id": g["root_id"],
+            "root_name": g["root_name"],
+            "task_count": g["task_count"],
+            "archived_at": g["archived_at"],
+            "start_date": min(g["start_dates"]) if g["start_dates"] else "",
+            "end_date": max(g["end_dates"]) if g["end_dates"] else "",
+        })
+    result.sort(key=lambda x: x["archived_at"], reverse=True)
+    return result
+
+
 def calc_progress_by_date(start_date: str, end_date: str) -> int:
     """開始日・終了日・今日の日付から進捗率を自動計算する。
 
     ガントチャート画面（gantt_input_test.html の autoProgressByDate）と
-    同じ計算式に統一している：経過日数に+1した値を使うことで、着手した
-    開始日当日から最小限の進捗が付くようにする（#49で統一）。
+    同じ計算式に統一している：経過日数・全体日数のどちらも開始日・終了日を
+    含む実日数（両端含む）で数え、着手した開始日当日から最小限の進捗が
+    付くようにする（#49で統一）。
     計算式: (経過日数+1) / 全体日数 × 100（上限99%）。
-    開始日より前は0%。全体日数は終了日−開始日（日数差）。
+    開始日より前は0%。全体日数は終了日−開始日+1（両端を含む実日数）。
 
     Args:
         start_date: 開始日（YYYY-MM-DD）
@@ -2354,7 +2837,7 @@ def calc_progress_by_date(start_date: str, end_date: str) -> int:
     except (ValueError, TypeError):
         return 0
     today_d = date.today()
-    total_days = max(1, (e - s).days)
+    total_days = max(1, (e - s).days + 1)
     elapsed = (today_d - s).days
     if elapsed < 0:
         return 0
@@ -2364,6 +2847,7 @@ def calc_progress_by_date(start_date: str, end_date: str) -> int:
 def get_all_project_tasks(
     assigned_to: int | None = None,
     user_ids: list[int] | None = None,
+    exclude_archived: bool = False,
 ) -> list[dict]:
     """プロジェクトタスクを大区分・中区分の表示順で取得する。
 
@@ -2371,6 +2855,9 @@ def get_all_project_tasks(
         assigned_to: 指定時はそのユーザーに割り当てられたタスクのみ返す。
         user_ids: 指定時はそのユーザー群のいずれかに割り当てられたタスクを返す。
                   None の場合は全タスクを返す。
+        exclude_archived: True の場合はアーカイブ済みタスクを除外する
+                  （ガントチャート・タスク一覧などの画面表示用）。実績や評価の
+                  集計はアーカイブ後も継続するため、既定は False。
 
     Returns:
         list[dict]: プロジェクトタスク一覧
@@ -2412,6 +2899,10 @@ def get_all_project_tasks(
             f" OR ({member_conds})) "
         )
         params = tuple(user_ids) * 2 + tuple(user_ids) + tuple(user_ids)
+    # アーカイブ済みタスクを除外する（画面表示用）。既存 WHERE 句の有無に応じて
+    # AND / WHERE を切り替える。
+    if exclude_archived:
+        query += ("AND " if "WHERE" in query else "WHERE ") + "COALESCE(pt.is_archived, 0) = 0 "
     query += "ORDER BY tc.display_order, tc.name, ts.display_order, ts.name, pt.display_order, pt.task_name"
     rows = db.execute(query, params).fetchall()
     return [dict(r) for r in rows]
@@ -2766,6 +3257,52 @@ def get_events_for_user_date(user_id: int, target_date: str) -> list[dict]:
         (user_id, user_id, user_id, target_date, target_date),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_project_task_display_names() -> dict[int, set[str]]:
+    """タスクIDごとに「実績・予定の作業名として妥当な表記」の集合を返す。
+
+    週間予定へガントチャートのタスクを反映する際、作業名は
+    ``import_tasks_to_weekly_schedule`` によって「祖先…　直接の親　子タスク名」
+    の形式（全角スペース区切り）に加工されて保存される。一方タスク自身の
+    ``task_name`` は子タスク名のみである。
+
+    このため日次実績の保存時に「送信された project_task_id が入力中の作業名と
+    一致するか」を検証する場合、単体名だけで照合すると親名付きの表記が
+    不一致と判定され、正しい紐付けまで破棄されてしまう。この関数は単体名と
+    祖先連結名の両方を許容表記として返し、その誤判定を防ぐために使う。
+
+    Returns:
+        dict[int, set[str]]: {task_id: {"子タスク名", "祖先…　子タスク名"}}
+    """
+    db = get_db()
+    ancestor_map: dict[int, tuple[str, int | None]] = {
+        row["id"]: (row["task_name"], row["parent_task_id"])
+        for row in db.execute(
+            "SELECT id, task_name, parent_task_id FROM project_task"
+        ).fetchall()
+    }
+
+    def _chain_name(task_id: int) -> str:
+        """ルートまで遡って「祖先…　子タスク名」形式の名称を組み立てる。"""
+        names: list[str] = []
+        seen: set[int] = set()
+        cur: int | None = task_id
+        while cur and cur not in seen and cur in ancestor_map:
+            seen.add(cur)
+            name, cur = ancestor_map[cur]
+            names.append(name)
+        names.reverse()
+        return "　".join(names)
+
+    result: dict[int, set[str]] = {}
+    for task_id, (leaf_name, _parent) in ancestor_map.items():
+        variants: set[str] = {leaf_name}
+        chain = _chain_name(task_id)
+        if chain:
+            variants.add(chain)
+        result[task_id] = variants
+    return result
 
 
 def import_tasks_to_weekly_schedule(
@@ -3625,7 +4162,10 @@ def get_task_progress_summary(user_id: int | None = None) -> dict:
             - status_breakdown (dict[str, int]): ステータス別件数
             - tasks (list[dict]): 個別タスク情報（親タスク基準で並び替え済み）
     """
-    all_tasks: list[dict] = get_all_project_tasks(assigned_to=user_id)
+    # アーカイブ済みタスクは進捗ダッシュボードの集計・遅れ一覧から除外する。
+    all_tasks: list[dict] = get_all_project_tasks(
+        assigned_to=user_id, exclude_archived=True
+    )
     # イベント・マイルストーンを除外
     tasks: list[dict] = [
         t for t in all_tasks if not t.get("is_event", 0) and not t.get("is_milestone", 0)
@@ -3717,7 +4257,9 @@ def resolve_parent_status(parent: dict, children: list[dict]) -> str:
     未設定（見出し行のみ）の場合、子タスクの進捗を反映せず「未着手」に固定されて
     しまう不具合を避けるため、配下の子タスクの状態から自動判定する。
     優先順位：子に「遅れ」が1つでもあれば「遅れ」／全子が「完了」なら「完了」／
-    子に進捗>0または未着手以外の状態が1つでもあれば「着手」／それ以外は「未着手」。
+    全子が「完了」または「中断」なら「中断」（作業が止まっている状態を親にも
+    反映する）／子に進捗>0または未着手以外の状態が1つでもあれば「着手」／
+    それ以外は「未着手」。
 
     Args:
         parent: 親タスク（project_task）の辞書。
@@ -3737,6 +4279,11 @@ def resolve_parent_status(parent: dict, children: list[dict]) -> str:
         return "遅れ"
     if all(s == "完了" for s in child_statuses):
         return "完了"
+    # 全ての子が「中断」または「完了」＝配下の作業が止まっている場合は、親も
+    # 「中断」として扱う（中断を考慮せず「着手」と表示され、状態変更が反映
+    # されていないように見える不具合を防ぐ）。
+    if all(s in ("中断", "完了") for s in child_statuses):
+        return "中断"
     if any(s != "未着手" or float(c.get("progress", 0) or 0) > 0
            for s, c in zip(child_statuses, children)):
         return "着手"
@@ -3763,7 +4310,7 @@ def get_task_overview_summary() -> dict:
             - user_summary (list[dict]): 担当者別の件数・平均進捗
             - tasks (list[dict]): 全タスク情報（一覧表示用、親基準で並び替え済み）
     """
-    all_tasks: list[dict] = get_all_project_tasks()
+    all_tasks: list[dict] = get_all_project_tasks(exclude_archived=True)
     # イベント・マイルストーンを除外（通常タスクのみ集計）
     tasks: list[dict] = [
         t for t in all_tasks if not t.get("is_event", 0) and not t.get("is_milestone", 0)
@@ -4281,6 +4828,7 @@ def get_routine_schedules(user_id: int) -> list[dict]:
         " COALESCE(rs.week_numbers, '') AS week_numbers,"
         " COALESCE(rs.yearly_month, 0) AS yearly_month,"
         " COALESCE(rs.yearly_day, 0) AS yearly_day,"
+        " COALESCE(rs.monthly_day, 0) AS monthly_day,"
         " COALESCE(NULLIF(rs.period, ''), CASE WHEN rs.row_number <= 5 THEN 'AM' ELSE 'PM' END) AS period"
         " FROM routine_schedule rs"
         " LEFT JOIN task_master tm"
@@ -4306,6 +4854,7 @@ def save_routine_task(
     yearly_month: int = 0,
     yearly_day: int = 0,
     period: str = "",
+    monthly_day: int = 0,
 ) -> bool:
     """定例スケジュールを登録（または上書き）する。
 
@@ -4316,16 +4865,17 @@ def save_routine_task(
         task_name: 作業名
         subcategory_name: 中区分名
         default_hours: デフォルト工数
-        row_number: 行番号（daily=1〜10／weekly・yearly=11以降の自動採番）
+        row_number: 行番号（daily=1〜10／weekly・yearly・monthly=11以降の自動採番）
         days: 曜日フラグ（"1,1,1,1,1" = 月〜金すべて。weekly_pattern では対象曜日）
         fill_direction: 空きスロットへの詰め方向（'top'=上から / 'bottom'=下から）
-        freq_type: 頻度種別（'daily'／'weekly_spot'／'weekly_pattern'／'yearly'）
+        freq_type: 頻度種別（'daily'／'weekly_spot'／'weekly_pattern'／'yearly'／'monthly'）
         spot_date: weekly_spot 用のスポット日付（YYYY-MM-DD）
         week_numbers: weekly_pattern 用の対象週番号（"2,4" など。空文字は毎週）
         yearly_month: yearly 用の対象月（1〜12）
         yearly_day: yearly 用の対象日（1〜31）
         period: AM/PM区分。daily では row_number から自動判定するため空文字でよいが、
-                weekly・yearly では row_number が11以降で判定できないため必須。
+                weekly・yearly・monthly では row_number が11以降で判定できないため必須。
+        monthly_day: monthly 用の対象日（1〜31）
 
     Returns:
         bool: 成功時 True
@@ -4337,7 +4887,7 @@ def save_routine_task(
         return False
     if fill_direction not in ("top", "bottom"):
         fill_direction = "top"
-    if freq_type not in ("daily", "weekly_spot", "weekly_pattern", "yearly"):
+    if freq_type not in ("daily", "weekly_spot", "weekly_pattern", "yearly", "monthly"):
         freq_type = "daily"
     if period not in ("AM", "PM"):
         period = "AM" if row_number <= 5 else "PM"
@@ -4346,8 +4896,8 @@ def save_routine_task(
         db.execute(
             "INSERT INTO routine_schedule"
             " (user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction,"
-            "  freq_type, spot_date, week_numbers, yearly_month, yearly_day, period)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "  freq_type, spot_date, week_numbers, yearly_month, yearly_day, period, monthly_day)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(user_id, row_number) DO UPDATE SET"
             "   task_name=excluded.task_name,"
             "   subcategory_name=excluded.subcategory_name,"
@@ -4359,9 +4909,10 @@ def save_routine_task(
             "   week_numbers=excluded.week_numbers,"
             "   yearly_month=excluded.yearly_month,"
             "   yearly_day=excluded.yearly_day,"
-            "   period=excluded.period",
+            "   period=excluded.period,"
+            "   monthly_day=excluded.monthly_day",
             (user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction,
-             freq_type, spot_date, week_numbers, yearly_month, yearly_day, period),
+             freq_type, spot_date, week_numbers, yearly_month, yearly_day, period, monthly_day),
         )
         db.commit()
         return True
@@ -4457,7 +5008,70 @@ def _routine_matches_date(routine: dict, target: "date") -> bool:
             target.month == (routine.get("yearly_month") or 0)
             and target.day == (routine.get("yearly_day") or 0)
         )
+    if freq_type == "monthly":
+        monthly_day = routine.get("monthly_day") or 0
+        if not (1 <= monthly_day <= 31):
+            return False
+        user_id = routine.get("user_id")
+        # target が「今月の monthly_day」自身の場合と、「前月の monthly_day が
+        # 休日で翌営業日にずれ込んだ結果 target と一致する」場合の両方を見る
+        # （月をまたいでずれても、ずれ先の月の1日等と誤って重複判定しないよう、
+        # 基準日は必ず前月・今月それぞれの monthly_day 単体から計算する）。
+        for base in (_monthly_routine_base_date(target.year, target.month, monthly_day),
+                     _monthly_routine_base_date(*_prev_month(target.year, target.month), monthly_day)):
+            if _resolve_monthly_target(user_id, base) == target:
+                return True
+        return False
     return False
+
+
+def _prev_month(year: int, month: int) -> tuple[int, int]:
+    """指定年月の前月を (year, month) で返す。"""
+    if month == 1:
+        return year - 1, 12
+    return year, month - 1
+
+
+def _monthly_routine_base_date(year: int, month: int, monthly_day: int) -> "date":
+    """月次定例の指定年月における基準日を返す（休日ずらし前）。
+
+    ``monthly_day`` がその月の日数を超える場合は月末日に丸める
+    （例：31日指定で2月なら28日／29日）。
+
+    Args:
+        year: 対象年。
+        month: 対象月。
+        monthly_day: 定例で指定された対象日（1〜31）。
+
+    Returns:
+        date: 休日ずらし前の基準日。
+    """
+    import calendar
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(monthly_day, last_day))
+
+
+def _resolve_monthly_target(user_id: int, base: "date") -> "date":
+    """月次定例の基準日から、実際にタスクを配置すべき日付を返す。
+
+    基準日が休日（土日・会社休日・本人の全休）であれば、その日以降の
+    最初の営業日にずらした日付を返す。休日でなければ基準日をそのまま返す。
+
+    Args:
+        user_id: ユーザーID。
+        base: 休日ずらし前の基準日。
+
+    Returns:
+        date: 実際にタスクを配置すべき日付。
+    """
+    if not is_holiday_for_user(user_id, base):
+        return base
+    d = base + timedelta(days=1)
+    for _ in range(14):
+        if not is_holiday_for_user(user_id, d):
+            return d
+        d += timedelta(days=1)
+    return d
 
 
 def apply_routine_to_week(user_id: int, week_start: str, updated_by: str = "") -> None:

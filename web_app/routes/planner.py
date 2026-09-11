@@ -49,6 +49,7 @@ from ..models import (
     resolve_parent_status,
     set_project_task_members,
     set_project_task_parent,
+    set_task_archived,
     update_project_task,
 )
 
@@ -84,6 +85,7 @@ def _members(t: dict) -> list[int]:
 
 def _get_visible_tree(
     login_user_id: int, login_role: str, target_user_id: int, login_dept: str = "",
+    show_archived: bool = False,
 ) -> tuple[list[dict], dict[int, list[dict]]]:
     """役職に応じて閲覧可能な親タスク（ルート）と子マップを返す。
 
@@ -96,6 +98,7 @@ def _get_visible_tree(
         login_role: ログインユーザーの役職。
         target_user_id: 絞り込み対象ユーザーID（0=全員）。
         login_dept: ログインユーザーの所属（管理職・所属長のスコープ判定に使用）。
+        show_archived: True の場合はアーカイブ済みタスクも表示対象に含める。
 
     Returns:
         tuple[list[dict], dict[int, list[dict]]]: (可視ルート一覧, 親ID→子タスク一覧)
@@ -110,7 +113,7 @@ def _get_visible_tree(
     # ガントチャートには反映しない（イベント専用画面でのみ管理する）。
     # マイルストーン（is_milestone=1）は is_event の値に関わらず表示を維持する。
     raw = [
-        t for t in get_all_project_tasks()
+        t for t in get_all_project_tasks(exclude_archived=not show_archived)
         if not (t.get("is_event") and not t.get("is_milestone"))
     ]
     by_id = {t["id"]: t for t in raw}
@@ -234,6 +237,9 @@ def planner() -> Any:
 
     # 完了タスク（状態が「完了」）の表示切替。既定は非表示。
     show_done = request.args.get("show_done", "").strip() == "1"
+    # アーカイブ済みタスクの表示切替。既定は非表示（完了案件が残り続けて
+    # 見づらくなるのを防ぐため、アーカイブした案件は画面から外す）。
+    show_archived = request.args.get("show_archived", "").strip() == "1"
 
     # 表示開始日
     raw_start = request.args.get("start", "").strip()
@@ -319,7 +325,10 @@ def planner() -> Any:
             for u in users if u.get("dept") == scope_dept
         ]
 
-    visible_roots, children = _get_visible_tree(login_user_id, login_role, target_user_id, login_dept)
+    visible_roots, children = _get_visible_tree(
+        login_user_id, login_role, target_user_id, login_dept,
+        show_archived=show_archived,
+    )
 
     def _sortkey(t: dict) -> tuple:
         # 手動並べ替え（display_order）を最優先。同順位は開始日→IDで安定化。
@@ -477,6 +486,7 @@ def planner() -> Any:
             "is_milestone": bool(t.get("is_milestone")),
             "is_parent": is_parent,
             "include_in_dev_summary": bool(t.get("include_in_dev_summary")),
+            "is_archived": bool(t.get("is_archived")),
         })
         for c in sorted(children.get(t["id"], []), key=_sortkey):
             _emit(c, level + 1, member_matched)
@@ -527,8 +537,40 @@ def planner() -> Any:
         holiday_dates=sorted(holiday_dates),
         csrf_token=session.get("csrf_token", ""),
         show_done=show_done,
+        show_archived=show_archived,
         dev_summary_enabled=dev_summary_enabled,
     )
+
+
+@planner_bp.route("/archive", methods=["POST"])
+def archive_task() -> Any:
+    """タスクツリーをアーカイブ／アーカイブ解除する。
+
+    完了案件がガントチャートに残り続けて見づらくなるのを防ぐため、行を画面から
+    外す。データは削除せず保持するので、実績・評価の集計には引き続き含まれる。
+    親を指定した場合は配下の子・孫も同時にアーカイブする。
+
+    権限は状態変更と同じく管理職以上（親タスクの構成変更に相当するため）。
+
+    Returns:
+        Any: 処理結果のJSON（success, count）。
+    """
+    guard = _require_login()
+    if guard is not None:
+        return guard
+    if not is_privileged(session.get("user_role", "")):
+        abort(403)
+    payload = request.get_json(silent=True) or {}
+    if payload.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    raw_id = str(payload.get("task_id", "")).strip()
+    if not raw_id.isdigit():
+        abort(400)
+    archived = bool(payload.get("archived", True))
+
+    count = set_task_archived(int(raw_id), archived)
+    return jsonify(success=True, count=count, archived=archived)
 
 
 @planner_bp.route("/export")

@@ -57,6 +57,9 @@
   .g-row.ro .drag-h, .g-row.ro .ctl { display: none; }
   .g-row.ro .asgn-btn, .g-row.ro .g-meta { pointer-events: none; opacity: .7; }
   .g-row.ro .g-track { cursor: default; }
+  /* アーカイブ済み行（「アーカイブ済みも表示」時のみ現れる）は淡色＋左帯で区別する */
+  .g-row.archived { background: #f1f5f9; opacity: .75; }
+  .g-row.archived .g-name { border-left: 3px solid #94a3b8; }
   /* 折りたたみトグル（子を持つ親に表示） */
   .g-name .cx { flex: 0 0 auto; width: 14px; text-align: center; cursor: pointer; color: #475569; font-size: .7rem; user-select: none; }
   .g-name .cx:hover { color: #4338ca; }
@@ -172,6 +175,11 @@
     <input type="checkbox" class="form-check-input" id="showDoneCheck" {% if show_done %}checked{% endif %}>
     <label class="form-check-label small" for="showDoneCheck" title="完了済みで終了日が当日以前の案件も表示する">完了案件も表示</label>
   </div>
+  <div class="form-check ms-2">
+    <input type="checkbox" class="form-check-input" id="showArchivedCheck" {% if show_archived %}checked{% endif %}>
+    <label class="form-check-label small" for="showArchivedCheck"
+           title="アーカイブした案件も表示する（アーカイブしてもデータは保持され、実績・評価の集計対象に残ります）">アーカイブ済みも表示</label>
+  </div>
   <span class="ms-auto"></span>
   <a class="btn btn-success btn-sm"
      href="{{ url_for('planner_bp.export', start=range_start, user_id=(selected_user_id if selected_user_id else None), show_done=('1' if show_done else None)) }}">📥 Excel出力</a>
@@ -241,6 +249,10 @@
       <div class="note dt-note"></div>
     </div>
     <div class="pl-modal-ft">
+      {% if can_parent %}
+      <button type="button" class="btn btn-sm btn-outline-dark dt-archive me-auto"
+              title="この案件を画面から隠します（データは残り、実績・評価の集計対象に残ります）">📦 アーカイブ</button>
+      {% endif %}
       <button type="button" class="btn btn-sm btn-secondary dt-cancel">閉じる</button>
       <button type="button" class="btn btn-sm btn-primary dt-save">保存</button>
     </div>
@@ -370,7 +382,7 @@
   function autoProgressByDate(start, end) {
     if (!start || !end) return 0;
     var s = toDate(start), e = toDate(end);
-    var total = Math.max(1, Math.round((e - s) / 86400000));
+    var total = Math.max(1, Math.round((e - s) / 86400000) + 1);
     var elapsed = Math.round((today - s) / 86400000);
     if (elapsed < 0) return 0;
     return Math.max(0, Math.min(99, Math.round((elapsed + 1) / total * 100)));
@@ -395,7 +407,7 @@
     else if (st === '順調' || st === '着手') prog = autoProgressByDate(start, end);
     else if (st === '遅れ') {
       var s = toDate(start), e = toDate(end);
-      var total = Math.max(1, Math.round((e - s) / 86400000));
+      var total = Math.max(1, Math.round((e - s) / 86400000) + 1);
       var elapsed = Math.round((today - s) / 86400000);
       prog = Math.max(0, Math.min(99, Math.round((elapsed - delay) / total * 100)));
     } else prog = p;  // 中断＝入力値
@@ -678,6 +690,9 @@
     row.dataset.delayRaw = opts.isNew ? '0' : String(opts.delay || 0);
     row.dataset.isParent = opts.isParent ? '1' : '0';
     row.dataset.devSummary = opts.devSummary ? '1' : '0';
+    row.dataset.archived = opts.archived ? '1' : '0';
+    row.dataset.name = opts.name || '';
+    if (opts.archived) row.classList.add('archived');
     var editable = opts.editable !== false;   // 既存の読取専用行（一般ユーザーの親など）
     row.dataset.editable = editable ? '1' : '0';
     if (!editable) row.classList.add('ro');
@@ -1041,6 +1056,10 @@
     var u = new URL(window.location); u.searchParams.set('show_done', this.checked ? '1' : '0'); window.location = u;
   });
 
+  document.getElementById('showArchivedCheck') && document.getElementById('showArchivedCheck').addEventListener('change', function () {
+    var u = new URL(window.location); u.searchParams.set('show_archived', this.checked ? '1' : '0'); window.location = u;
+  });
+
   /* ── タスク詳細・編集モーダル（日付・状態・進捗を専用画面で編集） ── */
   var detModal = document.getElementById('detailModal');
   var detRow = null;
@@ -1070,6 +1089,16 @@
     var isParentRow = row.dataset.isParent === '1';
     devsumRow.style.display = (DEV_SUMMARY_ENABLED && isParentRow) ? '' : 'none';
     q('.dt-devsum').checked = row.dataset.devSummary === '1';
+    // アーカイブボタンは現在の状態に応じてラベルを切り替える
+    var abtn = detModal.querySelector('.dt-archive');
+    if (abtn) {
+      var arch = row.dataset.archived === '1';
+      abtn.textContent = arch ? '📤 アーカイブ解除' : '📦 アーカイブ';
+      abtn.classList.toggle('btn-outline-dark', !arch);
+      abtn.classList.toggle('btn-outline-success', arch);
+      // モーダル内で名前を編集していても、確認ダイアログには最新値を出す
+      row.dataset.name = q('.dt-name').value.trim();
+    }
     detRefresh();
     detModal.style.display = 'flex';
   }
@@ -1128,6 +1157,33 @@
   });
   q('.dt-cancel').addEventListener('click', function () { detModal.style.display = 'none'; detRow = null; });
   q('.dt-save').addEventListener('click', function () { if (detApply()) { detModal.style.display = 'none'; saveAll(); } });
+
+  /* アーカイブ：画面から隠すだけでデータは保持する。親を選んだ場合は配下も同時に対象。 */
+  var archiveBtn = detModal.querySelector('.dt-archive');
+  if (archiveBtn) {
+    archiveBtn.addEventListener('click', function () {
+      if (!detRow) return;
+      var tid = detRow.dataset.id;
+      if (!tid) { alert('保存前の行はアーカイブできません。先に保存してください。'); return; }
+      var isArchived = detRow.dataset.archived === '1';
+      var name = (detRow.dataset.name || '').trim();
+      var msg = isArchived
+        ? '「' + name + '」のアーカイブを解除しますか？'
+        : '「' + name + '」を配下のタスクごとアーカイブしますか？\n（画面から隠れますが、データは残り実績・評価の集計対象に残ります）';
+      if (!confirm(msg)) return;
+      fetch('{{ url_for("planner_bp.archive_task") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csrf_token: CSRF, task_id: tid, archived: !isArchived })
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        if (j && j.success) {
+          window.location.reload();
+        } else {
+          alert('アーカイブに失敗しました。');
+        }
+      }).catch(function () { alert('アーカイブに失敗しました。'); });
+    });
+  }
   detModal.addEventListener('mousedown', function (e) { if (e.target === detModal) { detModal.style.display = 'none'; detRow = null; } });
 
   // 保存
@@ -1214,7 +1270,7 @@
   if (undoBtn) undoBtn.addEventListener('click', undoLastChange);
 
   // 初期描画
-  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable, isMilestone: t.is_milestone, isParent: t.is_parent, devSummary: t.include_in_dev_summary }); });
+  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable, isMilestone: t.is_milestone, isParent: t.is_parent, devSummary: t.include_in_dev_summary, archived: t.is_archived }); });
   renderMilestoneLines();  // マイルストーンの全体貫通縦線を描画
   ensureTrailing(false);  // 末尾に入力行
   // 前回の折りたたみ状態を復元（保存済みIDを collapsed=1 に）。

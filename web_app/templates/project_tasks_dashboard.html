@@ -4,280 +4,354 @@
 <div class="row justify-content-center">
   <div class="col-12">
 
-    <div class="d-flex align-items-center justify-content-between mb-3">
+    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
       <h5 class="fw-bold mb-0">進捗ダッシュボード</h5>
       <div class="d-flex gap-2 align-items-center">
+        {% if privileged and selectable_users %}
+        <span class="small fw-semibold text-muted">対象者:</span>
+        <select id="userSelect" class="form-select form-select-sm" style="width:170px;">
+          {% for u in selectable_users %}
+          <option value="{{ u.id }}" {% if u.id == selected_user_id %}selected{% endif %}>{{ u.name }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <span class="small text-muted">{{ selected_user_name }}</span>
+        {% endif %}
         <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('planner_bp.planner') }}">ガントチャート</a>
       </div>
     </div>
 
     {# ═══════════════════════════════════════════════════
-       全体ステータスセクション（管理職・マスタのみ）
+       1. 遅れ作業タスク
     ════════════════════════════════════════════════════ #}
-    {% if privileged and overview_summary %}
-    <div class="card shadow-sm mb-4 border-0">
-      <div class="card-header fw-semibold" style="background:#1e293b;color:#fff;">
-        📊 全体ステータス
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-danger text-white fw-semibold d-flex align-items-center justify-content-between">
+        <span>⚠ 遅れ作業タスク</span>
+        <span class="badge bg-light text-danger fw-bold">{{ delayed_tasks|length }}件</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>タスク名</th>
+                {% if privileged %}<th style="width:110px;">担当者</th>{% endif %}
+                <th style="width:110px;">期限</th>
+                <th class="text-center" style="width:70px;">遅延</th>
+                <th style="width:150px;">進捗</th>
+                <th style="width:70px;">状態</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for t in delayed_tasks %}
+              <tr>
+                <td class="small fw-semibold">
+                  {{ t.task_name }}
+                  {% if t.category_name %}<span class="text-muted fw-normal">／{{ t.category_name }}</span>{% endif %}
+                </td>
+                {% if privileged %}
+                <td class="small">{{ t.assigned_name or '（未割当）' }}</td>
+                {% endif %}
+                <td class="small">{{ t.end_date or '－' }}</td>
+                <td class="text-center">
+                  {% if t.delay_days and t.delay_days > 0 %}
+                  <span class="badge bg-danger">{{ t.delay_days }}日</span>
+                  {% else %}
+                  <span class="text-muted small">－</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div class="d-flex align-items-center gap-2">
+                    <div class="progress flex-grow-1" style="height:14px;">
+                      <div class="progress-bar bg-danger" style="width:{{ [t.progress, 100]|min }}%"></div>
+                    </div>
+                    <span class="small fw-bold" style="min-width:34px;">{{ t.progress }}%</span>
+                  </div>
+                </td>
+                <td class="small text-danger fw-bold">{{ t.status }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="{% if privileged %}6{% else %}5{% endif %}" class="text-center text-muted py-3">
+                  遅れているタスクはありません
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    {# ═══════════════════════════════════════════════════
+       2. 予定と実績（既定=親タスク単位に集約／parent指定時=配下の明細）
+    ════════════════════════════════════════════════════ #}
+    <div class="card shadow-sm mb-4">
+      <div class="card-header fw-semibold d-flex align-items-center justify-content-between flex-wrap gap-2"
+           style="background:#0f4c81;color:#fff;">
+        <span>
+          ⏱ 予定と実績
+          {% if parent_id %}
+          <span class="fw-normal">／{{ task_hours.parent_name }} の内訳</span>
+          {% endif %}
+        </span>
+        <div class="d-flex gap-2 align-items-center">
+          <span class="small fw-normal">1日 = {{ "%.1f"|format(task_hours.std_hours) }}h で換算</span>
+          {% if parent_id %}
+          <a class="btn btn-light btn-sm py-0"
+             href="{{ url_for('project_tasks_bp.progress_dashboard', user_id=selected_user_id) }}">&laquo; 一覧へ戻る</a>
+          {% endif %}
+        </div>
       </div>
       <div class="card-body">
 
-        {# サマリーカード #}
+        {# 合計 #}
         <div class="row g-3 mb-3">
           <div class="col-6 col-md-3">
-            <div class="card shadow-sm text-center">
+            <div class="card shadow-sm text-center h-100">
               <div class="card-body py-2">
-                <div class="text-muted small">全タスク</div>
-                <div class="fs-3 fw-bold">{{ overview_summary.total_count }}</div>
+                <div class="text-muted small">計画時間 合計</div>
+                <div class="fs-4 fw-bold">{{ "%.1f"|format(task_hours.total_planned) }}<span class="fs-6">h</span></div>
+                <div class="small text-muted">{{ "%.1f"|format(task_hours.total_planned_days) }}日</div>
               </div>
             </div>
           </div>
           <div class="col-6 col-md-3">
-            <div class="card shadow-sm text-center border-success">
+            <div class="card shadow-sm text-center h-100 border-primary">
               <div class="card-body py-2">
-                <div class="text-muted small">完了</div>
-                <div class="fs-3 fw-bold text-success">{{ overview_summary.completed_count }}</div>
+                <div class="text-muted small">実施時間 合計</div>
+                <div class="fs-4 fw-bold text-primary">{{ "%.1f"|format(task_hours.total_actual) }}<span class="fs-6">h</span></div>
+                <div class="small text-muted">{{ "%.1f"|format(task_hours.total_actual_days) }}日</div>
               </div>
             </div>
           </div>
           <div class="col-6 col-md-3">
-            <div class="card shadow-sm text-center border-danger">
+            <div class="card shadow-sm text-center h-100
+                        {% if task_hours.total_diff < 0 %}border-danger{% elif task_hours.total_diff > 0 %}border-success{% endif %}">
               <div class="card-body py-2">
-                <div class="text-muted small">遅れ</div>
-                <div class="fs-3 fw-bold text-danger">{{ overview_summary.delayed_count }}</div>
+                <div class="text-muted small">差分（実施−計画）</div>
+                <div class="fs-4 fw-bold
+                            {% if task_hours.total_diff < 0 %}text-danger{% elif task_hours.total_diff > 0 %}text-success{% endif %}">
+                  {% if task_hours.total_diff > 0 %}+{% endif %}{{ "%.1f"|format(task_hours.total_diff) }}<span class="fs-6">h</span>
+                </div>
               </div>
             </div>
           </div>
           <div class="col-6 col-md-3">
-            <div class="card shadow-sm text-center border-primary">
+            <div class="card shadow-sm text-center h-100">
               <div class="card-body py-2">
-                <div class="text-muted small">全体進捗率</div>
-                <div class="fs-3 fw-bold text-primary">{{ "%.0f"|format(overview_summary.avg_progress) }}%</div>
+                <div class="text-muted small">消化率</div>
+                <div class="fs-4 fw-bold">
+                  {% if task_hours.total_planned > 0 %}
+                  {{ "%.0f"|format(task_hours.total_actual / task_hours.total_planned * 100) }}%
+                  {% else %}<span class="text-muted">－</span>{% endif %}
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {# グラフ（ステータス別 ＋ カテゴリ別） #}
-        <div class="row g-3 mb-3">
-          <div class="col-md-4">
-            <div class="card shadow-sm">
-              <div class="card-header bg-light fw-semibold small">ステータス別内訳</div>
-              <div class="card-body" style="height:240px;">
-                <canvas id="ovStatusChart"></canvas>
-              </div>
-            </div>
-          </div>
-          <div class="col-md-8">
-            <div class="card shadow-sm">
-              <div class="card-header bg-light fw-semibold small">カテゴリ別 平均進捗</div>
-              <div class="card-body p-2" style="overflow-y:auto; max-height:240px;">
-                <canvas id="ovCategoryChart"></canvas>
-              </div>
-            </div>
-          </div>
+        <div class="alert alert-light border py-2 small mb-3">
+          <strong>計画時間</strong>＝ガントチャートから反映された週間予定の予定時間の累積、
+          <strong>実施時間</strong>＝その週間予定に対して入力された実績時間の累積です。
+          週間予定へ反映していないタスクは集計対象になりません。
         </div>
 
-        {# 担当者別テーブル #}
-        <div class="card shadow-sm mb-3">
-          <div class="card-header bg-light fw-semibold small">担当者別 タスク状況（名前クリックで個人進捗へ）</div>
-          <div class="card-body p-0">
-            <table class="table table-sm table-hover mb-0">
-              <thead class="table-light">
-                <tr>
-                  <th>担当者</th>
-                  <th class="text-center">件数</th>
-                  <th class="text-center">完了</th>
-                  <th class="text-center">遅れ</th>
-                  <th style="min-width:180px;">平均進捗</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for u in overview_summary.user_summary %}
-                <tr>
-                  <td class="small fw-semibold">
-                    {% if u.user_id %}
-                    <a href="#personalSection" class="text-decoration-none user-jump-link"
-                       data-uid="{{ u.user_id }}">{{ u.name }}</a>
-                    {% else %}{{ u.name }}{% endif %}
-                  </td>
-                  <td class="text-center small">{{ u.count }}</td>
-                  <td class="text-center small text-success fw-bold">{{ u.completed }}</td>
-                  <td class="text-center small text-danger fw-bold">{{ u.delayed }}</td>
-                  <td>
-                    <div class="d-flex align-items-center gap-2">
-                      <div class="progress flex-grow-1" style="height:14px;">
-                        <div class="progress-bar {% if u.avg_progress >= 80 %}bg-success{% elif u.avg_progress >= 50 %}bg-primary{% elif u.avg_progress >= 30 %}bg-warning{% else %}bg-secondary{% endif %}"
-                             style="width:{{ [u.avg_progress, 100]|min }}%"></div>
+        {# 明細（集約 or 内訳） #}
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>{% if parent_id %}タスク名{% else %}タスク（親）{% endif %}</th>
+                <th style="width:170px;">計画期間</th>
+                <th class="text-end" style="width:105px;">計画時間</th>
+                <th class="text-end" style="width:105px;">実施時間</th>
+                <th class="text-end" style="width:90px;">差分</th>
+                <th class="text-end" style="width:75px;">消化率</th>
+                <th class="text-center" style="width:70px;">進捗</th>
+                <th style="width:90px;"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for t in task_hours.rows %}
+              <tr>
+                <td class="small">
+                  {% if t.parent_name %}<span class="text-muted">{{ t.parent_name }}　</span>{% endif %}
+                  <span class="fw-semibold">{{ t.task_name }}</span>
+                  {% if t.child_count > 0 %}
+                  <span class="badge bg-secondary fw-normal ms-1">{{ t.child_count }}件</span>
+                  {% endif %}
+                  {% if t.done_count > 0 %}
+                  <span class="badge bg-success fw-normal ms-1">完了{{ t.done_count }}</span>
+                  {% endif %}
+                  {% if t.status == '遅れ' %}
+                  <span class="badge bg-danger fw-normal ms-1">遅れ</span>
+                  {% elif t.status in ('完了', '中断') %}
+                  <span class="badge bg-success fw-normal ms-1">{{ t.status }}</span>
+                  {% endif %}
+                </td>
+                <td class="small">
+                  {% if t.start_date and t.end_date %}
+                  {{ t.start_date[5:] }} 〜 {{ t.end_date[5:] }}
+                  <span class="text-muted d-block" style="font-size:.75rem;">{{ t.period_days }}日間</span>
+                  {% else %}<span class="text-muted">－</span>{% endif %}
+                </td>
+                <td class="text-end small">
+                  {{ "%.1f"|format(t.planned_hours) }}h
+                  <span class="text-muted d-block" style="font-size:.75rem;">{{ "%.1f"|format(t.planned_days) }}日</span>
+                </td>
+                <td class="text-end small text-primary">
+                  {{ "%.1f"|format(t.actual_hours) }}h
+                  <span class="text-muted d-block" style="font-size:.75rem;">{{ "%.1f"|format(t.actual_days) }}日</span>
+                </td>
+                <td class="text-end small fw-bold
+                           {% if t.state == 'behind' %}text-danger{% elif t.state == 'ahead' %}text-success{% else %}text-muted{% endif %}">
+                  {% if t.diff_hours > 0 %}+{% endif %}{{ "%.1f"|format(t.diff_hours) }}h
+                </td>
+                <td class="text-end small">
+                  {% if t.planned_hours > 0 %}{{ "%.0f"|format(t.rate) }}%{% else %}<span class="text-muted">－</span>{% endif %}
+                </td>
+                <td class="text-center small">{{ t.progress }}%</td>
+                <td class="text-center">
+                  {% if not parent_id and t.child_count > 0 %}
+                  <a class="btn btn-outline-primary btn-sm py-0"
+                     href="{{ url_for('project_tasks_bp.progress_dashboard', user_id=selected_user_id, parent=t.id) }}">詳細</a>
+                  {% endif %}
+                </td>
+              </tr>
+
+              {# ツリー全体が完了したタスクは最終評価（計画と実施の差分の振り返り）を表示・入力 #}
+              {% if not parent_id and t.all_done %}
+              {% set ev = evaluations.get(t.id) %}
+              <tr class="{% if ev %}table-light{% else %}table-warning{% endif %}">
+                <td colspan="8" class="small py-2">
+                  {% if ev %}
+                  <div class="d-flex align-items-start gap-2 flex-wrap">
+                    <span class="badge bg-dark">最終評価</span>
+                    <span class="badge bg-primary">{{ ev.evaluation }}</span>
+                    <span class="text-muted">
+                      評価時点：計画 {{ "%.1f"|format(ev.planned_hours) }}h ／
+                      実施 {{ "%.1f"|format(ev.actual_hours) }}h ／
+                      差分 {% if ev.diff_hours > 0 %}+{% endif %}{{ "%.1f"|format(ev.diff_hours) }}h
+                    </span>
+                    <span class="text-muted">{{ ev.evaluated_by_name }}（{{ ev.updated_at[:16] }}）</span>
+                  </div>
+                  {% if ev.comment %}
+                  <div class="mt-1" style="white-space:pre-wrap;">{{ ev.comment }}</div>
+                  {% endif %}
+                  {% if can_evaluate %}
+                  <button class="btn btn-outline-secondary btn-sm py-0 mt-1"
+                          type="button" data-bs-toggle="collapse"
+                          data-bs-target="#evalForm{{ t.id }}">評価を修正</button>
+                  {% endif %}
+                  {% else %}
+                  <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <span class="badge bg-warning text-dark">評価待ち</span>
+                    <span>このタスクは配下すべてが完了しました。計画
+                      {{ "%.1f"|format(t.planned_hours) }}h に対し実施
+                      {{ "%.1f"|format(t.actual_hours) }}h
+                      （差分 {% if t.diff_hours > 0 %}+{% endif %}{{ "%.1f"|format(t.diff_hours) }}h）です。</span>
+                    {% if can_evaluate %}
+                    <button class="btn btn-warning btn-sm py-0" type="button"
+                            data-bs-toggle="collapse"
+                            data-bs-target="#evalForm{{ t.id }}">最終評価を入力</button>
+                    {% endif %}
+                  </div>
+                  {% endif %}
+
+                  {% if can_evaluate %}
+                  <div class="collapse mt-2" id="evalForm{{ t.id }}">
+                    <form method="post"
+                          action="{{ url_for('project_tasks_bp.save_dashboard_evaluation') }}"
+                          class="row g-2 align-items-end">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="root_task_id" value="{{ t.id }}">
+                      <input type="hidden" name="user_id" value="{{ selected_user_id }}">
+                      <div class="col-auto">
+                        <label class="form-label small mb-0">評価</label>
+                        <select name="evaluation" class="form-select form-select-sm" style="width:190px;" required>
+                          <option value="">-- 選択 --</option>
+                          {% for opt in task_evaluation_options %}
+                          <option value="{{ opt }}" {% if ev and ev.evaluation == opt %}selected{% endif %}>{{ opt }}</option>
+                          {% endfor %}
+                        </select>
                       </div>
-                      <span class="small fw-bold" style="min-width:36px;">{{ "%.0f"|format(u.avg_progress) }}%</span>
-                    </div>
-                  </td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {# 遅れタスク一覧（全体） #}
-        <div class="card shadow-sm">
-          <div class="card-header bg-danger text-white fw-semibold small">遅れ・注意タスク（全体）</div>
-          <div class="card-body p-0">
-            <table class="table table-sm table-hover mb-0">
-              <thead class="table-light">
-                <tr><th>タスク名</th><th>カテゴリ</th><th>担当者</th><th>期限</th><th class="text-center">進捗</th><th>状態</th></tr>
-              </thead>
-              <tbody>
-                {% for t in overview_summary.tasks if t.status == '遅れ' or (t.delay_days and t.delay_days > 0) %}
-                <tr>
-                  <td class="small fw-semibold">{{ t.task_name }}</td>
-                  <td class="small text-muted">{{ t.category_name or '' }}</td>
-                  <td class="small">{{ t.assigned_name or '（未割当）' }}</td>
-                  <td class="small">{{ t.end_date }}</td>
-                  <td class="text-center">
-                    <div class="progress" style="height:12px;min-width:50px;">
-                      <div class="progress-bar bg-danger" style="width:{{ [t.progress, 100]|min }}%">
-                        <small>{{ t.progress }}%</small>
+                      <div class="col">
+                        <label class="form-label small mb-0">コメント（振り返り・要因・次回への申し送り）</label>
+                        <textarea name="comment" class="form-control form-control-sm" rows="2"
+                                  placeholder="例：想定より調査に時間を要したため超過。次回は事前検証を計画に含める。">{{ ev.comment if ev else '' }}</textarea>
                       </div>
-                    </div>
-                  </td>
-                  <td class="small text-danger fw-bold">{{ t.status }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="6" class="text-center text-muted py-3">遅れタスクはありません</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
+                      <div class="col-auto">
+                        <button type="submit" class="btn btn-primary btn-sm">保存</button>
+                      </div>
+                    </form>
+                  </div>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endif %}
+              {% else %}
+              <tr><td colspan="8" class="text-center text-muted py-3">対象のタスクはありません</td></tr>
+              {% endfor %}
+            </tbody>
+            {% if task_hours.rows %}
+            <tfoot class="table-secondary">
+              <tr>
+                <th class="small" colspan="2">合計</th>
+                <th class="text-end small">
+                  {{ "%.1f"|format(task_hours.total_planned) }}h
+                  <span class="text-muted d-block fw-normal" style="font-size:.75rem;">{{ "%.1f"|format(task_hours.total_planned_days) }}日</span>
+                </th>
+                <th class="text-end small text-primary">
+                  {{ "%.1f"|format(task_hours.total_actual) }}h
+                  <span class="text-muted d-block fw-normal" style="font-size:.75rem;">{{ "%.1f"|format(task_hours.total_actual_days) }}日</span>
+                </th>
+                <th class="text-end small {% if task_hours.total_diff < 0 %}text-danger{% elif task_hours.total_diff > 0 %}text-success{% endif %}">
+                  {% if task_hours.total_diff > 0 %}+{% endif %}{{ "%.1f"|format(task_hours.total_diff) }}h
+                </th>
+                <th colspan="3"></th>
+              </tr>
+            </tfoot>
+            {% endif %}
+          </table>
         </div>
 
       </div>
     </div>
-    {% endif %}
+
 
     {# ═══════════════════════════════════════════════════
-       個人進捗セクション
+       3. タスク件数サマリー（補足情報）
     ════════════════════════════════════════════════════ #}
-    <div class="card shadow-sm border-0" id="personalSection">
-      <div class="card-header fw-semibold" style="background:#0f4c81;color:#fff;">
-        👤 個人進捗
-        {% if not privileged %}<span class="ms-2 small fw-normal">{{ selected_user_name }}</span>{% endif %}
-      </div>
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-light fw-semibold small">タスク件数サマリー（{{ selected_user_name }}）</div>
       <div class="card-body">
-
-        {# ユーザー選択 #}
-        {% if privileged and selectable_users %}
-        <div class="d-flex align-items-center gap-2 mb-3">
-          <span class="small fw-semibold text-muted">対象者:</span>
-          <select id="userSelect" class="form-select form-select-sm" style="width:200px;">
-            {% for u in selectable_users %}
-            <option value="{{ u.id }}" {% if u.id == selected_user_id %}selected{% endif %}>{{ u.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        {% endif %}
-
-        {# サマリーカード #}
-        <div class="row g-3 mb-3">
-          <div class="col-6 col-md-3">
+        <div class="row g-3">
+          <div class="col-4">
             <div class="card shadow-sm text-center">
               <div class="card-body py-2">
                 <div class="text-muted small">全タスク</div>
-                <div class="fs-3 fw-bold" id="statTotal">{{ summary.total_count }}</div>
+                <div class="fs-4 fw-bold">{{ summary.total_count }}</div>
               </div>
             </div>
           </div>
-          <div class="col-6 col-md-3">
+          <div class="col-4">
             <div class="card shadow-sm text-center border-success">
               <div class="card-body py-2">
                 <div class="text-muted small">完了</div>
-                <div class="fs-3 fw-bold text-success" id="statCompleted">{{ summary.completed_count }}</div>
+                <div class="fs-4 fw-bold text-success">{{ summary.completed_count }}</div>
               </div>
             </div>
           </div>
-          <div class="col-6 col-md-3">
-            <div class="card shadow-sm text-center border-danger">
-              <div class="card-body py-2">
-                <div class="text-muted small">遅れ</div>
-                <div class="fs-3 fw-bold text-danger" id="statDelayed">{{ summary.delayed_count }}</div>
-              </div>
-            </div>
-          </div>
-          <div class="col-6 col-md-3">
+          <div class="col-4">
             <div class="card shadow-sm text-center border-primary">
               <div class="card-body py-2">
-                <div class="text-muted small">進捗率</div>
-                <div class="fs-3 fw-bold text-primary" id="statAvgProgress">{{ "%.0f"|format(summary.avg_progress) }}%</div>
+                <div class="text-muted small">平均進捗率</div>
+                <div class="fs-4 fw-bold text-primary">{{ "%.0f"|format(summary.avg_progress) }}%</div>
               </div>
             </div>
           </div>
         </div>
-
-        {# グラフ #}
-        <div class="row g-3 mb-3">
-          <div class="col-md-4">
-            <div class="card shadow-sm">
-              <div class="card-header bg-light fw-semibold small">ステータス別内訳</div>
-              <div class="card-body" style="height:260px;">
-                <canvas id="statusChart"></canvas>
-              </div>
-            </div>
-          </div>
-          <div class="col-md-8">
-            <div class="card shadow-sm">
-              <div class="card-header bg-light fw-semibold small d-flex justify-content-between align-items-center">
-                <span>タスク別 進捗率</span>
-                <div class="form-check form-switch mb-0">
-                  <input class="form-check-input" type="checkbox" id="hideCompleted">
-                  <label class="form-check-label small" for="hideCompleted">完了を非表示</label>
-                </div>
-              </div>
-              <div class="card-body p-2" style="overflow-y:auto; max-height:260px;">
-                <canvas id="taskChart"></canvas>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {# 遅れ・注意タスク一覧 #}
-        <div class="card shadow-sm">
-          <div class="card-header bg-danger text-white fw-semibold small">遅れ・注意タスク</div>
-          <div class="card-body p-0">
-            <table class="table table-sm table-hover mb-0" id="delayTable">
-              <thead class="table-light">
-                <tr>
-                  <th>タスク名</th>
-                  <th>大区分</th>
-                  <th>期限</th>
-                  <th class="text-center">進捗</th>
-                  <th class="text-center">遅延日</th>
-                  <th>状態</th>
-                </tr>
-              </thead>
-              <tbody id="delayTbody">
-                {% for t in summary.tasks if t.status == '遅れ' or (t.delay_days and t.delay_days > 0) %}
-                <tr>
-                  <td class="small fw-semibold">{{ t.task_name }}</td>
-                  <td class="small text-muted">{{ t.category_name or '' }}</td>
-                  <td class="small">{{ t.end_date }}</td>
-                  <td class="text-center">
-                    <div class="progress" style="height:14px;min-width:60px;">
-                      <div class="progress-bar bg-danger" style="width:{{ [t.progress, 100]|min }}%">
-                        <small>{{ t.progress }}%</small>
-                      </div>
-                    </div>
-                  </td>
-                  <td class="text-center"><span class="badge bg-danger">{{ t.delay_days or 0 }}日</span></td>
-                  <td class="small text-danger fw-bold">{{ t.status }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="6" class="text-center text-muted py-3">遅れタスクはありません</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
       </div>
     </div>
 
@@ -286,167 +360,15 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-<script type="application/json" id="chartData">{{ chart_json | tojson }}</script>
-{% if privileged and overview_chart_json %}
-<script type="application/json" id="overviewChartData">{{ overview_chart_json | tojson }}</script>
-{% endif %}
 <script>
+/* 対象者セレクトの変更で、同じ週を保ったままダッシュボードを開き直す */
 (function () {
-  /* ── 個人進捗グラフ ── */
-  var chartData = JSON.parse(document.getElementById('chartData').textContent);
-  var statusChart = null;
-  var taskChart = null;
-
-  function initStatusChart(data) {
-    var ctx = document.getElementById('statusChart').getContext('2d');
-    if (statusChart) statusChart.destroy();
-    statusChart = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels: data.status_labels,
-        datasets: [{ data: data.status_counts, backgroundColor: data.status_colors, borderWidth: 1 }]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'right', labels: { font: { size: 11 } } } }
-      }
-    });
-  }
-
-  function initTaskChart(data, hideCompleted) {
-    var ctx = document.getElementById('taskChart').getContext('2d');
-    if (taskChart) taskChart.destroy();
-    var names = [], progresses = [], colors = [];
-    for (var i = 0; i < data.task_names.length; i++) {
-      if (hideCompleted && data.task_statuses[i] === '完了') continue;
-      var n = data.task_names[i];
-      names.push(n.length > 40 ? n.substring(0, 38) + '…' : n);
-      progresses.push(data.task_progresses[i]);
-      colors.push(data.task_colors[i]);
-    }
-    var barH = Math.max(200, names.length * 28);
-    document.getElementById('taskChart').parentElement.style.maxHeight = Math.max(260, barH + 20) + 'px';
-    document.getElementById('taskChart').style.height = barH + 'px';
-    taskChart = new Chart(ctx, {
-      type: 'bar',
-      data: { labels: names, datasets: [{ data: progresses, backgroundColor: colors, borderWidth: 0, barThickness: 18 }] },
-      options: {
-        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-        scales: {
-          x: { min: 0, max: 100, ticks: { callback: function (v) { return v + '%'; } } },
-          y: { ticks: { font: { size: 10 } } }
-        },
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return c.parsed.x + '%'; } } } }
-      }
-    });
-  }
-
-  initStatusChart(chartData);
-  initTaskChart(chartData, false);
-
-  var hideCheck = document.getElementById('hideCompleted');
-  if (hideCheck) {
-    hideCheck.addEventListener('change', function () { initTaskChart(chartData, hideCheck.checked); });
-  }
-
-  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
-
-  /* ユーザー切替（ドロップダウン） */
-  var userSelect = document.getElementById('userSelect');
-  if (userSelect) {
-    userSelect.addEventListener('change', function () {
-      loadPersonal(userSelect.value);
-    });
-  }
-
-  function loadPersonal(uid) {
-    fetch('{{ url_for("project_tasks_bp.progress_dashboard_api") }}?user_id=' + uid)
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
-        chartData = data.chart_json;
-        var s = data.summary;
-        document.getElementById('statTotal').textContent = s.total_count;
-        document.getElementById('statCompleted').textContent = s.completed_count;
-        document.getElementById('statDelayed').textContent = s.delayed_count;
-        document.getElementById('statAvgProgress').textContent = Math.round(s.avg_progress) + '%';
-        initStatusChart(chartData);
-        initTaskChart(chartData, hideCheck ? hideCheck.checked : false);
-        var delayed = (s.tasks || []).filter(function (t) {
-          return t.status === '遅れ' || (t.delay_days && t.delay_days > 0);
-        });
-        var tbody = document.getElementById('delayTbody');
-        var html = delayed.length === 0
-          ? '<tr><td colspan="6" class="text-center text-muted py-3">遅れタスクはありません</td></tr>'
-          : delayed.map(function (t) {
-              return '<tr>'
-                + '<td class="small fw-semibold">' + esc(t.task_name) + '</td>'
-                + '<td class="small text-muted">' + esc(t.category_name || '') + '</td>'
-                + '<td class="small">' + esc(t.end_date) + '</td>'
-                + '<td class="text-center"><div class="progress" style="height:14px;min-width:60px;"><div class="progress-bar bg-danger" style="width:' + Math.min(t.progress, 100) + '%"><small>' + t.progress + '%</small></div></div></td>'
-                + '<td class="text-center"><span class="badge bg-danger">' + (t.delay_days || 0) + '日</span></td>'
-                + '<td class="small text-danger fw-bold">' + esc(t.status) + '</td>'
-                + '</tr>';
-            }).join('');
-        tbody.innerHTML = html;
-      })
-      .catch(function (err) { console.error('ダッシュボード更新エラー:', err); });
-  }
-
-  /* 担当者名クリック → ユーザー選択を切り替えてスクロール */
-  document.querySelectorAll('.user-jump-link').forEach(function (a) {
-    a.addEventListener('click', function (e) {
-      e.preventDefault();
-      var uid = a.dataset.uid;
-      var sel = document.getElementById('userSelect');
-      if (sel) {
-        sel.value = uid;
-        loadPersonal(uid);
-      }
-      document.getElementById('personalSection').scrollIntoView({ behavior: 'smooth' });
-    });
-  });
-})();
-
-/* ── 全体ステータスグラフ ── */
-(function () {
-  var el = document.getElementById('overviewChartData');
-  if (!el) return;
-  var ov = JSON.parse(el.textContent);
-
-  new Chart(document.getElementById('ovStatusChart').getContext('2d'), {
-    type: 'doughnut',
-    data: { labels: ov.status_labels, datasets: [{ data: ov.status_counts, backgroundColor: ov.status_colors, borderWidth: 1 }] },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'right', labels: { font: { size: 11 } } } }
-    }
-  });
-
-  var catH = Math.max(180, ov.cat_names.length * 36);
-  var catCanvas = document.getElementById('ovCategoryChart');
-  catCanvas.style.height = catH + 'px';
-  catCanvas.parentElement.style.maxHeight = Math.max(240, catH + 20) + 'px';
-  new Chart(catCanvas.getContext('2d'), {
-    type: 'bar',
-    data: {
-      labels: ov.cat_names,
-      datasets: [{
-        data: ov.cat_avg_progress,
-        backgroundColor: ov.cat_avg_progress.map(function (v) {
-          return v >= 80 ? '#10b981' : v >= 50 ? '#3b82f6' : v >= 30 ? '#f59e0b' : '#9ca3af';
-        }),
-        borderWidth: 0, barThickness: 20,
-      }]
-    },
-    options: {
-      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-      scales: {
-        x: { min: 0, max: 100, ticks: { callback: function (v) { return v + '%'; } } },
-        y: { ticks: { font: { size: 10 } } }
-      },
-      plugins: { legend: { display: false } }
-    }
+  var sel = document.getElementById('userSelect');
+  if (!sel) return;
+  sel.addEventListener('change', function () {
+    var params = new URLSearchParams(window.location.search);
+    params.set('user_id', this.value);
+    window.location.search = params.toString();
   });
 })();
 </script>

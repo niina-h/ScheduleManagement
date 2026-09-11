@@ -21,20 +21,31 @@
 <div class="card shadow-sm mb-4">
   <div class="card-header bg-primary text-white fw-semibold d-flex align-items-center justify-content-between">
     <span>週間予定登録状況</span>
-    <a href="{{ url_for('export_bp.export_team_week', week=week_start) }}"
+    <a href="{{ url_for('export_bp.export_team_week', week=week_start, dept=selected_dept) }}"
        class="btn btn-light btn-sm">
       📥 メンバー全員エクスポート（{{ week_start }}週）
     </a>
   </div>
   <div class="card-body">
 
-    <!-- 週ナビゲーション -->
-    <div class="d-flex align-items-center gap-3 mb-3">
-      <a href="{{ url_for('admin_bp.dashboard') }}?week={{ prev_week }}"
+    <!-- 週ナビゲーション・所属切替 -->
+    <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+      <a href="{{ url_for('admin_bp.dashboard', week=prev_week, dept=selected_dept) }}"
          class="btn btn-outline-secondary btn-sm">&laquo; 前週</a>
       <span class="fw-semibold">{{ week_start }}（月曜）の週</span>
-      <a href="{{ url_for('admin_bp.dashboard') }}?week={{ next_week }}"
+      <a href="{{ url_for('admin_bp.dashboard', week=next_week, dept=selected_dept) }}"
          class="btn btn-outline-secondary btn-sm">次週 &raquo;</a>
+      {% if login_role == 'システム管理者' %}
+      <form method="get" action="{{ url_for('admin_bp.dashboard') }}" class="d-flex align-items-center gap-2 ms-auto">
+        <input type="hidden" name="week" value="{{ week_start }}">
+        <label class="fw-semibold mb-0">所属：</label>
+        <select name="dept" class="form-select form-select-sm" style="width:auto;" onchange="this.form.submit()">
+          {% for dept in all_depts %}
+          <option value="{{ dept.dept_name }}" {% if dept.dept_name == selected_dept %}selected{% endif %}>{{ dept.dept_name }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      {% endif %}
     </div>
 
     <!-- ステータステーブル -->

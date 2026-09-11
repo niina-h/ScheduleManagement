@@ -601,6 +601,11 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE routine_schedule ADD COLUMN period TEXT DEFAULT ''")
         logger.info("routine_schedule.period カラムを追加しました。")
 
+    # routine_schedule に monthly（毎月◯日）用の対象日カラムを追加（なければ）。
+    if "monthly_day" not in rs_cols:
+        db.execute("ALTER TABLE routine_schedule ADD COLUMN monthly_day INTEGER DEFAULT 0")
+        logger.info("routine_schedule.monthly_day カラムを追加しました。")
+
     # user_survey テーブル（ログイン時アンケート、ユーザー1人につき1回のみ回答）を作成（なければ）。
     if "user_survey" not in tables:
         db.execute("""CREATE TABLE user_survey (
@@ -622,6 +627,35 @@ def _migrate_schema(db: sqlite3.Connection) -> None:
         if "recommended_dept" not in survey_cols:
             db.execute("ALTER TABLE user_survey ADD COLUMN recommended_dept TEXT DEFAULT ''")
             logger.info("user_survey.recommended_dept カラムを追加しました。")
+
+    # project_task に is_archived（アーカイブ済みフラグ）を追加（なければ）。
+    # 完了案件が画面に残り続けて見づらくなるのを防ぐため、表示から外しつつ
+    # 実績・評価の集計対象としてデータ自体は保持する。
+    pt_cols = {row[1] for row in db.execute("PRAGMA table_info(project_task)").fetchall()}
+    if "is_archived" not in pt_cols:
+        db.execute("ALTER TABLE project_task ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0")
+        logger.info("project_task.is_archived カラムを追加しました。")
+    if "archived_at" not in pt_cols:
+        db.execute("ALTER TABLE project_task ADD COLUMN archived_at TEXT DEFAULT ''")
+        logger.info("project_task.archived_at カラムを追加しました。")
+
+    # task_evaluation テーブル（タスクツリー完了時の最終評価）を作成（なければ）。
+    # 親ツリー単位で1件保持するため、ルート親タスクIDを一意キーにする。
+    if "task_evaluation" not in tables:
+        db.execute("""CREATE TABLE task_evaluation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            root_task_id INTEGER NOT NULL UNIQUE REFERENCES project_task(id),
+            evaluation TEXT NOT NULL DEFAULT '',
+            comment TEXT DEFAULT '',
+            planned_hours REAL DEFAULT 0.0,
+            actual_hours REAL DEFAULT 0.0,
+            diff_hours REAL DEFAULT 0.0,
+            evaluated_by INTEGER REFERENCES users(id),
+            evaluated_by_name TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        )""")
+        logger.info("task_evaluation テーブルを作成しました。")
 
     db.commit()
 

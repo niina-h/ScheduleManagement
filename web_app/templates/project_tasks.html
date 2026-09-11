@@ -50,7 +50,8 @@
       <summary class="small text-primary" style="cursor:pointer">▶ 使い方</summary>
       {% if page == 'routine' %}
       <ol class="small text-muted mb-0 mt-1">
-        <li>「＋ 定例追加」で作業名・時間・頻度を指定して登録します。頻度は<b>日次</b>（曜日ごと・区分あたり最大3件）、<b>週次（日付指定）</b>（特定1日のみ）、<b>週次（第何週＋曜日）</b>（例：第2・第4水曜日）、<b>年次</b>（毎年同じ月日）の4種類です。</li>
+        <li>「＋ 定例追加」で作業名・時間・頻度を指定して登録します。頻度は<b>日次</b>（曜日ごと・区分あたり最大3件）、<b>週次（日付指定）</b>（特定1日のみ）、<b>週次（第何週＋曜日）</b>（例：第2・第4水曜日）、<b>月次</b>（毎月同じ日）、<b>年次</b>（毎年同じ月日）の5種類です。</li>
+        <li><b>月次</b>の対象日が土日・会社休日・本人の休暇（1日有休など）に当たる場合は、その日以降の最初の営業日にずらして週間予定へ反映されます。</li>
         <li>区分（午前／午後）を選ぶと、週間予定への反映時にその時間帯の空きスロットへ自動配置されます。</li>
         <li>一覧の「編集」ボタンで既存の定例を修正できます（頻度・区分の変更も可）。「✕」で削除。</li>
         <li>ここで登録した定例は<b>ガントチャートには表示されません</b>（週間予定専用）。週間予定画面の「ガントチャート反映」実行時に、その日の頻度条件に合う定例が自動配置されます。</li>
@@ -443,6 +444,7 @@
                       <option value="daily">日次（曜日ごと）</option>
                       <option value="weekly_spot">週次（日付指定）</option>
                       <option value="weekly_pattern">週次（第何週＋曜日）</option>
+                      <option value="monthly">月次（毎月◯日）</option>
                       <option value="yearly">年次（対象月日）</option>
                     </select>
                   </div>
@@ -516,6 +518,14 @@
                       {% for d in range(1, 32) %}<option value="{{ d }}">{{ d }}日</option>{% endfor %}
                     </select>
                   </div>
+                  {# 月次（毎月◯日、休日なら翌営業日に自動でずれる） #}
+                  <div class="col-auto routine-freq-block d-none" data-freq="monthly">
+                    <label class="form-label small mb-0">対象日</label>
+                    <select name="monthly_day" class="form-select form-select-sm" style="width:90px;">
+                      {% for d in range(1, 32) %}<option value="{{ d }}">{{ d }}日</option>{% endfor %}
+                    </select>
+                    <span class="small text-muted ms-1">土日祝・有休なら翌営業日に自動反映</span>
+                  </div>
                 </div>
               </form>
             </div>
@@ -550,11 +560,13 @@
                     data-spot-date="{{ r.spot_date or '' }}"
                     data-week-numbers="{{ r.week_numbers or '' }}"
                     data-yearly-month="{{ r.yearly_month or 0 }}"
-                    data-yearly-day="{{ r.yearly_day or 0 }}">
+                    data-yearly-day="{{ r.yearly_day or 0 }}"
+                    data-monthly-day="{{ r.monthly_day or 0 }}">
                   <td class="small text-center">{{ r.period or 'AM' }}</td>
                   <td class="small text-center">
                     {% if freq_type == 'weekly_spot' %}週次（日付）
                     {% elif freq_type == 'weekly_pattern' %}週次（曜日）
+                    {% elif freq_type == 'monthly' %}月次
                     {% elif freq_type == 'yearly' %}年次
                     {% else %}日次{% endif %}
                   </td>
@@ -572,6 +584,8 @@
                       {% for di, dn in [(0,'月'),(1,'火'),(2,'水'),(3,'木'),(4,'金'),(5,'土'),(6,'日')] %}
                       {% if di < day_flags|length and day_flags[di]|trim == '1' %}{{ dn }}{% endif %}
                       {% endfor %}
+                    {% elif freq_type == 'monthly' %}
+                      毎月{{ r.monthly_day }}日
                     {% elif freq_type == 'yearly' %}
                       {{ r.yearly_month }}月{{ r.yearly_day }}日
                     {% endif %}
@@ -1049,6 +1063,8 @@ function routineStartEdit(tr) {
   if (monthSel) monthSel.value = d.yearlyMonth || '1';
   var daySel = form.querySelector('[name="yearly_day"]');
   if (daySel) daySel.value = d.yearlyDay || '1';
+  var monthlyDaySel = form.querySelector('[name="monthly_day"]');
+  if (monthlyDaySel) monthlyDaySel.value = d.monthlyDay || '1';
 
   document.getElementById('routineEditingId').value = d.id;
   document.getElementById('routineEditingBadge').classList.remove('d-none');

@@ -18,6 +18,7 @@ from ..models import (
     get_accessible_users,
     get_active_tasks_for_user,
     get_all_project_tasks,
+    get_project_task_display_names,
     get_all_users,
     get_comments_in_range,
     get_daily_comment,
@@ -57,15 +58,21 @@ def _build_project_tasks_json(user_id: int) -> str:
     Args:
         user_id: 対象ユーザーID
 
+    ``names`` には子タスク名単体と「祖先…　子タスク名」形式（週間予定から
+    引き継いだ作業名の表記）の両方を含める。単体名だけで照合すると、親名付きの
+    作業名がタスクと一致せず紐付けできないため。
+
     Returns:
-        str: [{id, name, status, progress}] のJSON文字列
+        str: [{id, name, names, status, progress}] のJSON文字列
     """
     import json
-    tasks = get_all_project_tasks(assigned_to=user_id)
+    tasks = get_all_project_tasks(assigned_to=user_id, exclude_archived=True)
+    name_variants = get_project_task_display_names()
     result = [
         {
             "id": t["id"],
             "name": t["task_name"],
+            "names": sorted(name_variants.get(t["id"], {t["task_name"]})),
             "status": t["status"],
             "progress": t.get("progress", 0),
         }
@@ -399,11 +406,12 @@ def daily_save() -> Any:
     is_admin_view: bool = (target_user_id != int(session["user_id"]))
 
     # project_task_id の妥当性検証用（タスク名が変わったのに古い紐付けが送信された
-    # 場合に備え、id→task_name のマップで一致を確認する。フロントの change イベント
+    # 場合に備え、id→作業名の許容表記で一致を確認する。フロントの change イベント
     # に依存しない、サーバー側での最終防御）。
-    pt_name_by_id: dict[int, str] = {
-        t["id"]: t["task_name"] for t in get_all_project_tasks()
-    }
+    # 週間予定から引き継いだ作業名は「祖先…　子タスク名」形式（親名付き）のため、
+    # 子タスク名単体だけで照合すると正しい紐付けまで破棄されてしまう。単体名と
+    # 祖先連結名の両方を許容する。
+    pt_names_by_id: dict[int, set[str]] = get_project_task_display_names()
 
     # フォームから実績データを解析
     data: dict[str, list[dict[str, Any]]] = {"am": [], "pm": []}
@@ -423,7 +431,7 @@ def daily_save() -> Any:
                 project_task_id: int | None = int(pt_id_raw) if pt_id_raw else None
             except ValueError:
                 project_task_id = None
-            if project_task_id is not None and pt_name_by_id.get(project_task_id) != task:
+            if project_task_id is not None and task not in pt_names_by_id.get(project_task_id, set()):
                 project_task_id = None
             try:
                 hours: float = float(request.form.get(f"result_hours_{slot}_{i}", 0) or 0)

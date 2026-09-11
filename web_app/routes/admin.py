@@ -137,8 +137,17 @@ def dashboard() -> str:
     login_role: str = session.get("user_role", "")
     login_dept: str = session.get("user_dept", "")
 
-    # スコープ制限: システム管理者は全部署対象、所属長・管理職は自部署のみ
-    dept_filter: str | None = None if is_system_admin(login_role) else (login_dept or None)
+    # 部署切替: システム管理者のみ選択可能（クエリパラメータ未指定時は自分の所属）。
+    # 所属長・管理職・一般は常に自部署固定。
+    all_depts = get_all_depts()
+    if is_system_admin(login_role):
+        dept_param: str = request.args.get("dept", "")
+        dept_options = [d["dept_name"] for d in all_depts]
+        selected_dept: str = dept_param if dept_param in dept_options else login_dept
+    else:
+        selected_dept = login_dept
+
+    dept_filter: str | None = selected_dept or None
     status_list = get_all_users_schedule_status(week_start, dept_filter=dept_filter)
     all_users = get_all_users(dept_filter=dept_filter)
 
@@ -151,8 +160,6 @@ def dashboard() -> str:
         u["id"] for u in all_users
         if user_has_password(u["id"])
     }
-
-    all_depts = get_all_depts()
 
     # 担当メンバー設定用: 同一部署の管理職・マスタ一覧（上長候補）/ 対象ユーザー
     login_id: int = int(session.get("user_id", 0))
@@ -199,6 +206,7 @@ def dashboard() -> str:
         daily_status=daily_status,
         users_with_password=users_with_password,
         all_depts=all_depts,
+        selected_dept=selected_dept,
         login_role=login_role,
         login_id=login_id,
         manager_candidates=manager_candidates,

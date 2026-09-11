@@ -37,6 +37,10 @@ from ..models import (
     get_task_master,
     get_user_by_id,
     get_task_overview_summary,
+    get_task_hours_summary,
+    get_task_evaluations,
+    save_task_evaluation,
+    TASK_EVALUATIONS,
     get_task_progress_summary,
     calc_progress_by_date,
     import_brabio_excel,
@@ -291,12 +295,12 @@ def _render_task_page(only_tab: str | None) -> str:
                 target_user_id = 0  # 既定は全員（配下・実効所属メンバー）
             if target_user_id == 0:
                 member_ids = [u["id"] for u in selectable_users]
-                tasks = get_all_project_tasks(user_ids=member_ids)
+                tasks = get_all_project_tasks(exclude_archived=True, user_ids=member_ids)
             else:
-                tasks = get_all_project_tasks(assigned_to=target_user_id)
+                tasks = get_all_project_tasks(exclude_archived=True, assigned_to=target_user_id)
         else:
             target_user_id = login_id  # 一般ユーザーは自分の関係イベントのみ
-            tasks = get_all_project_tasks(assigned_to=target_user_id)
+            tasks = get_all_project_tasks(exclude_archived=True, assigned_to=target_user_id)
     elif privileged:
         # 管理職・所属長・システム管理者：get_accessible_users のスコープ内メンバーを
         # 切替閲覧できる（既定＝全員）。権限外ユーザーの指定は許可範囲に照合してフォールバック。
@@ -319,11 +323,11 @@ def _render_task_page(only_tab: str | None) -> str:
         # 「全員」選択時は全メンバーのタスクを表示
         if target_user_id == 0:
             member_ids = [u["id"] for u in selectable_users]
-            tasks = get_all_project_tasks(user_ids=member_ids)
+            tasks = get_all_project_tasks(exclude_archived=True, user_ids=member_ids)
         else:
-            tasks = get_all_project_tasks(assigned_to=target_user_id)
+            tasks = get_all_project_tasks(exclude_archived=True, assigned_to=target_user_id)
     else:
-        tasks = get_all_project_tasks(assigned_to=login_id)
+        tasks = get_all_project_tasks(exclude_archived=True, assigned_to=login_id)
 
     categories = get_all_categories()
     subcategories = get_all_subcategories()
@@ -903,7 +907,7 @@ def save_routine() -> object:
     period = request.form.get("period", "").strip().upper()
     default_hours_str = request.form.get("default_hours", "0").strip()
     freq_type = request.form.get("freq_type", "daily").strip()
-    if freq_type not in ("daily", "weekly_spot", "weekly_pattern", "yearly"):
+    if freq_type not in ("daily", "weekly_spot", "weekly_pattern", "yearly", "monthly"):
         freq_type = "daily"
 
     redirect_url = url_for("project_tasks_bp.routine_page") + "?add_open=1&tab=routine"
@@ -937,6 +941,7 @@ def save_routine() -> object:
     week_numbers = ""
     yearly_month = 0
     yearly_day = 0
+    monthly_day = 0
 
     if freq_type == "daily":
         # 区分（AM=1〜3 / PM=6〜8）から空いている行番号を自動割当する。各区分最大3件。
@@ -970,7 +975,7 @@ def save_routine() -> object:
             w for w in request.form.getlist("week_numbers") if w.strip().isdigit()
         )
         row_number = get_next_routine_row_number(user_id)
-    else:  # yearly
+    elif freq_type == "yearly":
         try:
             yearly_month = int(request.form.get("yearly_month", "0"))
             yearly_day = int(request.form.get("yearly_day", "0"))
@@ -980,11 +985,21 @@ def save_routine() -> object:
             flash("年次の対象月・日を正しく指定してください。", "warning")
             return redirect(redirect_url)
         row_number = get_next_routine_row_number(user_id)
+    else:  # monthly
+        try:
+            monthly_day = int(request.form.get("monthly_day", "0"))
+        except ValueError:
+            monthly_day = 0
+        if not (1 <= monthly_day <= 31):
+            flash("月次の対象日を正しく指定してください。", "warning")
+            return redirect(redirect_url)
+        row_number = get_next_routine_row_number(user_id)
 
     ok = save_routine_task(
         user_id, task_name, subcategory_name, default_hours, row_number, days, fill_direction,
         freq_type=freq_type, spot_date=spot_date, week_numbers=week_numbers,
         yearly_month=yearly_month, yearly_day=yearly_day, period=period,
+        monthly_day=monthly_day,
     )
     flash("定例スケジュールを登録しました。" if ok else "登録に失敗しました（行番号重複の可能性）。",
           "success" if ok else "warning")
@@ -1023,72 +1038,6 @@ _STATUS_COLOR_MAP: dict[str, str] = {
     "完了": "#10b981",
     "中断": "#d1d5db",
 }
-
-
-def _build_chart_json(summary: dict) -> dict:
-    """サマリー情報からグラフ描画用のJSON構造を構築する。
-
-    タスク別進捗のラベルは「親タスク名　子タスク名」を1行にまとめる。同じ親が
-    続く間は親名を省略し、同じ文字数分を全角スペースで埋めて子タスク名の位置を
-    揃える（親は複数行にまたがっても表示は1回だけ）。
-
-    Args:
-        summary: get_task_progress_summary() の戻り値。
-
-    Returns:
-        dict: ステータス別集計とタスク別進捗を含むグラフ用辞書。
-    """
-    status_breakdown: dict[str, int] = summary["status_breakdown"]
-    status_labels: list[str] = list(status_breakdown.keys())
-    status_counts: list[int] = list(status_breakdown.values())
-    status_colors: list[str] = [
-        _STATUS_COLOR_MAP.get(s, "#9ca3af") for s in status_labels
-    ]
-
-    # 親タスク名の解決用（対象ユーザーの担当タスクだけでは親情報が欠けるため全件から引く）。
-    parent_name_by_id: dict[int, str] = {
-        t["id"]: t["task_name"] for t in get_all_project_tasks()
-    }
-
-    task_names: list[str] = []
-    task_progresses: list[float | None] = []
-    task_colors: list[str] = []
-    task_statuses: list[str] = []
-
-    # タスク別進捗のラベルは「親タスク名　子タスク名」を1行にまとめる。
-    # 同じ親が続く間は親名を省略し、親名と同じ文字数分を全角スペースで
-    # 埋めて子タスク名の位置を揃える（親は複数行にまたがっても見出しは1回だけ）。
-    seen_parent_ids: set[int] = set()
-    parent_indent_by_id: dict[int, str] = {}
-    for task in summary["tasks"]:
-        parent_id = task.get("parent_task_id")
-        task_name = task.get("task_name", "")
-        if parent_id and parent_id in parent_name_by_id:
-            parent_name = parent_name_by_id[parent_id]
-            if parent_id not in seen_parent_ids:
-                seen_parent_ids.add(parent_id)
-                parent_indent_by_id[parent_id] = "　" * len(parent_name)
-                label = f"{parent_name}　{task_name}"
-            else:
-                label = f"{parent_indent_by_id[parent_id]}　{task_name}"
-        else:
-            label = task_name
-
-        task_names.append(label)
-        task_progresses.append(float(task.get("progress", 0) or 0))
-        status: str = task.get("status", "未着手")
-        task_statuses.append(status)
-        task_colors.append(_STATUS_COLOR_MAP.get(status, "#9ca3af"))
-
-    return {
-        "status_labels": status_labels,
-        "status_counts": status_counts,
-        "status_colors": status_colors,
-        "task_names": task_names,
-        "task_progresses": task_progresses,
-        "task_colors": task_colors,
-        "task_statuses": task_statuses,
-    }
 
 
 def _resolve_dashboard_target(
@@ -1142,6 +1091,57 @@ def _resolve_dashboard_target(
             break
 
     return target_user_id, target_user_name, selectable_users
+
+
+def _is_delayed_task(task: dict) -> bool:
+    """タスクが「遅れ」に該当するか判定する。
+
+    状態が「遅れ」か、遅延日数が1日以上のものを対象とする
+    （ダッシュボード内の全ての遅れ表示で同じ基準を使う）。
+
+    Args:
+        task: project_task の辞書。
+
+    Returns:
+        bool: 遅れに該当すれば True。
+    """
+    if task.get("status") == "遅れ":
+        return True
+    return (task.get("delay_days") or 0) > 0
+
+
+def _collect_delayed_tasks(
+    summary: dict, privileged: bool, target_user_id: int,
+) -> list[dict]:
+    """ダッシュボード上部に表示する遅れタスクを1つのリストにまとめて返す。
+
+    一般ユーザーは対象者自身のタスクのみ、管理職以上は配下を含む全体の
+    遅れタスクも合わせて1つの表に統合する（担当者列で見分ける）。
+    同一タスクの重複は id で除外し、遅延日数の大きい順に並べる。
+
+    Args:
+        summary: get_task_progress_summary() の結果（対象者ぶん）。
+        privileged: 管理職以上なら True。
+        target_user_id: 表示対象のユーザーID。
+
+    Returns:
+        list[dict]: 遅れタスクの一覧（遅延日数の降順）。
+    """
+    collected: dict[int, dict] = {}
+    for t in summary.get("tasks", []):
+        if _is_delayed_task(t):
+            collected[t["id"]] = t
+
+    if privileged:
+        overview: dict = get_task_overview_summary()
+        for t in overview.get("tasks", []):
+            if _is_delayed_task(t) and t["id"] not in collected:
+                collected[t["id"]] = t
+
+    tasks: list[dict] = list(collected.values())
+    # 遅延日数の大きい順、同数なら期限が早い順に並べる
+    tasks.sort(key=lambda t: (-(t.get("delay_days") or 0), t.get("end_date") or ""))
+    return tasks
 
 
 @project_tasks_bp.route("/overview")
@@ -1235,26 +1235,104 @@ def progress_dashboard() -> str:
     )
 
     summary: dict = get_task_progress_summary(target_user_id)
-    chart_json: dict = _build_chart_json(summary)
 
-    # 管理職・マスタは全体ステータスも同時表示
-    overview_summary: dict | None = None
-    overview_chart_json: dict | None = None
-    if privileged:
-        overview_summary = get_task_overview_summary()
-        overview_chart_json = _build_overview_chart_json(overview_summary)
+    # 遅れタスクは「対象者ぶん」と「配下メンバーぶん」を1つの表にまとめる。
+    # 管理職以上は全体タスクからも遅れを拾い、担当者列で見分けられるようにする。
+    delayed_tasks: list[dict] = _collect_delayed_tasks(
+        summary, privileged, target_user_id,
+    )
+
+    # 計画 vs 実施。既定は最上位の親タスク単位に集約し、クエリパラメータ
+    # parent が指定された場合はその親配下の子タスクを個別行で表示する。
+    raw_parent: str = request.args.get("parent", "").strip()
+    parent_id: int | None = int(raw_parent) if raw_parent.isdigit() else None
+    task_hours: dict = get_task_hours_summary(target_user_id, parent_id=parent_id)
+
+    # ツリー全体が完了した親タスクは最終評価（計画と実施の差分の振り返り）を
+    # 入力できる。既に登録済みの評価も併せて渡す。
+    evaluations: dict = get_task_evaluations(
+        [r["id"] for r in task_hours["rows"] if r.get("all_done")]
+    )
+    # 評価の入力可否：本人、または管理職以上
+    can_evaluate: bool = (target_user_id == login_id) or privileged
 
     return render_template(
         "project_tasks_dashboard.html",
         summary=summary,
-        chart_json=chart_json,
         privileged=privileged,
         selectable_users=selectable_users,
         selected_user_id=target_user_id,
         selected_user_name=target_user_name,
-        overview_summary=overview_summary,
-        overview_chart_json=overview_chart_json,
+        delayed_tasks=delayed_tasks,
+        task_hours=task_hours,
+        parent_id=parent_id,
+        evaluations=evaluations,
+        can_evaluate=can_evaluate,
+        task_evaluation_options=TASK_EVALUATIONS,
+        csrf_token=session.get("csrf_token", ""),
     )
+
+
+@project_tasks_bp.route("/dashboard/evaluate", methods=["POST"])
+def save_dashboard_evaluation() -> object:
+    """タスクツリー完了時の最終評価を登録・更新する。
+
+    親ツリー（親＋配下の子・孫すべて）が完了・中断になったタスクに対して、
+    計画時間と実施時間の差分を踏まえた評価区分とコメントを保存する。
+    入力できるのは対象者本人、または管理職以上。
+
+    Returns:
+        object: 進捗ダッシュボードへのリダイレクトレスポンス。
+    """
+    if request.form.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    login_role: str = session.get("user_role", "")
+    login_id: int = int(session["user_id"])
+    login_dept: str = session.get("user_dept", "")
+    privileged: bool = is_privileged(login_role)
+
+    target_user_id, _target_name, _selectable = _resolve_dashboard_target(
+        login_id, login_role, login_dept,
+    )
+    # 本人以外の評価入力は管理職以上のみ許可する
+    if target_user_id != login_id and not privileged:
+        abort(403)
+
+    raw_root: str = request.form.get("root_task_id", "").strip()
+    if not raw_root.isdigit():
+        abort(400)
+    root_task_id = int(raw_root)
+
+    evaluation: str = request.form.get("evaluation", "").strip()
+    comment: str = request.form.get("comment", "").strip()
+
+    # 評価対象がツリー完了済みであることをサーバー側でも確認する
+    summary: dict = get_task_hours_summary(target_user_id)
+    row = next(
+        (r for r in summary["rows"] if r["id"] == root_task_id and r.get("all_done")),
+        None,
+    )
+    if row is None:
+        flash("完了していないタスクには評価を登録できません。", "warning")
+        return redirect(url_for("project_tasks_bp.progress_dashboard",
+                                user_id=target_user_id))
+
+    ok = save_task_evaluation(
+        root_task_id=root_task_id,
+        evaluation=evaluation,
+        comment=comment,
+        planned_hours=row["planned_hours"],
+        actual_hours=row["actual_hours"],
+        evaluated_by=login_id,
+        evaluated_by_name=session.get("user_name", ""),
+    )
+    if ok:
+        flash(f"「{row['task_name']}」の最終評価を登録しました。", "success")
+    else:
+        flash("最終評価の登録に失敗しました（評価区分を選択してください）。", "warning")
+    return redirect(url_for("project_tasks_bp.progress_dashboard",
+                            user_id=target_user_id))
 
 
 @project_tasks_bp.route("/dashboard/api")
@@ -1277,11 +1355,11 @@ def progress_dashboard_api() -> tuple:
     )
 
     summary: dict = get_task_progress_summary(target_user_id)
-    chart_json: dict = _build_chart_json(summary)
 
     return jsonify({
         "summary": summary,
-        "chart_json": chart_json,
+        "delayed_tasks": _collect_delayed_tasks(summary, privileged, target_user_id),
+        "task_hours": get_task_hours_summary(target_user_id),
         "privileged": privileged,
         "selectable_users": selectable_users,
         "selected_user_id": target_user_id,

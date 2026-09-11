@@ -23,7 +23,7 @@ from ..models import (
     get_weekly_schedule,
     save_weekly_schedule,
 )
-from ..auth_helpers import is_privileged, is_master, can_access_user
+from ..auth_helpers import is_privileged, is_master, is_system_admin, can_access_user
 
 export_bp = Blueprint("export_bp", __name__, url_prefix="/export")
 
@@ -1567,13 +1567,19 @@ def export_team_week() -> object:
 
     login_role: str = session.get("user_role", "")
     login_dept: str = session.get("user_dept", "")
-    users = get_all_users(dept_filter=login_dept if login_dept else None)
+    # システム管理者はダッシュボードで切替中の所属（dept パラメータ）を対象にする。
+    # 所属長・管理職・一般は常に自部署固定。
+    if is_system_admin(login_role):
+        target_dept: str = request.args.get("dept", "") or login_dept
+    else:
+        target_dept = login_dept
+    users = get_all_users(dept_filter=target_dept if target_dept else None)
 
     if not users:
         flash("対象ユーザーが存在しないためExcelを生成できません", "warning")
         return redirect(url_for("admin_bp.dashboard"))
 
-    dept_label = login_dept if login_dept else "全員"
+    dept_label = target_dept if target_dept else "全員"
     try:
         buf = _build_team_week_from_schedule_tpl(users, week_start)
     except Exception:

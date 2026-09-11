@@ -464,8 +464,10 @@ def _build_master_body(
     # タスク一覧画面と同じスコープ（担当メンバーのタスクのみ、イベント除外）。
     member_ids = [m["id"] for m in members]
     target_date_str: str = target_date.isoformat()
+    # アーカイブ済みタスクは日報の「対応中」「開発状況」から除外する
+    # （完了案件を画面・通知から外す運用のため）。
     project_tasks = [
-        t for t in get_all_project_tasks(user_ids=member_ids)
+        t for t in get_all_project_tasks(user_ids=member_ids, exclude_archived=True)
         if not t.get("is_event", 0)
     ]
 
@@ -476,7 +478,7 @@ def _build_master_body(
     # 状況で判定する（親自身に start_date/end_date が無いことが多いため）。
     # 子は絞り込み前の全タスクから解決する（子の担当者がメール対象メンバーと
     # 異なる場合も正しく集計するため）。
-    _all_tasks_for_children = get_all_project_tasks()
+    _all_tasks_for_children = get_all_project_tasks(exclude_archived=True)
     all_tasks_by_id: dict[int, dict] = {t["id"]: t for t in _all_tasks_for_children}
     _children_by_parent: dict[int, list[dict]] = {}
     for _t in _all_tasks_for_children:
@@ -554,21 +556,6 @@ def _build_master_body(
             names.append(pt.get("assigned_last_name_2") or pt.get("assigned_name_2"))
         return "、".join(names) if names else "担当者未設定"
 
-    def _effective_category(pt: dict) -> dict:
-        """区分表示用の情報（中区分名・大区分名・並び順）を返す。
-
-        タスク自身に区分が未設定の場合、親タスクの区分をフォールバックとして使う
-        （「その他」への集約を減らすため。子は業務内容までは登録するが区分登録が
-        後回しになりがちで、親には区分が設定済みのケースが多いことが判明したため）。
-        """
-        if pt.get("subcategory_name") or pt.get("category_name"):
-            return pt
-        parent_id = pt.get("parent_task_id")
-        parent = all_tasks_by_id.get(parent_id) if parent_id else None
-        if parent and (parent.get("subcategory_name") or parent.get("category_name")):
-            return parent
-        return pt
-
     def _root_ancestor(pt: dict) -> dict:
         """タスクの最上位（ルート）の祖先タスクを返す（親を持たなければ自分自身）。
 
@@ -598,8 +585,46 @@ def _build_master_body(
         """
         return _root_ancestor(pt)["task_name"]
 
+    def _wrap_text(text: str, width: int = 100) -> str:
+        """テキストを指定幅で改行する。"""
+        if len(text) <= width:
+            return text
+        lines: list[str] = []
+        while len(text) > width:
+            # 幅以内の最後の句読点・カンマで改行
+            pos = -1
+            for ch in ("。", "、", "，", ".", ",", "　"):
+                p = text.rfind(ch, 0, width)
+                if p > pos:
+                    pos = p
+            if pos <= 0:
+                pos = width  # 句読点なければ強制改行
+            lines.append(text[:pos + 1])
+            text = text[pos + 1:]
+        if text:
+            lines.append(text)
+        return "\n".join(lines)
+
+    def _display_task_name(pt: dict) -> str:
+        """メール本文に出す末端タスクの表示名を返す。
+
+        3階層以上（例：ITインフラ→タブレット選定→納品予定）の場合、末端タスク
+        だけでは何の作業か分からないため、直近の親（中間階層）が見出し行自身
+        （ルート）と異なるバー無しの中間ノードであれば、その名前を先頭に付与する
+        （「タブレット選定　納品予定」）。直近の親がルート自身（＝見出しと同じ）の
+        場合は、これまで通りタスク名のみを表示する。
+        """
+        parent_id = pt.get("parent_task_id")
+        parent = all_tasks_by_id.get(parent_id) if parent_id else None
+        if parent and parent.get("parent_task_id"):
+            return f"{parent['task_name']}　{pt['task_name']}"
+        return pt["task_name"]
+
     # ガントチャート上の親タスク名ごとにグループ化する（区分マスタの登録有無に
     # 関わらず、ガントチャートで見えている親子構造とメールの見出しを一致させる）。
+    # 見出しの並び順は、タスク区分マスタ（大区分・中区分）ではなく、ガントチャート
+    # 上でのルートタスク自身の display_order を使う（メールの並びをガントチャート
+    # の見た目の並びと一致させるため）。
     tasks_by_subcat: dict[str, list[dict]] = {}
     subcat_order: dict[str, int] = {}
     for pt in in_progress_tasks:
@@ -609,8 +634,7 @@ def _build_master_body(
             continue
         label = _group_label(pt)
         tasks_by_subcat.setdefault(label, []).append(pt)
-        cat_src = _effective_category(pt)
-        order = cat_src.get("subcat_order") or cat_src.get("cat_order") or 0
+        order = _root_ancestor(pt).get("display_order") or 0
         if label not in subcat_order or order < subcat_order[label]:
             subcat_order[label] = order
 
@@ -632,13 +656,36 @@ def _build_master_body(
                 content_lines.append(f"　・{label}")
             continue
         content_lines.append(f"　・{label}")
+        # 直近の親（中間階層）ごとにまとめる。中間階層を持つ子（例：タブレット選定配下の
+        # 納品予定・キッティング）は中間階層名を1回だけ出し、その配下の子を読点区切りで
+        # 1行にまとめる。中間階層を持たない子（ルート直下）はこれまで通り個別行にする。
+        mid_groups: dict[int | None, list[dict]] = {}
+        mid_order: list[int | None] = []
         for pt in group:
+            parent_id = pt.get("parent_task_id")
+            parent = all_tasks_by_id.get(parent_id) if parent_id else None
+            mid_key = parent_id if (parent and parent.get("parent_task_id")) else None
+            if mid_key not in mid_groups:
+                mid_groups[mid_key] = []
+                mid_order.append(mid_key)
+            mid_groups[mid_key].append(pt)
+
+        def _entry(pt: dict) -> str:
             progress = pt.get("progress", 0) or 0
             status = pt.get("status", "") or "未着手"
             if progress >= 1:
-                content_lines.append(f"　　└{pt['task_name']}　（{_assignee_names(pt)}：{status}）")
+                return f"{pt['task_name']}　（{_assignee_names(pt)}：{status}）"
+            return pt["task_name"]
+
+        for mid_key in mid_order:
+            members = mid_groups[mid_key]
+            if mid_key is None:
+                for pt in members:
+                    content_lines.append(f"　　└{_entry(pt)}")
             else:
-                content_lines.append(f"　　└{pt['task_name']}")
+                mid_name = all_tasks_by_id[mid_key]["task_name"]
+                joined = "、".join(_entry(pt) for pt in members)
+                content_lines.append(_wrap_text(f"　　└{mid_name}　{joined}"))
 
     # メンバー実績サマリ
     # 除外条件: 定例作業（大区分「定例」or 中区分「定例作業」）、AM1行目(idx=0)、PM最終行(idx=4)
@@ -715,26 +762,6 @@ def _build_master_body(
             member_lines.append(f"{name}：{tasks_str}")
 
     # マスタ自身の振り返り・対策
-    def _wrap_text(text: str, width: int = 100) -> str:
-        """テキストを指定幅で改行する。"""
-        if len(text) <= width:
-            return text
-        lines: list[str] = []
-        while len(text) > width:
-            # 幅以内の最後の句読点・カンマで改行
-            pos = -1
-            for ch in ("。", "、", "，", ".", ",", "　"):
-                p = text.rfind(ch, 0, width)
-                if p > pos:
-                    pos = p
-            if pos <= 0:
-                pos = width  # 句読点なければ強制改行
-            lines.append(text[:pos + 1])
-            text = text[pos + 1:]
-        if text:
-            lines.append(text)
-        return "\n".join(lines)
-
     master_comment = get_daily_comment(login_id, date_str)
     reflection = _wrap_text(master_comment.get("reflection", "").strip() or "（未入力）")
 
@@ -764,7 +791,7 @@ def _build_master_body(
         ai_lines.append(f"  {label}")
         children = sorted(dev_by_root[label], key=lambda t: t.get("display_order") or 0)
         child_entries = [
-            f"{pt['task_name']}（{_assignee_names(pt)}：{pt.get('status') or '未着手'}）"
+            f"{_display_task_name(pt)}（{_assignee_names(pt)}：{pt.get('status') or '未着手'}）"
             for pt in children
         ]
         if child_entries:
