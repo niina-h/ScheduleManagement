@@ -1,0 +1,922 @@
+<title>リリース後メンテナンスとバージョン管理規定</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@600;800&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+  :root {
+    --paper: #f7f5f0;
+    --paper-2: #efece4;
+    --ink: #1b2430;
+    --ink-2: #2b3542;
+    --muted: #6b6f76;
+    --rule: #d9d4c7;
+    --rule-strong: #b8b09c;
+    --accent: #1f6f6b;
+    --accent-soft: #d6e6e4;
+    --warn: #b25a1f;
+    --warn-soft: #f1dfcf;
+    --good: #3b7a3b;
+    --good-soft: #dbe7d5;
+    --code-bg: #ece8de;
+
+    --font-serif: "Noto Serif JP", "Yu Mincho", "游明朝", serif;
+    --font-sans: "Noto Sans JP", "Yu Gothic UI", "游ゴシック", sans-serif;
+    --font-mono: "JetBrains Mono", "Consolas", monospace;
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --paper: #14181d;
+      --paper-2: #1c2129;
+      --ink: #e6e4dd;
+      --ink-2: #cfcdc4;
+      --muted: #9aa0a8;
+      --rule: #2f3641;
+      --rule-strong: #4a5361;
+      --accent: #6fbfba;
+      --accent-soft: #1f3a38;
+      --warn: #e69056;
+      --warn-soft: #3a2a1c;
+      --good: #7fb37f;
+      --good-soft: #24352a;
+      --code-bg: #232832;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14181d;
+    --paper-2: #1c2129;
+    --ink: #e6e4dd;
+    --ink-2: #cfcdc4;
+    --muted: #9aa0a8;
+    --rule: #2f3641;
+    --rule-strong: #4a5361;
+    --accent: #6fbfba;
+    --accent-soft: #1f3a38;
+    --warn: #e69056;
+    --warn-soft: #3a2a1c;
+    --good: #7fb37f;
+    --good-soft: #24352a;
+    --code-bg: #232832;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.75;
+    letter-spacing: 0.01em;
+  }
+
+  .doc {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 40px 32px 120px;
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 56px;
+  }
+
+  /* Masthead */
+  .mast {
+    grid-column: 1 / -1;
+    border-top: 3px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+    padding: 28px 0 24px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 24px;
+  }
+  .mast-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  .mast-title {
+    font-family: var(--font-serif);
+    font-weight: 800;
+    font-size: clamp(28px, 3.6vw, 40px);
+    line-height: 1.18;
+    letter-spacing: 0.02em;
+    text-wrap: balance;
+    margin: 0;
+    color: var(--ink);
+  }
+  .mast-sub {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 10px;
+    max-width: 60ch;
+  }
+  .mast-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.9;
+    text-align: right;
+    letter-spacing: 0.05em;
+  }
+  .mast-meta b { color: var(--ink); font-weight: 700; }
+
+  /* Sidebar TOC */
+  .toc {
+    position: sticky;
+    top: 24px;
+    align-self: start;
+    font-size: 13px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    padding-right: 8px;
+  }
+  .toc-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .toc ol { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
+  .toc a {
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 8px;
+    padding: 6px 8px;
+    color: var(--ink-2);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    border-radius: 0 4px 4px 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .toc a:hover { background: var(--paper-2); border-left-color: var(--accent); }
+  .toc-num { font-family: var(--font-mono); font-size: 11px; color: var(--accent); font-weight: 700; padding-top: 1px; }
+
+  /* Main body */
+  main { min-width: 0; max-width: 78ch; }
+
+  section { margin-bottom: 72px; scroll-margin-top: 24px; }
+  section > h2 {
+    font-family: var(--font-serif);
+    font-weight: 700;
+    font-size: 24px;
+    line-height: 1.3;
+    letter-spacing: 0.03em;
+    margin: 0 0 6px;
+    padding-top: 8px;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+  .h2-num {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    margin-right: 12px;
+    padding: 2px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    vertical-align: middle;
+    font-weight: 700;
+  }
+  .lede {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 12px 0 28px;
+    padding-bottom: 18px;
+    border-bottom: 1px dashed var(--rule);
+    max-width: 65ch;
+  }
+  h3 {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+    margin: 32px 0 12px;
+    padding-left: 12px;
+    border-left: 3px solid var(--accent);
+  }
+  h4 {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--ink-2);
+    margin: 22px 0 8px;
+    letter-spacing: 0.03em;
+  }
+  p { margin: 0 0 14px; max-width: 65ch; }
+
+  /* Version badge */
+  .version-visual {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 22px;
+    margin: 8px 0 24px;
+  }
+  .vv-cell {
+    padding: 4px 16px;
+    border-right: 1px dashed var(--rule-strong);
+    text-align: center;
+  }
+  .vv-cell:last-child { border-right: none; }
+  .vv-num {
+    font-family: var(--font-mono);
+    font-size: 36px;
+    color: var(--accent);
+    font-weight: 700;
+    line-height: 1;
+  }
+  .vv-role {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .vv-desc {
+    font-size: 12px;
+    color: var(--ink-2);
+    margin-top: 10px;
+    line-height: 1.6;
+  }
+  .vv-example {
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 15px;
+    color: var(--ink);
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    letter-spacing: 0.06em;
+  }
+  .vv-example b { color: var(--accent); font-weight: 700; }
+
+  /* Tables */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 0 0 24px;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--paper);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  thead th {
+    text-align: left;
+    background: var(--paper-2);
+    color: var(--ink);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--rule-strong);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    line-height: 1.65;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:nth-child(even) { background: color-mix(in srgb, var(--paper-2) 50%, transparent); }
+  td.mono, th.mono { font-family: var(--font-mono); font-size: 12.5px; }
+
+  /* Callouts */
+  .callout {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 14px;
+    padding: 16px 20px;
+    border-radius: 4px;
+    margin: 20px 0;
+    border-left: 4px solid;
+    background: var(--paper-2);
+  }
+  .callout-warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout-warn .callout-tag { color: var(--warn); }
+  .callout-good { border-color: var(--good); background: var(--good-soft); }
+  .callout-good .callout-tag { color: var(--good); }
+  .callout-info { border-color: var(--accent); background: var(--accent-soft); }
+  .callout-info .callout-tag { color: var(--accent); }
+  .callout-tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+  .callout-body { color: var(--ink); font-size: 13.5px; line-height: 1.7; }
+  .callout-body p:last-child { margin-bottom: 0; }
+
+  /* Checklist */
+  .checklist {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 24px;
+    display: grid;
+    gap: 4px;
+  }
+  .checklist li {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 12px;
+    padding: 8px 14px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    align-items: start;
+  }
+  .checklist li::before {
+    content: "";
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid var(--rule-strong);
+    border-radius: 2px;
+    margin-top: 4px;
+    background: var(--paper);
+  }
+
+  /* Folder tree */
+  .tree {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 16px 20px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--ink);
+    margin: 8px 0 24px;
+    overflow-x: auto;
+  }
+  .tree .comment { color: var(--muted); }
+  .tree .latest { color: var(--accent); font-weight: 700; }
+  .tree .archive { color: var(--warn); }
+
+  /* Code */
+  pre, code { font-family: var(--font-mono); }
+  pre {
+    background: var(--code-bg);
+    color: var(--ink);
+    padding: 14px 18px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    line-height: 1.65;
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    margin: 8px 0 20px;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 2px;
+    font-size: 12.5px;
+  }
+  pre code { background: none; padding: 0; }
+
+  /* Severity chips */
+  .chip {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 2px 8px;
+    border-radius: 2px;
+    line-height: 1.5;
+    vertical-align: middle;
+  }
+  .chip-sev1 { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); }
+  .chip-sev2 { background: var(--warn-soft); color: var(--warn); }
+  .chip-sev3 { background: var(--accent-soft); color: var(--accent); }
+  .chip-sev4 { background: var(--paper-2); color: var(--muted); border: 1px solid var(--rule); }
+
+  /* Frequency chip */
+  .freq {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  /* Split card grid for §2 comparison */
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 8px 0 24px;
+  }
+  .split-card {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 20px 22px;
+  }
+  .split-card h4 {
+    margin-top: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .split-tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .split-list {
+    font-size: 13px;
+    line-height: 1.7;
+    margin: 0;
+    padding-left: 18px;
+  }
+  @media (max-width: 720px) {
+    .split { grid-template-columns: 1fr; }
+  }
+
+  /* Footer */
+  .end {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule);
+    padding-top: 20px;
+    margin-top: 24px;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .doc {
+      grid-template-columns: 1fr;
+      gap: 24px;
+      padding: 24px 18px 80px;
+    }
+    .toc {
+      position: static;
+      max-height: none;
+      padding: 16px;
+      background: var(--paper-2);
+      border-radius: 4px;
+    }
+    .mast { grid-template-columns: 1fr; }
+    .mast-meta { text-align: left; }
+    .version-visual { grid-template-columns: 1fr; }
+    .vv-cell { border-right: none; border-bottom: 1px dashed var(--rule-strong); padding: 12px 0; }
+    .vv-cell:last-child { border-bottom: none; }
+  }
+
+  /* Print */
+  @media print {
+    body { background: white; color: black; font-size: 11pt; }
+    .toc, .end { display: none; }
+    .doc { display: block; padding: 0; max-width: none; }
+    section { page-break-inside: avoid; margin-bottom: 24pt; }
+    h2, h3 { page-break-after: avoid; }
+    pre, .table-wrap, .callout, .tree { page-break-inside: avoid; }
+  }
+
+  a:focus-visible, .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<div class="doc">
+
+  <header class="mast">
+    <div>
+      <div class="mast-eyebrow">Maintenance &amp; Versioning / 引継ぎ用</div>
+      <h1 class="mast-title">リリース後メンテナンスと<br>バージョン管理規定</h1>
+      <p class="mast-sub">リリース済みプログラムの継続運用とコードバージョン管理の標準規定。Git 使用／Git 未使用（フォルダバックアップ管理）の両方に適用する。</p>
+    </div>
+    <div class="mast-meta">
+      <div>DOC&nbsp;/&nbsp;<b>03</b></div>
+      <div>REV&nbsp;/&nbsp;<b>2026-09-11</b></div>
+      <div>OWNER&nbsp;/&nbsp;<b>商品開発室</b></div>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="目次">
+    <div class="toc-label">Contents</div>
+    <ol>
+      <li><a href="#s1"><span class="toc-num">01</span><span>バージョン番号ルール</span></a></li>
+      <li><a href="#s2"><span class="toc-num">02</span><span>バージョン管理方式</span></a></li>
+      <li><a href="#s3"><span class="toc-num">03</span><span>メンテナンス標準運用</span></a></li>
+      <li><a href="#s4"><span class="toc-num">04</span><span>変更管理の運用</span></a></li>
+      <li><a href="#s5"><span class="toc-num">05</span><span>Git化する場合の指針</span></a></li>
+      <li><a href="#s6"><span class="toc-num">06</span><span>ドキュメント整備規定</span></a></li>
+      <li><a href="#s7"><span class="toc-num">07</span><span>セキュリティ運用</span></a></li>
+      <li><a href="#s8"><span class="toc-num">08</span><span>月次運用点検</span></a></li>
+      <li><a href="#s9"><span class="toc-num">09</span><span>用語集</span></a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- ========== 01 ========== -->
+    <section id="s1">
+      <h2><span class="h2-num">01</span>バージョン番号ルール</h2>
+      <p class="lede">セマンティックバージョニング準拠。桁の意味を全員で共通理解しないと、承認レベルの判定がぶれる。</p>
+
+      <div class="version-visual">
+        <div class="vv-cell">
+          <div class="vv-num">1</div>
+          <div class="vv-role">Major</div>
+          <div class="vv-desc">破壊的変更<br>既存機能の互換性が失われる</div>
+        </div>
+        <div class="vv-cell">
+          <div class="vv-num">2</div>
+          <div class="vv-role">Minor</div>
+          <div class="vv-desc">機能追加<br>後方互換を保った追加</div>
+        </div>
+        <div class="vv-cell">
+          <div class="vv-num">3</div>
+          <div class="vv-role">Patch</div>
+          <div class="vv-desc">バグ修正<br>挙動修正のみ</div>
+        </div>
+        <div class="vv-example">v<b>1</b>.<b>2</b>.<b>3</b></div>
+      </div>
+
+      <h3>バージョン記載場所</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>場所</th><th>形式</th></tr></thead>
+          <tbody>
+            <tr><td>プロジェクトルート</td><td class="mono">VERSION（プレーンテキスト1行）</td></tr>
+            <tr><td>Python</td><td class="mono">__init__.py の __version__</td></tr>
+            <tr><td>Web画面</td><td>フッターまたは管理画面の「バージョン情報」</td></tr>
+            <tr><td>Git 使用時</td><td class="mono">対応するタグ（v1.2.3）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>開発中バージョン表記</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:35%">状態</th><th>表記</th></tr></thead>
+          <tbody>
+            <tr><td>開発中</td><td class="mono">v1.3.0-dev</td></tr>
+            <tr><td>リリース候補</td><td class="mono">v1.3.0-rc1</td></tr>
+            <tr><td>正式リリース</td><td class="mono">v1.3.0</td></tr>
+            <tr><td>ホットフィックス</td><td class="mono">v1.3.1</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== 02 ========== -->
+    <section id="s2">
+      <h2><span class="h2-num">02</span>バージョン管理方式</h2>
+      <p class="lede">プロジェクトによって管理方式が異なる。予定管理システムは Git、SNS管理ツールはフォルダバックアップ。</p>
+
+      <div class="split">
+        <div class="split-card">
+          <span class="split-tag">Git 管理</span>
+          <h4>予定管理システム</h4>
+          <ul class="split-list">
+            <li>管理単位：Git リポジトリ</li>
+            <li>バージョン記録：<code>git tag v1.2.3</code></li>
+            <li>履歴確認：<code>git log --oneline --tags</code></li>
+            <li>過去復元：<code>git checkout v1.2.3</code></li>
+            <li>ブランチ：main / develop / feature/* / hotfix/*</li>
+            <li>コミットメッセージ：日本語（CLAUDE.md準拠）</li>
+          </ul>
+        </div>
+        <div class="split-card">
+          <span class="split-tag">フォルダ管理</span>
+          <h4>SNS管理ツール</h4>
+          <ul class="split-list">
+            <li>管理単位：バックアップフォルダ</li>
+            <li>バージョン記録：フォルダ名 + VERSION.txt</li>
+            <li>履歴確認：バックアップフォルダ一覧</li>
+            <li>過去復元：バックアップから robocopy 復元</li>
+            <li>ブランチ：なし（1本道の履歴）</li>
+            <li>変更記録：CHANGES.txt に追記</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>コミット種別プレフィックス（Git 使用時）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:20%">プレフィックス</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">feat:</td><td>機能追加</td></tr>
+            <tr><td class="mono">fix:</td><td>バグ修正</td></tr>
+            <tr><td class="mono">docs:</td><td>ドキュメント</td></tr>
+            <tr><td class="mono">refactor:</td><td>リファクタリング</td></tr>
+            <tr><td class="mono">test:</td><td>テスト追加／修正</td></tr>
+            <tr><td class="mono">chore:</td><td>その他（依存更新等）</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>フォルダバックアップの命名規則</h3>
+      <pre><code>{プロジェクト名}_v{バージョン}_{YYYYMMDD_HHMM}
+
+例) SnsManagementTool_v1.2.0_20260911_1830</code></pre>
+
+      <h3>保管フォルダ構成の例</h3>
+<pre class="tree">D:\Backup\SnsManagementTool\
+├── <span class="latest">SnsManagementTool_v1.2.0_20260911_1830\</span>   <span class="comment">← 最新</span>
+│   ├── (プロジェクト全体)
+│   ├── <span class="latest">VERSION.txt</span>                            <span class="comment">← 必須</span>
+│   └── <span class="latest">CHANGES.txt</span>                            <span class="comment">← 必須（変更内容詳細）</span>
+├── SnsManagementTool_v1.1.2_20260820_1000\
+├── SnsManagementTool_v1.1.1_20260805_1500\
+├── SnsManagementTool_v1.1.0_20260715_1200\
+├── SnsManagementTool_v1.0.0_20260701_0900\
+└── <span class="archive">_archive\</span>                                  <span class="comment">← 6世代目以降を移動</span>
+    ├── SnsManagementTool_v0.9.0_20260615_1100\
+    └── ...</pre>
+
+      <h3>VERSION.txt テンプレート</h3>
+<pre><code>============================================
+プロジェクト: SNS管理ツール
+バージョン: 1.2.0
+バックアップ日時: 2026-09-11 18:30
+作成者: 新名 洋幸
+リリース種別: マイナーリリース
+============================================
+
+【変更概要】
+- 機能A追加（一行）
+- 機能Bのパフォーマンス改善
+
+【依存パッケージ変更】
+- あり／なし
+- ある場合は差分:
+  + flask 2.3.0 → 3.0.0
+
+【DBスキーマ変更】
+- あり／なし
+- ある場合は変更内容:
+  + テーブル○○ に列△△ 追加
+
+【関連ドキュメント】
+- 仕様書: docs/仕様_機能A.md
+- 依頼: メール(2026-08-15 田中様)</code></pre>
+
+      <h3>CHANGES.txt テンプレート</h3>
+<pre><code>=== v1.2.0 (2026-09-11) ===
+[追加]
+- 機能A: xxx画面でyyyできるように
+[変更]
+- 機能B: 表示速度を約3倍改善
+[修正]
+- 不具合#12: zzz時にエラーになる問題
+
+=== v1.1.2 (2026-08-20) ===
+[修正]
+- ホットフィックス: ログイン失敗時のエラー画面</code></pre>
+
+      <h3>保管期間ルール</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>世代</th><th>保管場所</th><th>期間</th></tr></thead>
+          <tbody>
+            <tr><td>直近5世代</td><td>メインフォルダ</td><td>常時保持</td></tr>
+            <tr><td>6世代目以降</td><td class="mono">_archive/</td><td>12ヶ月</td></tr>
+            <tr><td>メジャーリリース版</td><td>永年保管</td><td><b>削除禁止</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== 03 ========== -->
+    <section id="s3">
+      <h2><span class="h2-num">03</span>メンテナンス標準運用</h2>
+      <p class="lede">リリース後は放置せず、頻度別に決まった作業を行う。監視・障害対応の優先度も定義する。</p>
+
+      <h3>定期メンテナンス項目</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:14%">頻度</th><th style="width:24%">項目</th><th>内容</th></tr></thead>
+          <tbody>
+            <tr><td><span class="freq">毎日</span></td><td>稼働確認</td><td>サービス起動状況・エラーログ有無</td></tr>
+            <tr><td><span class="freq">毎日</span></td><td>DBバックアップ</td><td>自動化スクリプトで日次取得</td></tr>
+            <tr><td><span class="freq">週次</span></td><td>ログ整理</td><td>古いログをアーカイブ or 削除</td></tr>
+            <tr><td><span class="freq">週次</span></td><td>ディスク容量</td><td>空き容量20%以上維持</td></tr>
+            <tr><td><span class="freq">月次</span></td><td>脆弱性確認</td><td class="mono">pip audit / npm audit</td></tr>
+            <tr><td><span class="freq">月次</span></td><td>リストア試験</td><td>別環境でバックアップの復元確認</td></tr>
+            <tr><td><span class="freq">四半期</span></td><td>セキュリティレビュー</td><td>認証・権限まわりの点検</td></tr>
+            <tr><td><span class="freq">年次</span></td><td>ランタイム更新</td><td>Python / Node.js のバージョン更新検討</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>監視すべきメトリクス</h3>
+      <ul>
+        <li>サーバープロセスの稼働時間</li>
+        <li>CPU / メモリ使用率</li>
+        <li>ディスク空き容量</li>
+        <li>DBファイルサイズ</li>
+        <li>直近1時間のERRORログ件数</li>
+        <li>レスポンスタイム（体感でも可）</li>
+      </ul>
+
+      <h3>障害対応の優先順位</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:14%">重大度</th><th>症状</th><th style="width:18%">対応時間</th><th>対応者</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip chip-sev1">Sev1</span></td><td>全ユーザーが利用不能</td><td>即時（30分以内）</td><td>全員招集</td></tr>
+            <tr><td><span class="chip chip-sev2">Sev2</span></td><td>一部機能が利用不能</td><td>当日中</td><td>担当者</td></tr>
+            <tr><td><span class="chip chip-sev3">Sev3</span></td><td>単機能の不具合、代替手段あり</td><td>数日以内</td><td>通常対応</td></tr>
+            <tr><td><span class="chip chip-sev4">Sev4</span></td><td>見た目・軽微</td><td>次回リリース</td><td>バックログ</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== 04 ========== -->
+    <section id="s4">
+      <h2><span class="h2-num">04</span>変更管理の運用</h2>
+      <p class="lede">変更履歴は3つの場所に残し、それぞれ役割を分ける。</p>
+
+      <h3>変更ログの残し方</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:38%">場所</th><th>内容</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">docs/リリース履歴.md</td><td>プロジェクトルート。全リリースを時系列で</td></tr>
+            <tr><td class="mono">バックアップ内 VERSION.txt / CHANGES.txt</td><td>そのバックアップ時点の状態</td></tr>
+            <tr><td class="mono">docs/障害履歴.md</td><td>発生・原因・対処・再発防止</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>変更影響の記録（大きな変更時）</h3>
+      <ul>
+        <li>変更前後の設計比較</li>
+        <li>影響を受ける機能一覧</li>
+        <li>移行手順（データ移行含む）</li>
+        <li>ロールバック手順</li>
+      </ul>
+    </section>
+
+    <!-- ========== 05 ========== -->
+    <section id="s5">
+      <h2><span class="h2-num">05</span>Git 化する場合の指針</h2>
+      <p class="lede">SNS管理ツールなど Git 未使用プロジェクトを、将来 Git 化する場合の判断基準と手順。</p>
+
+      <h3>Git 化するメリット</h3>
+      <ul>
+        <li>差分管理が容易（フォルダ丸コピーより効率的）</li>
+        <li>ブランチで並行開発可能</li>
+        <li>コード履歴が細かく追える</li>
+        <li>リモート（GitHub/GitLab 等）でのバックアップ</li>
+      </ul>
+
+      <h3>移行時の注意</h3>
+      <div class="callout callout-warn">
+        <div class="callout-tag">Caution</div>
+        <div class="callout-body">
+          <ul style="margin:0;padding-left:1.2em;">
+            <li>既存バックアップは<b>消さずに保持</b>（Git に全履歴は取り込めない）</li>
+            <li>移行前最終バージョンを初回コミットとする</li>
+            <li><code>.gitignore</code> を先に整備（DB・秘密鍵・ログ・仮想環境を除外）</li>
+            <li>過去バージョンにアクセスしたい場合はバックアップフォルダから復元</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>段階的移行案</h3>
+      <ol>
+        <li>現在の最新版で Git 初期化</li>
+        <li><code>.gitignore</code> 整備</li>
+        <li>開発PCでのみ Git 運用開始（リモート未接続）</li>
+        <li>3ヶ月試行後、社内Git（GitLab 等）へリモート化検討</li>
+      </ol>
+    </section>
+
+    <!-- ========== 06 ========== -->
+    <section id="s6">
+      <h2><span class="h2-num">06</span>ドキュメント整備規定</h2>
+      <p class="lede">各プロジェクトが最低限保持すべきドキュメントと、更新タイミングを定める。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:26%">ファイル</th><th>内容</th><th style="width:26%">更新タイミング</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">README.md</td><td>概要・セットアップ手順</td><td>初期構築時＋大きな変更時</td></tr>
+            <tr><td class="mono">VERSION</td><td>現在のバージョン</td><td>毎リリース</td></tr>
+            <tr><td class="mono">docs/リリース履歴.md</td><td>リリース記録</td><td>毎リリース</td></tr>
+            <tr><td class="mono">docs/デプロイ手順書.md</td><td>本番反映の詳細手順</td><td>手順変更時</td></tr>
+            <tr><td class="mono">docs/障害履歴.md</td><td>発生障害と対応</td><td>障害発生時</td></tr>
+            <tr><td class="mono">docs/仕様書</td><td>業務仕様・データ構造</td><td>仕様変更時</td></tr>
+            <tr><td class="mono">CLAUDE.md</td><td>Claude Code 行動規約</td><td>規約変更時</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== 07 ========== -->
+    <section id="s7">
+      <h2><span class="h2-num">07</span>セキュリティ運用</h2>
+      <p class="lede">リリース後も継続して守るべきセキュリティ運用ルール。</p>
+
+      <ul>
+        <li>秘密鍵・パスワードを<b>定期ローテーション</b>（推奨：半年〜1年）</li>
+        <li>退職者・異動者のアカウントを速やかに無効化</li>
+        <li>ログイン失敗の異常増加を月次で確認</li>
+        <li>依存ライブラリの脆弱性情報を月次で確認</li>
+        <li>個人情報を含むログは保存期間を定める（例：90日）</li>
+        <li>バックアップ媒体の物理的な管理（施錠場所・持ち出し禁止 等）</li>
+      </ul>
+
+      <div class="callout callout-info">
+        <div class="callout-tag">Point</div>
+        <div class="callout-body">
+          セキュリティ運用は「一度設定したら終わり」ではなく <b>継続的な確認</b> がすべて。月次点検（§08）に組み込むことで、担当者が変わっても確実に実施される仕組みにする。
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 08 ========== -->
+    <section id="s8">
+      <h2><span class="h2-num">08</span>月次運用点検チェックリスト</h2>
+      <p class="lede">毎月1回、以下の項目を全て確認する。1つでも未達があれば対応を実施したうえで完了とする。</p>
+
+      <ul class="checklist">
+        <li>全プロジェクトのサービスが正常稼働している</li>
+        <li>直近1ヶ月のリリースが <code>リリース履歴.md</code> に全て記録されている</li>
+        <li>バックアップが規定通り取得されている（直近5世代確認）</li>
+        <li>ディスク空き容量が20%以上</li>
+        <li>依存パッケージの脆弱性チェック実施</li>
+        <li>ログサイズが肥大化していない</li>
+        <li><code>_archive</code> フォルダの古いバックアップ整理</li>
+        <li>障害発生があれば <code>障害履歴.md</code> に記録済み</li>
+      </ul>
+
+      <div class="callout callout-good">
+        <div class="callout-tag">Tip</div>
+        <div class="callout-body">
+          チェック結果は月次でExcelまたはMarkdownに残す。半年〜1年後に振り返ることで、繰り返し発生している問題（容量ひっ迫・特定サービスの停止頻度など）が可視化される。
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 09 ========== -->
+    <section id="s9">
+      <h2><span class="h2-num">09</span>用語集</h2>
+      <p class="lede">引継ぎ時に用語の解釈が分かれないよう、社内での用法を定義する。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:22%">用語</th><th>意味</th></tr></thead>
+          <tbody>
+            <tr><td><b>リリース</b></td><td>本番環境へのプログラム配布</td></tr>
+            <tr><td><b>デプロイ</b></td><td>配置作業そのもの</td></tr>
+            <tr><td><b>ロールバック</b></td><td>前バージョンに戻す</td></tr>
+            <tr><td><b>ホットフィックス</b></td><td>緊急バグ修正リリース</td></tr>
+            <tr><td><b>ステージング</b></td><td>本番相当の検証環境</td></tr>
+            <tr><td><b>マイグレーション</b></td><td>DBスキーマ変更適用</td></tr>
+            <tr><td><b>リグレッションテスト</b></td><td>既存機能の回帰確認</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="end">
+    <div>DOC 03 / リリース後メンテナンスとバージョン管理規定</div>
+    <div>商品開発室 &middot; Rev. 2026-09-11</div>
+  </footer>
+</div>

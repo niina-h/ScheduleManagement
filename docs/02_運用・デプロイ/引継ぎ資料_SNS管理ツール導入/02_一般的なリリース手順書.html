@@ -1,0 +1,834 @@
+<title>一般的なリリース手順書</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@600;800&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+  :root {
+    --paper: #f7f5f0;
+    --paper-2: #efece4;
+    --ink: #1b2430;
+    --ink-2: #2b3542;
+    --muted: #6b6f76;
+    --rule: #d9d4c7;
+    --rule-strong: #b8b09c;
+    --accent: #1f6f6b;
+    --accent-soft: #d6e6e4;
+    --warn: #b25a1f;
+    --warn-soft: #f1dfcf;
+    --good: #3b7a3b;
+    --good-soft: #dbe7d5;
+    --code-bg: #ece8de;
+
+    --font-serif: "Noto Serif JP", "Yu Mincho", "游明朝", serif;
+    --font-sans: "Noto Sans JP", "Yu Gothic UI", "游ゴシック", sans-serif;
+    --font-mono: "JetBrains Mono", "Consolas", monospace;
+
+    --shadow: 0 1px 0 rgba(27,36,48,0.04), 0 8px 24px rgba(27,36,48,0.06);
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --paper: #14181d;
+      --paper-2: #1c2129;
+      --ink: #e6e4dd;
+      --ink-2: #cfcdc4;
+      --muted: #9aa0a8;
+      --rule: #2f3641;
+      --rule-strong: #4a5361;
+      --accent: #6fbfba;
+      --accent-soft: #1f3a38;
+      --warn: #e69056;
+      --warn-soft: #3a2a1c;
+      --good: #7fb37f;
+      --good-soft: #24352a;
+      --code-bg: #232832;
+      --shadow: 0 1px 0 rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14181d;
+    --paper-2: #1c2129;
+    --ink: #e6e4dd;
+    --ink-2: #cfcdc4;
+    --muted: #9aa0a8;
+    --rule: #2f3641;
+    --rule-strong: #4a5361;
+    --accent: #6fbfba;
+    --accent-soft: #1f3a38;
+    --warn: #e69056;
+    --warn-soft: #3a2a1c;
+    --good: #7fb37f;
+    --good-soft: #24352a;
+    --code-bg: #232832;
+    --shadow: 0 1px 0 rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.75;
+    letter-spacing: 0.01em;
+  }
+
+  .doc {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 40px 32px 120px;
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 56px;
+  }
+
+  /* ---------- Masthead ---------- */
+  .mast {
+    grid-column: 1 / -1;
+    border-top: 3px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+    padding: 28px 0 24px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 24px;
+  }
+  .mast-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  .mast-title {
+    font-family: var(--font-serif);
+    font-weight: 800;
+    font-size: clamp(30px, 4vw, 44px);
+    line-height: 1.15;
+    letter-spacing: 0.02em;
+    text-wrap: balance;
+    margin: 0;
+    color: var(--ink);
+  }
+  .mast-sub {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 10px;
+    max-width: 60ch;
+  }
+  .mast-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.9;
+    text-align: right;
+    letter-spacing: 0.05em;
+  }
+  .mast-meta b {
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  /* ---------- Sidebar TOC ---------- */
+  .toc {
+    position: sticky;
+    top: 24px;
+    align-self: start;
+    font-size: 13px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    padding-right: 8px;
+  }
+  .toc-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .toc ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .toc a {
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 8px;
+    padding: 6px 8px;
+    color: var(--ink-2);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    border-radius: 0 4px 4px 0;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .toc a:hover {
+    background: var(--paper-2);
+    border-left-color: var(--accent);
+  }
+  .toc-num {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 700;
+    padding-top: 1px;
+  }
+
+  /* ---------- Main body ---------- */
+  main {
+    min-width: 0;
+    max-width: 78ch;
+  }
+
+  section {
+    margin-bottom: 72px;
+    scroll-margin-top: 24px;
+  }
+  section > h2 {
+    font-family: var(--font-serif);
+    font-weight: 700;
+    font-size: 24px;
+    line-height: 1.3;
+    letter-spacing: 0.03em;
+    margin: 0 0 6px;
+    padding-top: 8px;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+  .h2-num {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    margin-right: 12px;
+    padding: 2px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    vertical-align: middle;
+    font-weight: 700;
+  }
+  .lede {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 12px 0 28px;
+    padding-bottom: 18px;
+    border-bottom: 1px dashed var(--rule);
+    max-width: 65ch;
+  }
+  h3 {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+    margin: 32px 0 12px;
+    padding-left: 12px;
+    border-left: 3px solid var(--accent);
+  }
+  h4 {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--ink-2);
+    margin: 22px 0 8px;
+    letter-spacing: 0.03em;
+  }
+  p { margin: 0 0 14px; max-width: 65ch; }
+  main a { color: var(--accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+
+  /* ---------- Flow diagram ---------- */
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 20px 16px;
+    margin: 8px 0 28px;
+  }
+  .flow-step {
+    flex: 1 1 120px;
+    min-width: 110px;
+    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 6px;
+    position: relative;
+  }
+  .flow-step + .flow-step::before {
+    content: "→";
+    position: absolute;
+    left: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent);
+    font-weight: 700;
+    font-family: var(--font-mono);
+  }
+  .flow-num {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .flow-label {
+    font-family: var(--font-serif);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--ink);
+  }
+
+  /* ---------- Tables ---------- */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 0 0 24px;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--paper);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  thead th {
+    text-align: left;
+    background: var(--paper-2);
+    color: var(--ink);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--rule-strong);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    line-height: 1.65;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:nth-child(even) { background: color-mix(in srgb, var(--paper-2) 50%, transparent); }
+  td.mono, th.mono { font-family: var(--font-mono); font-size: 12.5px; }
+
+  /* ---------- Callouts ---------- */
+  .callout {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 14px;
+    padding: 16px 20px;
+    border-radius: 4px;
+    margin: 20px 0;
+    border-left: 4px solid;
+    background: var(--paper-2);
+  }
+  .callout-warn { border-color: var(--warn); background: var(--warn-soft); }
+  .callout-warn .callout-tag { color: var(--warn); }
+  .callout-good { border-color: var(--good); background: var(--good-soft); }
+  .callout-good .callout-tag { color: var(--good); }
+  .callout-info { border-color: var(--accent); background: var(--accent-soft); }
+  .callout-info .callout-tag { color: var(--accent); }
+  .callout-tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+  .callout-body { color: var(--ink); font-size: 13.5px; line-height: 1.7; }
+  .callout-body p:last-child { margin-bottom: 0; }
+
+  /* ---------- Checklist ---------- */
+  .checklist {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 24px;
+    display: grid;
+    gap: 4px;
+  }
+  .checklist li {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 12px;
+    padding: 8px 14px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    align-items: start;
+  }
+  .checklist li::before {
+    content: "";
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid var(--rule-strong);
+    border-radius: 2px;
+    margin-top: 4px;
+    background: var(--paper);
+  }
+  .checklist-group {
+    margin: 14px 0 8px;
+  }
+  .checklist-group h4 {
+    margin: 18px 0 8px;
+    padding-left: 10px;
+    border-left: 2px solid var(--rule-strong);
+  }
+
+  /* ---------- Code ---------- */
+  pre, code {
+    font-family: var(--font-mono);
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--ink);
+    padding: 14px 18px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    line-height: 1.65;
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    margin: 8px 0 20px;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 2px;
+    font-size: 12.5px;
+  }
+  pre code { background: none; padding: 0; }
+
+  /* ---------- Sev / severity chips ---------- */
+  .chip {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 2px 8px;
+    border-radius: 2px;
+    line-height: 1.5;
+    vertical-align: middle;
+  }
+  .chip-sev1 { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); }
+  .chip-sev2 { background: var(--warn-soft); color: var(--warn); }
+  .chip-sev3 { background: var(--accent-soft); color: var(--accent); }
+  .chip-sev4 { background: var(--paper-2); color: var(--muted); border: 1px solid var(--rule); }
+
+  /* ---------- Footer ---------- */
+  .end {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule);
+    padding-top: 20px;
+    margin-top: 24px;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+  }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 900px) {
+    .doc {
+      grid-template-columns: 1fr;
+      gap: 24px;
+      padding: 24px 18px 80px;
+    }
+    .toc {
+      position: static;
+      max-height: none;
+      padding: 16px;
+      background: var(--paper-2);
+      border-radius: 4px;
+    }
+    .mast { grid-template-columns: 1fr; }
+    .mast-meta { text-align: left; }
+  }
+
+  /* ---------- Print ---------- */
+  @media print {
+    body { background: white; color: black; font-size: 11pt; }
+    .toc, .end { display: none; }
+    .doc { display: block; padding: 0; max-width: none; }
+    section { page-break-inside: avoid; margin-bottom: 24pt; }
+    h2, h3 { page-break-after: avoid; }
+    pre, .table-wrap, .callout { page-break-inside: avoid; }
+  }
+
+  a:focus-visible, .toc a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<div class="doc">
+
+  <header class="mast">
+    <div>
+      <div class="mast-eyebrow">Release Handbook / 引継ぎ用</div>
+      <h1 class="mast-title">一般的なプログラム<br>リリース手順書</h1>
+      <p class="mast-sub">社内で開発した業務ツールを運用端末へリリースする際の標準手順。予定管理システム／SNS管理ツール、その他新規プロジェクトに共通で適用する。</p>
+    </div>
+    <div class="mast-meta">
+      <div>DOC&nbsp;/&nbsp;<b>02</b></div>
+      <div>REV&nbsp;/&nbsp;<b>2026-09-11</b></div>
+      <div>OWNER&nbsp;/&nbsp;<b>商品開発室</b></div>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="目次">
+    <div class="toc-label">Contents</div>
+    <ol>
+      <li><a href="#s1"><span class="toc-num">01</span><span>リリースの基本フロー</span></a></li>
+      <li><a href="#s2"><span class="toc-num">02</span><span>リリース種別の分類</span></a></li>
+      <li><a href="#s3"><span class="toc-num">03</span><span>事前準備チェックリスト</span></a></li>
+      <li><a href="#s4"><span class="toc-num">04</span><span>バックアップ方法</span></a></li>
+      <li><a href="#s5"><span class="toc-num">05</span><span>本番反映の手順</span></a></li>
+      <li><a href="#s6"><span class="toc-num">06</span><span>動作確認項目</span></a></li>
+      <li><a href="#s7"><span class="toc-num">07</span><span>ロールバック手順</span></a></li>
+      <li><a href="#s8"><span class="toc-num">08</span><span>リリース時の禁止事項</span></a></li>
+      <li><a href="#s9"><span class="toc-num">09</span><span>連絡テンプレート</span></a></li>
+      <li><a href="#s10"><span class="toc-num">10</span><span>リリース履歴の残し方</span></a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- ========== 01 ========== -->
+    <section id="s1">
+      <h2><span class="h2-num">01</span>リリースの基本フロー</h2>
+      <p class="lede">各工程は前工程の完了確認を経てから次に進む。飛ばさない・戻らない・記録を残す。この3点だけは徹底する。</p>
+
+      <div class="flow" role="img" aria-label="リリース基本フロー">
+        <div class="flow-step"><div class="flow-num">STEP 1</div><div class="flow-label">事前準備</div></div>
+        <div class="flow-step"><div class="flow-num">STEP 2</div><div class="flow-label">バックアップ</div></div>
+        <div class="flow-step"><div class="flow-num">STEP 3</div><div class="flow-label">ステージング検証</div></div>
+        <div class="flow-step"><div class="flow-num">STEP 4</div><div class="flow-label">本番反映</div></div>
+        <div class="flow-step"><div class="flow-num">STEP 5</div><div class="flow-label">動作確認</div></div>
+        <div class="flow-step"><div class="flow-num">STEP 6</div><div class="flow-label">記録</div></div>
+      </div>
+    </section>
+
+    <!-- ========== 02 ========== -->
+    <section id="s2">
+      <h2><span class="h2-num">02</span>リリース種別の分類</h2>
+      <p class="lede">変更の性質と承認レベルを4分類で判定する。ホットフィックスは事後承認可だが、代わりに障害記録の作成が必須。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>種別</th><th>内容</th><th>例</th><th>承認レベル</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><b>メジャーリリース</b></td><td>破壊的変更・仕様大幅変更</td><td class="mono">v1.x → v2.0</td><td>部門長承認</td></tr>
+            <tr><td><b>マイナーリリース</b></td><td>機能追加・非破壊改善</td><td class="mono">v1.1 → v1.2</td><td>開発リーダー承認</td></tr>
+            <tr><td><b>パッチリリース</b></td><td>バグ修正・軽微改善</td><td class="mono">v1.1.0 → v1.1.1</td><td>開発担当者判断可</td></tr>
+            <tr><td><b>ホットフィックス</b></td><td>緊急バグ対応</td><td class="mono">v1.1.1 → v1.1.2</td><td>事後承認可</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== 03 ========== -->
+    <section id="s3">
+      <h2><span class="h2-num">03</span>事前準備チェックリスト</h2>
+      <p class="lede">リリース実施前に必ず全項目を確認。チェック漏れがある状態で本番反映してはならない。</p>
+
+      <div class="checklist-group">
+        <h4>コード面</h4>
+        <ul class="checklist">
+          <li>対象機能のテストが全て通っている</li>
+          <li>コードレビュー完了</li>
+          <li><code>requirements.txt</code> / <code>package.json</code> が最新化されている</li>
+          <li>開発環境固有の設定（DEBUGフラグ・localhostハードコード等）が残っていない</li>
+          <li><code>.env</code> / 秘密鍵 / 認証情報がコードに混入していない</li>
+        </ul>
+      </div>
+
+      <div class="checklist-group">
+        <h4>環境面</h4>
+        <ul class="checklist">
+          <li>運用端末の空き容量（推奨：最低5GB）</li>
+          <li>運用端末の Python / Node.js バージョン確認</li>
+          <li>使用ポートが他システムと競合しないこと</li>
+          <li>既存稼働システムに影響しないタスク名・サービス名を選定済み</li>
+        </ul>
+      </div>
+
+      <div class="checklist-group">
+        <h4>バックアップ面</h4>
+        <ul class="checklist">
+          <li>本番現行版のバックアップ取得完了</li>
+          <li>本番DBのバックアップ取得完了</li>
+          <li>バックアップ保管先の空き容量確認済み</li>
+        </ul>
+      </div>
+
+      <div class="checklist-group">
+        <h4>承認・連絡面</h4>
+        <ul class="checklist">
+          <li>リリース種別に応じた承認取得済み</li>
+          <li>利用者への事前告知完了（メンテナンス時間含む）</li>
+          <li>リリース失敗時のロールバック手順を確認済み</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ========== 04 ========== -->
+    <section id="s4">
+      <h2><span class="h2-num">04</span>バックアップ方法</h2>
+      <p class="lede">プロジェクト種別ごとにバックアップ方式が異なる。Git 管理／Git 未使用のどちらでも、履歴を残せる形で保存する。</p>
+
+      <h3>Git 管理プロジェクト（例：予定管理システム）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:18%">項目</th><th>運用</th></tr></thead>
+          <tbody>
+            <tr><td><b>コード</b></td><td>Git タグ付け（例：<code>git tag v1.2.0 &amp;&amp; git push --tags</code>）</td></tr>
+            <tr><td><b>DB</b></td><td>別ファイルとしてコピー（例：<code>web_app_20260911.db.bak</code>）</td></tr>
+            <tr><td><b>保管期間</b></td><td>タグは永続、DBバックアップは最低30日</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Git 未使用プロジェクト（例：SNS管理ツール）</h3>
+      <p>フォルダバックアップ <b>そのものが履歴</b> となる方式。命名規則を守らないと世代管理が破綻するため厳守する。</p>
+
+      <h4>命名規則</h4>
+      <pre><code>{プロジェクト名}_v{バージョン}_{YYYYMMDD_HHMM}
+
+例) SnsManagementTool_v1.2.0_20260911_1830</code></pre>
+
+      <h4>メタ情報（バックアップ直下に必ず添付）</h4>
+      <pre><code>VERSION.txt
+────────────────────────
+バージョン: 1.0.0
+バックアップ日時: 2026-09-11 10:30
+作成者: (氏名)
+変更概要: (一行で)
+リリース種別: メジャー／マイナー／パッチ／ホットフィックス
+関連チケット: (あれば)</code></pre>
+
+      <div class="callout callout-info">
+        <div class="callout-tag">保持ルール</div>
+        <div class="callout-body">
+          直近5世代必須。それ以前は月次アーカイブ（<code>_archive/</code>）へ移動。年次で古いものを削除判断。<b>メジャーリリース版は永年保管・削除禁止</b>。
+        </div>
+      </div>
+
+      <h4>バックアップコマンド例（Windows / robocopy）</h4>
+      <pre><code>robocopy "C:\DEV\プロジェクト名" ^
+         "D:\Backup\プロジェクト名\プロジェクト名_v1.0.0_20260911_1030" ^
+         /E /XD __pycache__ node_modules .venv .git</code></pre>
+      <p style="font-size:13px;color:var(--muted)">除外対象：<code>__pycache__</code>, <code>node_modules</code>, <code>.venv</code>, ビルド中間物</p>
+    </section>
+
+    <!-- ========== 05 ========== -->
+    <section id="s5">
+      <h2><span class="h2-num">05</span>本番反映の手順</h2>
+      <p class="lede">初回リリースと更新リリースで手順が分岐する。更新時は保護ファイルの扱いを最優先で確認する。</p>
+
+      <h3>初回リリース</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:8%">#</th><th>手順</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td>Python / Node.js 等のランタイム導入確認</td></tr>
+            <tr><td class="mono">2</td><td>配置先ディレクトリ作成</td></tr>
+            <tr><td class="mono">3</td><td>ソースコード配置（開発固有ファイルは除外）</td></tr>
+            <tr><td class="mono">4</td><td>依存パッケージインストール</td></tr>
+            <tr><td class="mono">5</td><td>設定ファイル（<code>.env</code>相当）を運用端末側で新規作成（コピー禁止）</td></tr>
+            <tr><td class="mono">6</td><td>起動テスト（フォアグラウンド）</td></tr>
+            <tr><td class="mono">7</td><td>サービス登録（タスクスケジューラ／Windowsサービス／systemd 等）</td></tr>
+            <tr><td class="mono">8</td><td>ファイアウォール開放</td></tr>
+            <tr><td class="mono">9</td><td>起動と疎通確認</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>更新リリース</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:8%">#</th><th>手順</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td>事前バックアップ取得（本手順書 §04）</td></tr>
+            <tr><td class="mono">2</td><td>サーバー停止</td></tr>
+            <tr><td class="mono">3</td><td>ソースコード同期（<b>DB・鍵・ログは絶対に上書きしない</b>）</td></tr>
+            <tr><td class="mono">4</td><td>依存パッケージ差分適用</td></tr>
+            <tr><td class="mono">5</td><td>スキーマ変更ありの場合はマイグレーション実行</td></tr>
+            <tr><td class="mono">6</td><td>サーバー再起動</td></tr>
+            <tr><td class="mono">7</td><td>動作確認</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>保護すべきファイル（更新時に上書き禁止）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ファイル</th><th>理由</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">*.db / *.sqlite / data.json 等</td><td>業務データ全て</td></tr>
+            <tr><td class="mono">.secret_key / *.pem / *.key</td><td>変更でログイン失効・接続断</td></tr>
+            <tr><td class="mono">.env</td><td>本番接続情報</td></tr>
+            <tr><td class="mono">*.log</td><td>障害調査に必要</td></tr>
+            <tr><td>ユーザーアップロードファイル</td><td>業務資産</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== 06 ========== -->
+    <section id="s6">
+      <h2><span class="h2-num">06</span>動作確認項目（リリース直後）</h2>
+      <p class="lede">9項目のうち1つでも失敗したら §07 のロールバックを検討する。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:6%">#</th><th>確認項目</th><th>確認方法</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td>プロセス起動</td><td class="mono">タスクマネージャー or schtasks /Query</td></tr>
+            <tr><td class="mono">2</td><td>ポートListen</td><td class="mono">netstat -ano | findstr :ポート番号</td></tr>
+            <tr><td class="mono">3</td><td>ブラウザアクセス</td><td>ログイン画面表示</td></tr>
+            <tr><td class="mono">4</td><td>ログイン</td><td>既存ユーザーで正常ログイン</td></tr>
+            <tr><td class="mono">5</td><td>主要CRUD</td><td>追加・参照・更新・削除の代表操作</td></tr>
+            <tr><td class="mono">6</td><td>新機能</td><td>リリース内容に応じた項目</td></tr>
+            <tr><td class="mono">7</td><td>既存機能</td><td>主要業務フローの回帰テスト</td></tr>
+            <tr><td class="mono">8</td><td>エラーログ</td><td>直近1時間のログにERROR/CRITICAL がないこと</td></tr>
+            <tr><td class="mono">9</td><td>他システム影響</td><td>同一端末稼働の他サービスも正常であること</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ========== 07 ========== -->
+    <section id="s7">
+      <h2><span class="h2-num">07</span>ロールバック手順</h2>
+      <p class="lede">問題発生時は迷わずロールバック。原因追及は事後で良い。</p>
+
+      <div class="callout callout-warn">
+        <div class="callout-tag">判断基準</div>
+        <div class="callout-body">「原因が分かってから戻す」ではなく「10分で復旧しなければ戻す」。復旧優先で判断する。</div>
+      </div>
+
+      <h3>コード面</h3>
+      <ol>
+        <li>サーバー停止</li>
+        <li>バックアップからソースコードを復元（<code>robocopy /MIR</code> を使用）</li>
+        <li>依存パッケージを旧バージョンに戻す（バックアップ内の <code>requirements.txt</code> を使用）</li>
+        <li>サーバー再起動</li>
+        <li>動作確認</li>
+      </ol>
+
+      <h3>DB面</h3>
+      <ol>
+        <li>サーバー停止</li>
+        <li>現状DBを <code>_failed.db</code> にリネーム（<b>削除しない</b>）</li>
+        <li>バックアップDBを本番位置にコピー</li>
+        <li>サーバー再起動</li>
+        <li>業務データが復旧していることを確認</li>
+      </ol>
+
+      <h3>ロールバック後の対応</h3>
+      <ul>
+        <li>発生事象・原因・対処内容を <b>障害記録</b> として文書化</li>
+        <li>修正版リリース時は再発防止策を明記</li>
+      </ul>
+    </section>
+
+    <!-- ========== 08 ========== -->
+    <section id="s8">
+      <h2><span class="h2-num">08</span>リリース時の禁止事項</h2>
+      <p class="lede">下記はいずれも過去にトラブルを起こしている。絶対にやらない。</p>
+
+      <div class="callout callout-warn">
+        <div class="callout-tag">DO NOT</div>
+        <div class="callout-body">
+          <ul style="margin:0;padding-left:1.2em;">
+            <li>事前告知なしの本番反映</li>
+            <li>バックアップ未取得のままの上書き</li>
+            <li>本番DBの直接編集</li>
+            <li><code>.env</code> / 秘密鍵の他端末コピー</li>
+            <li>「動くはず」での確認省略</li>
+            <li>金曜夕方・連休前日のリリース（緊急対応リソースが確保できない）</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 09 ========== -->
+    <section id="s9">
+      <h2><span class="h2-num">09</span>リリース連絡テンプレート</h2>
+      <p class="lede">利用者への告知はテンプレートを使う。個別文言で書かない。</p>
+
+      <h3>事前告知（1営業日前推奨）</h3>
+<pre><code>件名: 【予告】(システム名) v(バージョン) リリースのお知らせ
+
+日時: 2026-09-11 (金) 18:00 〜 18:30
+影響: サービス一時停止（約10分間）
+内容:
+  - (機能追加内容)
+  - (バグ修正内容)
+ご質問: (連絡先)</code></pre>
+
+      <h3>リリース完了通知</h3>
+<pre><code>件名: 【完了】(システム名) v(バージョン) リリース完了
+
+日時: 2026-09-11 (金) 18:15 完了
+主な変更:
+  - (箇条書き)
+確認事項: 通常通りご利用可能です。
+不具合がありましたら (連絡先) までご連絡ください。</code></pre>
+    </section>
+
+    <!-- ========== 10 ========== -->
+    <section id="s10">
+      <h2><span class="h2-num">10</span>リリース履歴の残し方</h2>
+      <p class="lede">プロジェクトルートの <code>docs/リリース履歴.md</code> に必ず追記。この記録がない＝リリースしていないと同義。</p>
+
+<pre><code>## v1.2.0 - 2026-09-11
+- 実施者: (氏名)
+- 種別: マイナーリリース
+- 主な変更:
+  - 機能A追加
+  - 機能Bのパフォーマンス改善
+- バックアップ場所: D:\Backup\...
+- 確認結果: 正常稼働
+- 関連チケット/PR: #123</code></pre>
+
+      <div class="callout callout-good">
+        <div class="callout-tag">要点</div>
+        <div class="callout-body">
+          <b>何を・いつ・誰が・どこにバックアップしたか</b>の4点が揃っていれば、他人でも過去のリリース状況を追跡できる。この4点は絶対に省略しない。
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="end">
+    <div>DOC 02 / 一般的なリリース手順書</div>
+    <div>商品開発室 &middot; Rev. 2026-09-11</div>
+  </footer>
+</div>
