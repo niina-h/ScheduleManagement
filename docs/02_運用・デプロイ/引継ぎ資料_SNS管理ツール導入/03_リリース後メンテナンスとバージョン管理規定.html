@@ -646,24 +646,65 @@
         </table>
       </div>
 
-      <h3>フォルダバックアップの命名規則</h3>
-      <pre><code>{プロジェクト名}_v{バージョン}_{YYYYMMDD_HHMM}
+      <h3>2階層バックアップ運用（NAS 正本 + ローカル ロールバック用）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:14%">種別</th><th>保管先</th><th>役割</th><th style="width:14%">保管期間</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>A. NAS 正本</b></td>
+              <td class="mono">\\crown-commune\...\v{バージョン}\</td>
+              <td>履歴の正本・監査・過去復元・部門内共有</td>
+              <td><b>永年</b></td>
+            </tr>
+            <tr>
+              <td><b>B. ローカル</b></td>
+              <td class="mono">C:\Backup\SnsManagementTool\</td>
+              <td>障害時の高速ロールバック</td>
+              <td>直近5世代</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-例) SnsManagementTool_v1.2.0_20260911_1830</code></pre>
+      <div class="callout callout-warn">
+        <div class="callout-tag">必須</div>
+        <div class="callout-body">
+          <b>A（NAS 正本）が未取得のまま本番反映は禁止</b>。正本欠落＝バージョン管理の破綻。
+        </div>
+      </div>
+
+      <h3>命名規則</h3>
+      <pre><code># A. NAS 側（バージョンフォルダ）
+v1.2.0
+（同一バージョン再リリース時は日時付き：v1.2.0_20260911_1830）
+
+# B. ローカル側（プロジェクト名 + バージョン + 日時）
+SnsManagementTool_v1.2.0_20260911_1830</code></pre>
 
       <h3>保管フォルダ構成の例</h3>
-<pre class="tree">D:\Backup\SnsManagementTool\
+      <p style="font-size:13px;margin-bottom:6px;"><b>A. NAS 側（正本）</b></p>
+<pre class="tree">\\crown-commune\cloud\Data\商品開発室\50 DEV\54SNS管理ツール\05_開発\03_ソースコード・成果物\
+├── <span class="latest">v1.2.0\</span>                     <span class="comment">← 最新</span>
+│   ├── (プロジェクト全体、.venv 除外)
+│   ├── <span class="latest">VERSION.txt</span>              <span class="comment">← 必須</span>
+│   └── <span class="latest">CHANGES.txt</span>              <span class="comment">← 必須</span>
+├── v1.1.2\
+├── v1.1.1\
+├── v1.1.0\
+└── v1.0.0\                      <span class="comment">← 全世代を永年保管</span></pre>
+
+      <p style="font-size:13px;margin-bottom:6px;"><b>B. ローカル側（運用PC）</b></p>
+<pre class="tree">C:\Backup\SnsManagementTool\
 ├── <span class="latest">SnsManagementTool_v1.2.0_20260911_1830\</span>   <span class="comment">← 最新</span>
-│   ├── (プロジェクト全体)
-│   ├── <span class="latest">VERSION.txt</span>                            <span class="comment">← 必須</span>
-│   └── <span class="latest">CHANGES.txt</span>                            <span class="comment">← 必須（変更内容詳細）</span>
+│   ├── (プロジェクト全体、.venv 除外)
+│   ├── <span class="latest">VERSION.txt</span>
+│   └── <span class="latest">CHANGES.txt</span>
 ├── SnsManagementTool_v1.1.2_20260820_1000\
 ├── SnsManagementTool_v1.1.1_20260805_1500\
 ├── SnsManagementTool_v1.1.0_20260715_1200\
 ├── SnsManagementTool_v1.0.0_20260701_0900\
-└── <span class="archive">_archive\</span>                                  <span class="comment">← 6世代目以降を移動</span>
-    ├── SnsManagementTool_v0.9.0_20260615_1100\
-    └── ...</pre>
+└── <span class="comment">(直近5世代のみ保持。それ以前は削除可＝A に恒久版あり)</span></pre>
 
       <h3>VERSION.txt テンプレート</h3>
 <pre><code>============================================
@@ -706,13 +747,24 @@
 - ホットフィックス: ログイン失敗時のエラー画面</code></pre>
 
       <h3>保管期間ルール</h3>
+      <p style="font-size:13px;margin-bottom:6px;"><b>A. NAS リリース版アーカイブ</b></p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>世代</th><th>保管場所</th><th>期間</th></tr></thead>
+          <thead><tr><th style="width:22%">世代</th><th>保管場所</th><th style="width:22%">期間</th></tr></thead>
           <tbody>
-            <tr><td>直近5世代</td><td>メインフォルダ</td><td>常時保持</td></tr>
-            <tr><td>6世代目以降</td><td class="mono">_archive/</td><td>12ヶ月</td></tr>
-            <tr><td>メジャーリリース版</td><td>永年保管</td><td><b>削除禁止</b></td></tr>
+            <tr><td>全世代</td><td class="mono">\\crown-commune\...\v{バージョン}\</td><td><b>永年（削除禁止）</b></td></tr>
+            <tr><td>メジャーリリース版</td><td>同上</td><td>特に削除禁止</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p style="font-size:13px;margin-bottom:6px;"><b>B. ローカルバックアップ</b></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:22%">世代</th><th>保管場所</th><th style="width:22%">期間</th></tr></thead>
+          <tbody>
+            <tr><td>直近5世代</td><td class="mono">C:\Backup\SnsManagementTool\</td><td>常時保持</td></tr>
+            <tr><td>6世代目以降</td><td>削除可</td><td>A（NAS）に恒久版があるため</td></tr>
           </tbody>
         </table>
       </div>

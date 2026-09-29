@@ -613,36 +613,77 @@
         </table>
       </div>
 
-      <h3>Git 未使用プロジェクト（例：SNS管理ツール）</h3>
-      <p>フォルダバックアップ <b>そのものが履歴</b> となる方式。命名規則を守らないと世代管理が破綻するため厳守する。</p>
+      <h3>Git 未使用プロジェクト（例：SNS管理ツール）— 2階層バックアップ</h3>
+      <p><b>A. リリース版アーカイブ（NAS・正本）</b>と <b>B. ローカルバックアップ（運用PC・ロールバック用）</b>の両方を必ず取得する。A が未取得のまま本番反映してはならない。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:16%">種別</th><th>保管先</th><th>役割</th><th>保管期間</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>A. NAS 正本</b></td>
+              <td class="mono">\\crown-commune\...\v{バージョン}\</td>
+              <td>履歴の正本・監査・過去復元・部門内共有</td>
+              <td><b>永年</b></td>
+            </tr>
+            <tr>
+              <td><b>B. ローカル</b></td>
+              <td class="mono">C:\Backup\SnsManagementTool\</td>
+              <td>障害時の高速ロールバック</td>
+              <td>直近5世代</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <h4>命名規則</h4>
-      <pre><code>{プロジェクト名}_v{バージョン}_{YYYYMMDD_HHMM}
+      <pre><code># A. NAS 側（バージョンフォルダ）
+v1.2.0
+（同一バージョン再リリース時は日時付き：v1.2.0_20260911_1830）
 
-例) SnsManagementTool_v1.2.0_20260911_1830</code></pre>
+# B. ローカル側（プロジェクト名 + バージョン + 日時）
+SnsManagementTool_v1.2.0_20260911_1830</code></pre>
 
-      <h4>メタ情報（バックアップ直下に必ず添付）</h4>
+      <h4>メタ情報（A・B の両方に添付）</h4>
       <pre><code>VERSION.txt
 ────────────────────────
 バージョン: 1.0.0
-バックアップ日時: 2026-09-11 10:30
+リリース日時: 2026-09-11 10:30
 作成者: (氏名)
-変更概要: (一行で)
 リリース種別: メジャー／マイナー／パッチ／ホットフィックス
+変更概要: (一行で)
+除外物: .venv, __pycache__, .git, node_modules, *.log
+本番配置先: (例: C:\Apps\プロジェクト名)
+運用PC: (例: D2KMXR3 / 192.168.70.141)
 関連チケット: (あれば)</code></pre>
+
+      <div class="callout callout-warn">
+        <div class="callout-tag">必須</div>
+        <div class="callout-body">
+          <b>A（NAS 正本）が未取得のまま本番反映は禁止</b>。B（ローカル）だけでは正本が残らず、後日の監査・引継ぎ・過去復元ができない。NAS アクセス不可の場合は作業を中断すること。
+        </div>
+      </div>
 
       <div class="callout callout-info">
         <div class="callout-tag">保持ルール</div>
         <div class="callout-body">
-          直近5世代必須。それ以前は月次アーカイブ（<code>_archive/</code>）へ移動。年次で古いものを削除判断。<b>メジャーリリース版は永年保管・削除禁止</b>。
+          A（NAS）は <b>全世代を永年保管・削除禁止</b>。B（ローカル）は直近5世代のみ保持し、それ以前は削除可（A に恒久版があるため）。
         </div>
       </div>
 
       <h4>バックアップコマンド例（Windows / robocopy）</h4>
+
+      <p style="font-size:13px;margin-bottom:6px;"><b>A. NAS へのリリース版アーカイブ</b>（<code>.venv</code> 必須除外）</p>
       <pre><code>robocopy "C:\DEV\プロジェクト名" ^
-         "D:\Backup\プロジェクト名\プロジェクト名_v1.0.0_20260911_1030" ^
-         /E /XD __pycache__ node_modules .venv .git</code></pre>
-      <p style="font-size:13px;color:var(--muted)">除外対象：<code>__pycache__</code>, <code>node_modules</code>, <code>.venv</code>, ビルド中間物</p>
+         "\\crown-commune\cloud\Data\商品開発室\50 DEV\54SNS管理ツール\05_開発\03_ソースコード・成果物\v1.0.0" ^
+         /E /XD .venv __pycache__ .git node_modules /XF *.log</code></pre>
+
+      <p style="font-size:13px;margin-bottom:6px;"><b>B. ローカルへのロールバック用バックアップ</b></p>
+      <pre><code>robocopy "C:\Apps\SnsManagementTool" ^
+         "C:\Backup\SnsManagementTool\SnsManagementTool_v1.0.0_20260911_1030" ^
+         /E /XD __pycache__ .venv</code></pre>
+
+      <p style="font-size:13px;color:var(--muted)">共通除外：<code>__pycache__</code>, <code>node_modules</code>, <code>.venv</code>, <code>.git</code>, <code>*.log</code>, ビルド中間物。<br><b>★ <code>.venv</code> は必ず除外</b>：環境依存で復元先で動かず、容量だけ肥大化する。</p>
     </section>
 
     <!-- ========== 05 ========== -->

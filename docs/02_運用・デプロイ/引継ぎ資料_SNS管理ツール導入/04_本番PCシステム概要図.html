@@ -1,0 +1,675 @@
+<title>本番PC システム概要図</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@600;800&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+  :root {
+    --paper: #f7f5f0;
+    --paper-2: #efece4;
+    --ink: #1b2430;
+    --ink-2: #2b3542;
+    --muted: #6b6f76;
+    --rule: #d9d4c7;
+    --rule-strong: #b8b09c;
+    --accent: #1f6f6b;
+    --accent-soft: #d6e6e4;
+    --sched: #1f6f6b;      /* 予定管理: 深いティール */
+    --sched-soft: #d6e6e4;
+    --sns: #7a3f8f;        /* SNS管理: 濃い紫 */
+    --sns-soft: #ead8f1;
+    --shared: #b0895c;     /* 共有: 砂色 */
+    --shared-soft: #ecdfcb;
+    --warn: #b25a1f;
+    --warn-soft: #f1dfcf;
+    --code-bg: #ece8de;
+
+    --font-serif: "Noto Serif JP", "Yu Mincho", "游明朝", serif;
+    --font-sans: "Noto Sans JP", "Yu Gothic UI", "游ゴシック", sans-serif;
+    --font-mono: "JetBrains Mono", "Consolas", monospace;
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --paper: #14181d;
+      --paper-2: #1c2129;
+      --ink: #e6e4dd;
+      --ink-2: #cfcdc4;
+      --muted: #9aa0a8;
+      --rule: #2f3641;
+      --rule-strong: #4a5361;
+      --accent: #6fbfba;
+      --accent-soft: #1f3a38;
+      --sched: #6fbfba;
+      --sched-soft: #1f3a38;
+      --sns: #c9a0d9;
+      --sns-soft: #3a2540;
+      --shared: #d1b593;
+      --shared-soft: #3b3020;
+      --warn: #e69056;
+      --warn-soft: #3a2a1c;
+      --code-bg: #232832;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14181d;
+    --paper-2: #1c2129;
+    --ink: #e6e4dd;
+    --ink-2: #cfcdc4;
+    --muted: #9aa0a8;
+    --rule: #2f3641;
+    --rule-strong: #4a5361;
+    --accent: #6fbfba;
+    --accent-soft: #1f3a38;
+    --sched: #6fbfba;
+    --sched-soft: #1f3a38;
+    --sns: #c9a0d9;
+    --sns-soft: #3a2540;
+    --shared: #d1b593;
+    --shared-soft: #3b3020;
+    --warn: #e69056;
+    --warn-soft: #3a2a1c;
+    --code-bg: #232832;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.7;
+    letter-spacing: 0.01em;
+  }
+
+  .doc {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 32px 100px;
+  }
+
+  /* Masthead */
+  .mast {
+    border-top: 3px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+    padding: 28px 0 24px;
+    margin-bottom: 40px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 24px;
+  }
+  .mast-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  .mast-title {
+    font-family: var(--font-serif);
+    font-weight: 800;
+    font-size: clamp(28px, 3.6vw, 40px);
+    line-height: 1.18;
+    letter-spacing: 0.02em;
+    text-wrap: balance;
+    margin: 0;
+    color: var(--ink);
+  }
+  .mast-sub {
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: 10px;
+    max-width: 62ch;
+  }
+  .mast-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.9;
+    text-align: right;
+    letter-spacing: 0.05em;
+  }
+  .mast-meta b { color: var(--ink); font-weight: 700; }
+
+  /* Section header */
+  .sec-h {
+    font-family: var(--font-serif);
+    font-weight: 700;
+    font-size: 20px;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+    margin: 48px 0 4px;
+  }
+  .sec-h .h2-num {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    margin-right: 12px;
+    padding: 2px 8px;
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    vertical-align: middle;
+    font-weight: 700;
+  }
+  .lede {
+    color: var(--muted);
+    font-size: 13.5px;
+    margin: 8px 0 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px dashed var(--rule);
+    max-width: 68ch;
+  }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 22px;
+    margin: 0 0 24px;
+    padding: 14px 18px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    font-size: 12.5px;
+  }
+  .legend-item { display: inline-flex; align-items: center; gap: 8px; }
+  .swatch {
+    width: 16px; height: 16px;
+    border-radius: 2px;
+    display: inline-block;
+    border: 1px solid rgba(0,0,0,0.1);
+  }
+  .swatch-sched { background: var(--sched); }
+  .swatch-sns { background: var(--sns); }
+  .swatch-shared { background: var(--shared); }
+  .swatch-user {
+    background: transparent;
+    border: 1.5px dashed var(--muted);
+  }
+
+  /* Diagram wrap */
+  .diagram-wrap {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 24px;
+    margin: 0 0 32px;
+    overflow-x: auto;
+  }
+  .diagram-wrap svg { display: block; max-width: 100%; height: auto; }
+
+  /* Info tables */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 0 0 24px;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--paper);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  thead th {
+    text-align: left;
+    background: var(--paper-2);
+    color: var(--ink);
+    font-weight: 700;
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--rule-strong);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    line-height: 1.6;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: var(--font-mono); font-size: 12px; }
+  td.center { text-align: center; }
+  td .tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 1px 8px;
+    border-radius: 2px;
+    line-height: 1.5;
+  }
+  .tag-sched { background: var(--sched-soft); color: var(--sched); }
+  .tag-sns { background: var(--sns-soft); color: var(--sns); }
+  .tag-shared { background: var(--shared-soft); color: var(--shared); }
+
+  /* Callout */
+  .callout {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 14px;
+    padding: 14px 20px;
+    border-radius: 4px;
+    margin: 8px 0 24px;
+    border-left: 4px solid var(--warn);
+    background: var(--warn-soft);
+  }
+  .callout-tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--warn);
+    padding-top: 2px;
+  }
+  .callout-body { color: var(--ink); font-size: 13px; line-height: 1.7; }
+  .callout-body ul { margin: 4px 0 0; padding-left: 1.2em; }
+
+  code {
+    font-family: var(--font-mono);
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 2px;
+    font-size: 12px;
+  }
+
+  /* Two-col spec grid */
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 0 0 24px;
+  }
+  .split-card {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 18px 20px;
+    border-top: 3px solid;
+  }
+  .split-card.sched { border-top-color: var(--sched); }
+  .split-card.sns { border-top-color: var(--sns); }
+  .split-tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .sched .split-tag { color: var(--sched); }
+  .sns .split-tag { color: var(--sns); }
+  .split-card h4 {
+    font-family: var(--font-serif);
+    font-weight: 700;
+    font-size: 16px;
+    margin: 0 0 12px;
+    color: var(--ink);
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .split-card dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 84px 1fr;
+    gap: 4px 12px;
+    font-size: 12.5px;
+  }
+  .split-card dt {
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding-top: 3px;
+  }
+  .split-card dd { margin: 0; font-family: var(--font-mono); font-size: 12px; color: var(--ink); }
+  @media (max-width: 720px) { .split { grid-template-columns: 1fr; } }
+
+  /* Footer */
+  .end {
+    border-top: 1px solid var(--rule);
+    padding-top: 20px;
+    margin-top: 40px;
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+  }
+
+  @media (max-width: 900px) {
+    .doc { padding: 24px 18px 80px; }
+    .mast { grid-template-columns: 1fr; }
+    .mast-meta { text-align: left; }
+  }
+
+  @media print {
+    body { background: white; color: black; font-size: 10.5pt; }
+    .end { display: none; }
+    .doc { padding: 0; max-width: none; }
+    .diagram-wrap, .table-wrap, .callout, .split-card { page-break-inside: avoid; }
+  }
+
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="doc">
+
+  <header class="mast">
+    <div>
+      <div class="mast-eyebrow">System Overview / 引継ぎ用</div>
+      <h1 class="mast-title">本番PC システム概要図</h1>
+      <p class="mast-sub">1台の運用PC上で、予定管理システムと SNS管理ツールが同居して稼働している構成。両システムはポート・タスク名・配置フォルダが完全に分離され、独立して動作する。いずれも SYSTEM 権限で自動起動するため、ユーザーのログインは不要。</p>
+    </div>
+    <div class="mast-meta">
+      <div>DOC&nbsp;/&nbsp;<b>04</b></div>
+      <div>REV&nbsp;/&nbsp;<b>2026-09-28</b></div>
+      <div>OWNER&nbsp;/&nbsp;<b>商品開発室</b></div>
+    </div>
+  </header>
+
+  <!-- ================ 01 概要図 ================ -->
+  <h2 class="sec-h"><span class="h2-num">01</span>全体構成図</h2>
+  <p class="lede">利用者PC → 社内LAN → 運用PC（1台）で2システムが同居。それぞれ別ポート・別タスク・別データ領域。</p>
+
+  <div class="legend">
+    <span class="legend-item"><span class="swatch swatch-sched"></span>予定管理システム（Flask/waitress）</span>
+    <span class="legend-item"><span class="swatch swatch-sns"></span>SNS管理ツール（Streamlit）</span>
+    <span class="legend-item"><span class="swatch swatch-shared"></span>共有リソース（OS / Python / ネットワーク）</span>
+    <span class="legend-item"><span class="swatch swatch-user"></span>利用者PC</span>
+  </div>
+
+  <div class="diagram-wrap">
+    <svg viewBox="0 0 1120 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="本番PCシステム概要図">
+      <defs>
+        <marker id="arrow-sched" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--sched)"/>
+        </marker>
+        <marker id="arrow-sns" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--sns)"/>
+        </marker>
+        <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+
+      <!-- ==== Left: 利用者PC群 ==== -->
+      <g font-family="var(--font-mono)" font-size="10" fill="var(--muted)">
+        <text x="80" y="30" letter-spacing="2">CLIENTS</text>
+      </g>
+      <!-- Client boxes -->
+      <g>
+        <rect x="30" y="60" width="130" height="70" rx="4" fill="var(--paper)" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="4,3"/>
+        <text x="95" y="90" text-anchor="middle" font-family="var(--font-sans)" font-size="13" font-weight="700" fill="var(--ink)">利用者PC A</text>
+        <text x="95" y="110" text-anchor="middle" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)">ブラウザ</text>
+
+        <rect x="30" y="150" width="130" height="70" rx="4" fill="var(--paper)" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="4,3"/>
+        <text x="95" y="180" text-anchor="middle" font-family="var(--font-sans)" font-size="13" font-weight="700" fill="var(--ink)">利用者PC B</text>
+        <text x="95" y="200" text-anchor="middle" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)">ブラウザ</text>
+
+        <rect x="30" y="240" width="130" height="70" rx="4" fill="var(--paper)" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="4,3"/>
+        <text x="95" y="270" text-anchor="middle" font-family="var(--font-sans)" font-size="13" font-weight="700" fill="var(--ink)">利用者PC …</text>
+        <text x="95" y="290" text-anchor="middle" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)">ブラウザ</text>
+      </g>
+
+      <!-- LAN label -->
+      <g>
+        <line x1="200" y1="185" x2="320" y2="185" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#arrow-muted)"/>
+        <rect x="220" y="160" width="80" height="22" rx="11" fill="var(--paper-2)" stroke="var(--muted)" stroke-width="1"/>
+        <text x="260" y="176" text-anchor="middle" font-family="var(--font-mono)" font-size="10.5" fill="var(--ink)">社内LAN</text>
+      </g>
+
+      <!-- ==== Center: 運用PC 大枠 ==== -->
+      <g>
+        <rect x="340" y="60" width="620" height="640" rx="8" fill="var(--paper)" stroke="var(--shared)" stroke-width="2.5"/>
+        <rect x="340" y="60" width="620" height="34" fill="var(--shared-soft)" stroke="none"/>
+        <text x="360" y="82" font-family="var(--font-serif)" font-size="15" font-weight="700" fill="var(--ink)">運用PC　—　Windows 10 / 11</text>
+        <text x="940" y="82" text-anchor="end" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)" letter-spacing="1">HOST</text>
+      </g>
+
+      <!-- Firewall band -->
+      <g>
+        <rect x="360" y="110" width="580" height="30" rx="4" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1"/>
+        <text x="378" y="130" font-family="var(--font-mono)" font-size="11" font-weight="700" fill="var(--warn)" letter-spacing="1">FIREWALL</text>
+        <text x="510" y="130" font-family="var(--font-mono)" font-size="11" fill="var(--ink)">TCP :5000 許可 (ScheduleServer) &nbsp;/&nbsp; TCP :5010 許可 (SnsManagementServer)</text>
+      </g>
+
+      <!-- Task Scheduler band -->
+      <g>
+        <rect x="360" y="152" width="580" height="30" rx="4" fill="var(--shared-soft)" stroke="var(--shared)" stroke-width="1"/>
+        <text x="378" y="172" font-family="var(--font-mono)" font-size="11" font-weight="700" fill="var(--shared)" letter-spacing="1">TASK SCHEDULER (ONSTART / SYSTEM)</text>
+        <text x="695" y="172" font-family="var(--font-mono)" font-size="11" fill="var(--ink)">ScheduleServer &nbsp;·&nbsp; SnsManagementServer</text>
+      </g>
+
+      <!-- ==== 予定管理システム (left inner) ==== -->
+      <g>
+        <rect x="365" y="200" width="275" height="380" rx="6" fill="var(--sched-soft)" stroke="var(--sched)" stroke-width="1.6"/>
+        <rect x="365" y="200" width="275" height="30" fill="var(--sched)" stroke="none"/>
+        <text x="378" y="220" font-family="var(--font-serif)" font-size="13" font-weight="700" fill="#fff">予定管理システム（稼働中）</text>
+
+        <!-- Process -->
+        <rect x="385" y="248" width="235" height="72" rx="4" fill="var(--paper)" stroke="var(--sched)" stroke-width="1.2"/>
+        <text x="399" y="268" font-family="var(--font-mono)" font-size="10.5" fill="var(--sched)" letter-spacing="1.5" font-weight="700">PROCESS</text>
+        <text x="399" y="288" font-family="var(--font-sans)" font-size="13" font-weight="700" fill="var(--ink)">run_production.py</text>
+        <text x="399" y="306" font-family="var(--font-mono)" font-size="11" fill="var(--muted)">pythonw + waitress</text>
+        <text x="606" y="306" text-anchor="end" font-family="var(--font-mono)" font-size="11" fill="var(--sched)" font-weight="700">:5000</text>
+
+        <!-- App dir -->
+        <rect x="385" y="336" width="235" height="60" rx="4" fill="var(--paper)" stroke="var(--sched)" stroke-width="1.2"/>
+        <text x="399" y="356" font-family="var(--font-mono)" font-size="10.5" fill="var(--sched)" letter-spacing="1.5" font-weight="700">APP DIR</text>
+        <text x="399" y="374" font-family="var(--font-mono)" font-size="11.5" fill="var(--ink)">C:\App\ScheduleManagement\</text>
+        <text x="399" y="390" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)">web_app / reports / deploy</text>
+
+        <!-- DB -->
+        <rect x="385" y="412" width="235" height="80" rx="4" fill="var(--paper)" stroke="var(--sched)" stroke-width="1.2"/>
+        <text x="399" y="432" font-family="var(--font-mono)" font-size="10.5" fill="var(--sched)" letter-spacing="1.5" font-weight="700">DATA</text>
+        <text x="399" y="450" font-family="var(--font-mono)" font-size="11.5" fill="var(--ink)">db\web_app.db  (本番)</text>
+        <text x="399" y="468" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)">db\.secret_key</text>
+        <text x="399" y="484" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)">db\web_app.db.bak_* (世代)</text>
+
+        <!-- Task name -->
+        <rect x="385" y="508" width="235" height="52" rx="4" fill="var(--paper)" stroke="var(--sched)" stroke-width="1.2"/>
+        <text x="399" y="528" font-family="var(--font-mono)" font-size="10.5" fill="var(--sched)" letter-spacing="1.5" font-weight="700">TASK NAME</text>
+        <text x="399" y="548" font-family="var(--font-mono)" font-size="12" fill="var(--ink)">ScheduleServer</text>
+      </g>
+
+      <!-- ==== SNS管理ツール (right inner) ==== -->
+      <g>
+        <rect x="660" y="200" width="275" height="380" rx="6" fill="var(--sns-soft)" stroke="var(--sns)" stroke-width="1.6"/>
+        <rect x="660" y="200" width="275" height="30" fill="var(--sns)" stroke="none"/>
+        <text x="673" y="220" font-family="var(--font-serif)" font-size="13" font-weight="700" fill="#fff">SNS管理ツール（稼働中）</text>
+
+        <!-- Process -->
+        <rect x="680" y="248" width="235" height="72" rx="4" fill="var(--paper)" stroke="var(--sns)" stroke-width="1.2"/>
+        <text x="694" y="268" font-family="var(--font-mono)" font-size="10.5" fill="var(--sns)" letter-spacing="1.5" font-weight="700">PROCESS</text>
+        <text x="694" y="288" font-family="var(--font-sans)" font-size="13" font-weight="700" fill="var(--ink)">app.py</text>
+        <text x="694" y="306" font-family="var(--font-mono)" font-size="11" fill="var(--muted)">streamlit run</text>
+        <text x="901" y="306" text-anchor="end" font-family="var(--font-mono)" font-size="11" fill="var(--sns)" font-weight="700">:5010</text>
+
+        <!-- App dir -->
+        <rect x="680" y="336" width="235" height="60" rx="4" fill="var(--paper)" stroke="var(--sns)" stroke-width="1.2"/>
+        <text x="694" y="356" font-family="var(--font-mono)" font-size="10.5" fill="var(--sns)" letter-spacing="1.5" font-weight="700">APP DIR</text>
+        <text x="694" y="374" font-family="var(--font-mono)" font-size="11.5" fill="var(--ink)">C:\App\SnsManagementTool\</text>
+        <text x="694" y="390" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)">modules / ui / scripts</text>
+
+        <!-- DB -->
+        <rect x="680" y="412" width="235" height="80" rx="4" fill="var(--paper)" stroke="var(--sns)" stroke-width="1.2"/>
+        <text x="694" y="432" font-family="var(--font-mono)" font-size="10.5" fill="var(--sns)" letter-spacing="1.5" font-weight="700">DATA</text>
+        <text x="694" y="450" font-family="var(--font-mono)" font-size="11.5" fill="var(--ink)">keyword_groups.json</text>
+        <text x="694" y="468" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)">.env（APIキー・運用PC側で管理）</text>
+        <text x="694" y="484" font-family="var(--font-mono)" font-size="10.5" fill="var(--muted)">outputs\（生成物）／Git 未使用</text>
+
+        <!-- Task name -->
+        <rect x="680" y="508" width="235" height="52" rx="4" fill="var(--paper)" stroke="var(--sns)" stroke-width="1.2"/>
+        <text x="694" y="528" font-family="var(--font-mono)" font-size="10.5" fill="var(--sns)" letter-spacing="1.5" font-weight="700">TASK NAME</text>
+        <text x="694" y="548" font-family="var(--font-mono)" font-size="12" fill="var(--ink)">SnsManagementServer</text>
+      </g>
+
+      <!-- Shared runtime band -->
+      <g>
+        <rect x="360" y="600" width="580" height="80" rx="4" fill="var(--shared-soft)" stroke="var(--shared)" stroke-width="1.2"/>
+        <text x="378" y="622" font-family="var(--font-mono)" font-size="10.5" font-weight="700" fill="var(--shared)" letter-spacing="1.5">SHARED RUNTIME</text>
+        <text x="378" y="644" font-family="var(--font-sans)" font-size="12" fill="var(--ink)">Python 3.13.3（C:\Python\Python313\ を両システムで共用）　/　Windows タスクスケジューラ（SYSTEM / 起動時）</text>
+        <text x="378" y="664" font-family="var(--font-sans)" font-size="12" fill="var(--ink)">バックアップ: NAS \\crown-commune\...\商品開発室\50 DEV\  ／  ローカル C:\Backup\</text>
+      </g>
+
+      <!-- Arrows from LAN into each system's port -->
+      <g stroke-width="1.6" fill="none">
+        <path d="M320 185 L360 185" stroke="var(--muted)"/>
+        <!-- LAN → :5000 -->
+        <path d="M330 195 C 330 260, 360 275, 385 283" stroke="var(--sched)" marker-end="url(#arrow-sched)"/>
+        <text x="332" y="252" font-family="var(--font-mono)" font-size="10.5" fill="var(--sched)" font-weight="700">HTTP :5000</text>
+        <!-- LAN → :5010 -->
+        <path d="M330 210 C 330 380, 500 470, 680 283" stroke="var(--sns)" marker-end="url(#arrow-sns)" opacity="0.85"/>
+        <text x="332" y="440" font-family="var(--font-mono)" font-size="10.5" fill="var(--sns)" font-weight="700">HTTP :5010</text>
+      </g>
+
+      <!-- 分離バリア（縦の点線） -->
+      <line x1="650" y1="200" x2="650" y2="580" stroke="var(--rule-strong)" stroke-width="1" stroke-dasharray="3,4"/>
+      <text x="650" y="196" text-anchor="middle" font-family="var(--font-mono)" font-size="9.5" fill="var(--muted)" letter-spacing="1.5">ISOLATED</text>
+
+    </svg>
+  </div>
+
+  <div class="callout">
+    <div class="callout-tag">重要</div>
+    <div class="callout-body">
+      両システムは <b>ポート・タスク名・データ領域が全て別</b>。片方のリリース作業がもう片方を停止させることは通常ない。ただし <b>Python本体・タスクスケジューラ・ディスク・ネットワーク</b> は共用のため、更新時は共有部への影響を必ず確認する。
+    </div>
+  </div>
+
+  <!-- ================ 02 システム対比 ================ -->
+  <h2 class="sec-h"><span class="h2-num">02</span>2システムの分離ポイント</h2>
+  <p class="lede">「同じ端末で動くが完全に独立している」ことを一覧で確認できる。数値・名称はそのまま設定値として使える。</p>
+
+  <div class="split">
+    <div class="split-card sched">
+      <span class="split-tag">RUNNING</span>
+      <h4>予定管理システム</h4>
+      <dl>
+        <dt>ポート</dt><dd>TCP 5000</dd>
+        <dt>タスク名</dt><dd>ScheduleServer</dd>
+        <dt>配置</dt><dd>C:\App\ScheduleManagement\</dd>
+        <dt>本番DB</dt><dd>db\web_app.db</dd>
+        <dt>秘密鍵</dt><dd>db\.secret_key</dd>
+        <dt>実行</dt><dd>pythonw + waitress</dd>
+        <dt>実行者</dt><dd>SYSTEM</dd>
+        <dt>管理</dt><dd>Git 管理</dd>
+      </dl>
+    </div>
+    <div class="split-card sns">
+      <span class="split-tag">RUNNING</span>
+      <h4>SNS管理ツール</h4>
+      <dl>
+        <dt>ポート</dt><dd>TCP 5010</dd>
+        <dt>タスク名</dt><dd>SnsManagementServer</dd>
+        <dt>配置</dt><dd>C:\App\SnsManagementTool\</dd>
+        <dt>設定</dt><dd>keyword_groups.json</dd>
+        <dt>環境変数</dt><dd>.env（運用PC側で管理）</dd>
+        <dt>実行</dt><dd>streamlit run app.py</dd>
+        <dt>実行者</dt><dd>SYSTEM</dd>
+        <dt>管理</dt><dd>フォルダバックアップ</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- ================ 03 通信・アクセス ================ -->
+  <h2 class="sec-h"><span class="h2-num">03</span>通信経路・アクセスURL</h2>
+  <p class="lede">利用者は同じ運用PCのIPアドレスに、ポート番号だけを変えて2システムへアクセスする。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>方向</th><th>プロトコル</th><th>接続先</th><th>備考</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mono">1</td>
+          <td>利用者PC → 運用PC</td>
+          <td class="mono">HTTP TCP:5000</td>
+          <td class="mono">http://(運用PC-IP):5000/</td>
+          <td><span class="tag tag-sched">予定管理</span></td>
+        </tr>
+        <tr>
+          <td class="mono">2</td>
+          <td>利用者PC → 運用PC</td>
+          <td class="mono">HTTP TCP:5010</td>
+          <td class="mono">http://(運用PC-IP):5010/</td>
+          <td><span class="tag tag-sns">SNS管理</span></td>
+        </tr>
+        <tr>
+          <td class="mono">3</td>
+          <td>運用PC (自機確認)</td>
+          <td class="mono">HTTP</td>
+          <td class="mono">http://localhost:5000 / :5010</td>
+          <td>動作確認用</td>
+        </tr>
+        <tr>
+          <td class="mono">4</td>
+          <td>運用PC → 保管先ドライブ</td>
+          <td class="mono">File I/O</td>
+          <td class="mono">D:\Backup\...</td>
+          <td><span class="tag tag-shared">バックアップ</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ================ 04 起動・停止 ================ -->
+  <h2 class="sec-h"><span class="h2-num">04</span>起動・停止・状態確認コマンド</h2>
+  <p class="lede">操作対象を <code>TN "タスク名"</code> で明示的に指定するため、片方だけの操作が確実に可能。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th style="width:16%">操作</th><th>予定管理システム</th><th>SNS管理ツール</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>状態確認</td>
+          <td class="mono">schtasks /Query /TN "ScheduleServer"</td>
+          <td class="mono">schtasks /Query /TN "SnsManagementServer"</td>
+        </tr>
+        <tr>
+          <td>起動</td>
+          <td class="mono">schtasks /Run /TN "ScheduleServer"</td>
+          <td class="mono">schtasks /Run /TN "SnsManagementServer"</td>
+        </tr>
+        <tr>
+          <td>停止</td>
+          <td class="mono">schtasks /End /TN "ScheduleServer"</td>
+          <td class="mono">schtasks /End /TN "SnsManagementServer"</td>
+        </tr>
+        <tr>
+          <td>ポート占有確認</td>
+          <td class="mono">netstat -ano | findstr :5000</td>
+          <td class="mono">netstat -ano | findstr :5010</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <div class="callout-tag">Do Not</div>
+    <div class="callout-body">
+      SNS管理ツールのリリース作業中に <code>ScheduleServer</code> を停止・再起動しないこと。予定管理システムは業務中も稼働している。
+      <ul>
+        <li>誤って両方止める操作（<code>Get-Process python | Stop-Process</code> 等）は禁止</li>
+        <li>Python 本体のバージョン更新は両システムに影響。事前に両プロジェクトの依存確認が必須</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer class="end">
+    <div>DOC 04 / 本番PC システム概要図</div>
+    <div>商品開発室 &middot; Rev. 2026-09-28</div>
+  </footer>
+</div>

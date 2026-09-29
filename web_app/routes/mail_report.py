@@ -576,6 +576,21 @@ def _build_master_body(
             seen.add(parent_id)
             cur = parent
 
+    def _plain(name: str) -> str:
+        """作業名をメール表示用に整える（全角スペースを半角に統一する）。
+
+        タスク名にはガント登録時の入力に由来する全角スペース（例：
+        「排水機場　動作検証」）が混在する。メール本文では階層の区切りと
+        合わせて半角スペースに統一し、1行が不必要に長くならないようにする。
+
+        Args:
+            name: タスク名。
+
+        Returns:
+            str: 全角スペースを半角に置換した文字列。
+        """
+        return (name or "").replace("　", " ")
+
     def _group_label(pt: dict) -> str:
         """「対応中」の見出しラベルを返す（ガントチャート最上位の親タスク名を使う）。
 
@@ -583,7 +598,7 @@ def _build_master_body(
         見出しになる）。タスク区分マスタ（大区分・中区分）には依存しない——区分の
         登録有無に関わらずガントチャートの見た目と一致させる。
         """
-        return _root_ancestor(pt)["task_name"]
+        return _plain(_root_ancestor(pt)["task_name"])
 
     def _wrap_text(text: str, width: int = 100) -> str:
         """テキストを指定幅で改行する。"""
@@ -611,14 +626,14 @@ def _build_master_body(
         3階層以上（例：ITインフラ→タブレット選定→納品予定）の場合、末端タスク
         だけでは何の作業か分からないため、直近の親（中間階層）が見出し行自身
         （ルート）と異なるバー無しの中間ノードであれば、その名前を先頭に付与する
-        （「タブレット選定　納品予定」）。直近の親がルート自身（＝見出しと同じ）の
+        （「タブレット選定 納品予定」）。直近の親がルート自身（＝見出しと同じ）の
         場合は、これまで通りタスク名のみを表示する。
         """
         parent_id = pt.get("parent_task_id")
         parent = all_tasks_by_id.get(parent_id) if parent_id else None
         if parent and parent.get("parent_task_id"):
-            return f"{parent['task_name']}　{pt['task_name']}"
-        return pt["task_name"]
+            return f"{_plain(parent['task_name'])} {_plain(pt['task_name'])}"
+        return _plain(pt["task_name"])
 
     # ガントチャート上の親タスク名ごとにグループ化する（区分マスタの登録有無に
     # 関わらず、ガントチャートで見えている親子構造とメールの見出しを一致させる）。
@@ -651,7 +666,7 @@ def _build_master_body(
             progress = pt.get("progress", 0) or 0
             status = pt.get("status", "") or "未着手"
             if progress >= 1:
-                content_lines.append(f"　・{label}　（{_assignee_names(pt)}：{status}）")
+                content_lines.append(f"　・{label} （{_assignee_names(pt)}：{status}）")
             else:
                 content_lines.append(f"　・{label}")
             continue
@@ -674,8 +689,8 @@ def _build_master_body(
             progress = pt.get("progress", 0) or 0
             status = pt.get("status", "") or "未着手"
             if progress >= 1:
-                return f"{pt['task_name']}　（{_assignee_names(pt)}：{status}）"
-            return pt["task_name"]
+                return f"{_plain(pt['task_name'])} （{_assignee_names(pt)}：{status}）"
+            return _plain(pt["task_name"])
 
         for mid_key in mid_order:
             members = mid_groups[mid_key]
@@ -683,9 +698,9 @@ def _build_master_body(
                 for pt in members:
                     content_lines.append(f"　　└{_entry(pt)}")
             else:
-                mid_name = all_tasks_by_id[mid_key]["task_name"]
+                mid_name = _plain(all_tasks_by_id[mid_key]["task_name"])
                 joined = "、".join(_entry(pt) for pt in members)
-                content_lines.append(_wrap_text(f"　　└{mid_name}　{joined}"))
+                content_lines.append(_wrap_text(f"　　└{mid_name} {joined}"))
 
     # メンバー実績サマリ
     # 除外条件: 定例作業（大区分「定例」or 中区分「定例作業」）、AM1行目(idx=0)、PM最終行(idx=4)
@@ -695,28 +710,49 @@ def _build_master_body(
         return (info.get("category_name") in ("定例", "定例作業")
                 or info.get("subcategory_name") in ("定例", "定例作業"))
 
-    def _parent_task_name(project_task_id: int | None) -> str | None:
-        """project_task_id から親タスク名を返す（親を持たない・紐付けなしなら None）。"""
-        if not project_task_id:
-            return None
-        task = all_tasks_by_id.get(project_task_id)
-        if not task:
-            return None
-        parent_id = task.get("parent_task_id")
-        parent = all_tasks_by_id.get(parent_id) if parent_id else None
-        return parent["task_name"] if parent else None
+    # 1メンバーあたりの実績表示件数の上限。超過分は「他N件」で締める。
+    MAX_TASKS_PER_MEMBER = 4
 
-    def _format_member_tasks(items: list[dict]) -> str:
-        """作業名の後ろに親タスク名を付けて連結する。連続する項目の親が同じ場合は省略する。"""
+    def _format_member_tasks(items: list[str]) -> str:
+        """メンバーの実績作業名を連結する。
+
+        実績の作業名は週間予定から引き継がれた「祖先…　子タスク名」形式のため、
+        既に親タスク名を含んでいる。そこへ親名を括弧で付けると同じ名前が二重に
+        並んで冗長になるため、括弧は付けない。
+        さらに、連続する項目で先頭の階層が共通する場合はその共通部分を省略し、
+        1行が長くなりすぎないようにする。
+        階層の区切りは、元データでは全角スペースだがメール本文では半角スペースに
+        置き換えて出力する（1行を短くし、メールソフトでの折り返しを減らすため）。
+        MAX_TASKS_PER_MEMBER を超えた場合は末尾に「他N件」を付与して短縮表示する。
+
+        Args:
+            items: 作業名の一覧。
+
+        Returns:
+            str: 「/ 」区切りで連結した表示文字列。
+        """
+        if not items:
+            return "（なし）"
+        head = items[:MAX_TASKS_PER_MEMBER]
+        rest = len(items) - len(head)
         parts: list[str] = []
-        last_parent: str | None = "__init__"  # 最初の項目は必ず親名を出すための番兵
-        for name, parent_name in items:
-            if parent_name and parent_name != last_parent:
-                parts.append(f"{name}（{parent_name}）")
-            else:
-                parts.append(name)
-            last_parent = parent_name
-        return "/ ".join(parts) if parts else "（なし）"
+        prev_segments: list[str] = []
+        for name in head:
+            segments = name.split("　")
+            # 直前の作業名と先頭から共通する階層を数え、その分を省略する
+            common = 0
+            for a, b in zip(prev_segments, segments):
+                if a != b:
+                    break
+                common += 1
+            # 全階層が一致する場合は末尾だけ残す（空文字になるのを防ぐ）
+            if common >= len(segments):
+                common = len(segments) - 1
+            parts.append(" ".join(segments[common:]))
+            prev_segments = segments
+        if rest > 0:
+            parts.append(f"他{rest}件")
+        return "/ ".join(parts)
 
     # 終日休暇（出勤なし）と判定する種別
     FULL_LEAVE_TYPES: set[str] = {"1日有休", "特休", "その他休み", "祝日"}
@@ -735,21 +771,21 @@ def _build_master_body(
 
         # AM・PMを通しで1本にまとめる（AM1行目・PM最終行・定例作業は除外）。
         seen_names: set[str] = set()
-        combined_items: list[tuple[str, str | None]] = []
+        combined_items: list[str] = []
         for idx, item in enumerate(result.get("am", [])):
             task_name = item.get("task_name", "").strip()
             if (not task_name or float(item.get("hours", 0)) <= 0
                     or idx == 0 or _is_routine(task_name, tcm) or task_name in seen_names):
                 continue
             seen_names.add(task_name)
-            combined_items.append((task_name, _parent_task_name(item.get("project_task_id"))))
+            combined_items.append(task_name)
         for idx, item in enumerate(result.get("pm", [])):
             task_name = item.get("task_name", "").strip()
             if (not task_name or float(item.get("hours", 0)) <= 0
                     or idx == 4 or _is_routine(task_name, tcm) or task_name in seen_names):
                 continue
             seen_names.add(task_name)
-            combined_items.append((task_name, _parent_task_name(item.get("project_task_id"))))
+            combined_items.append(task_name)
 
         tasks_str = _format_member_tasks(combined_items)
 
