@@ -413,6 +413,11 @@ def add_task() -> object:
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
+    # イベントは全ユーザーが登録できる。通常タスク（ガントチャートの案件）は
+    # 管理職・マスタのみが登録できる。
+    if not is_event_add and not is_privileged(session.get("user_role", "")):
+        abort(403)
+
     cat_id = request.form.get("category_id", "")
     subcat_id = request.form.get("subcategory_id", "")
     task_name = request.form.get("task_name", "").strip()
@@ -549,7 +554,10 @@ def add_task() -> object:
 
 @project_tasks_bp.route("/update/<int:task_id>", methods=["POST"])
 def update_task(task_id: int) -> object:
-    """プロジェクトタスクを更新する（管理職・マスタのみ）。
+    """プロジェクトタスクを更新する。
+
+    通常タスクは管理職・マスタのみ。イベントは関係者（参加者・担当者）であれば
+    一般ユーザーでも更新できる。
 
     Args:
         task_id: タスクID
@@ -560,14 +568,20 @@ def update_task(task_id: int) -> object:
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
-
     existing = get_project_task_by_id(task_id)
     if not existing:
         abort(404)
-    if not _can_touch_gantt_task(existing):
-        abort(403)
+
+    if existing.get("is_event"):
+        # イベントは関係者のみ更新できる
+        if not _user_can_edit_event(existing, int(session["user_id"])):
+            abort(403)
+    else:
+        # 通常タスクは管理職・マスタかつ操作可能な範囲のみ
+        if not is_privileged(session.get("user_role", "")):
+            abort(403)
+        if not _can_touch_gantt_task(existing):
+            abort(403)
 
     cat_id = request.form.get("category_id", "")
     subcat_id = request.form.get("subcategory_id", "")
@@ -647,7 +661,12 @@ def update_task(task_id: int) -> object:
 
 @project_tasks_bp.route("/bulk-update", methods=["POST"])
 def bulk_update_tasks() -> object:
-    """プロジェクトタスクを一括更新する（管理職・マスタのみ）。
+    """プロジェクトタスクを一括更新する。
+
+    通常タスクは管理職・マスタのみ。イベントは関係者（参加者・担当者）であれば
+    一般ユーザーでも更新・削除できる（イベント画面の編集UIと権限を一致させる）。
+    対象ごとの可否は後続のループ内で判定するため、ここでは役職による一律の
+    拒否は行わない。
 
     Returns:
         object: 一覧画面へのリダイレクト
@@ -655,10 +674,8 @@ def bulk_update_tasks() -> object:
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
-
     login_id = int(session["user_id"])
+    privileged: bool = is_privileged(session.get("user_role", ""))
     task_ids_raw = request.form.getlist("task_id")
     updated_count = 0
     deleted_count = 0
@@ -677,9 +694,11 @@ def bulk_update_tasks() -> object:
         # 画面上は閲覧のみ行としてフォームに含めないが、直接POSTへの防御も行う。
         if existing.get("is_event") and not _user_can_edit_event(existing, login_id):
             continue
-        # 通常タスクは、担当者本人か can_access_user が許可する範囲のみ操作可能。
-        if not existing.get("is_event") and not _can_touch_gantt_task(existing):
-            continue
+        # 通常タスクは管理職・マスタのみが対象。さらに担当者本人か
+        # can_access_user が許可する範囲に限って操作できる。
+        if not existing.get("is_event"):
+            if not privileged or not _can_touch_gantt_task(existing):
+                continue
 
         # 削除チェックボックスが ON の場合は削除して次へ
         if request.form.get(f"delete_{task_id}"):
@@ -863,7 +882,10 @@ def import_brabio() -> object:
 
 @project_tasks_bp.route("/delete/<int:task_id>", methods=["POST"])
 def delete_task(task_id: int) -> object:
-    """プロジェクトタスクを削除する（管理職・マスタのみ）。
+    """プロジェクトタスクを削除する。
+
+    通常タスクは管理職・マスタのみ。イベントは関係者（参加者・担当者）であれば
+    一般ユーザーでも削除できる。
 
     Args:
         task_id: タスクID
@@ -874,14 +896,20 @@ def delete_task(task_id: int) -> object:
     if request.form.get("csrf_token") != session.get("csrf_token"):
         abort(400)
 
-    if not is_privileged(session.get("user_role", "")):
-        abort(403)
-
     existing = get_project_task_by_id(task_id)
     if not existing:
         abort(404)
-    if not _can_touch_gantt_task(existing):
-        abort(403)
+
+    if existing.get("is_event"):
+        # イベントは関係者のみ削除できる
+        if not _user_can_edit_event(existing, int(session["user_id"])):
+            abort(403)
+    else:
+        # 通常タスクは管理職・マスタかつ操作可能な範囲のみ
+        if not is_privileged(session.get("user_role", "")):
+            abort(403)
+        if not _can_touch_gantt_task(existing):
+            abort(403)
 
     delete_project_task(task_id)
     flash("タスクを削除しました。", "success")
