@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>実績入力のステータス変更</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --surface: #ffffff;
+    --surface-alt: #eef1f5;
+    --ink: #1c2430;
+    --ink-soft: #5b6472;
+    --line: #dde1e7;
+    --navy: #1f3864;
+    --navy-soft: #e8edf5;
+    --accent: #4338ca;
+    --ok: #1e8a5f;
+    --ok-bg: #e7f6ee;
+    --warn: #b5720f;
+    --warn-bg: #fbf1de;
+    --danger: #b91c1c;
+    --danger-bg: #fdecec;
+    --font-display: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    --font-body: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181e; --surface: #1b212b; --surface-alt: #232a35;
+    --ink: #e7ebf1; --ink-soft: #9aa5b3; --line: #313a47;
+    --navy: #7fa2d6; --navy-soft: #202c3d; --accent: #8b93f0;
+    --ok: #6fcda3; --ok-bg: #16281f;
+    --warn: #e0ab5c; --warn-bg: #2f2410;
+    --danger: #f08a8a; --danger-bg: #341c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181e; --surface: #1b212b; --surface-alt: #232a35;
+      --ink: #e7ebf1; --ink-soft: #9aa5b3; --line: #313a47;
+      --navy: #7fa2d6; --navy-soft: #202c3d; --accent: #8b93f0;
+      --ok: #6fcda3; --ok-bg: #16281f;
+      --warn: #e0ab5c; --warn-bg: #2f2410;
+      --danger: #f08a8a; --danger-bg: #341c1c;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); -webkit-font-smoothing: antialiased; }
+  body { padding: 32px 20px 80px; }
+  .page { max-width: 940px; margin: 0 auto; }
+
+  .masthead { background: var(--navy); color: #fff; border-radius: 12px; padding: 26px 30px; margin-bottom: 28px; }
+  .masthead .eyebrow { font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; opacity: .8; margin-bottom: 6px; }
+  .masthead h1 { font-family: var(--font-display); font-size: 1.6rem; font-weight: 700; margin: 0 0 8px; text-wrap: balance; }
+  .masthead p { margin: 0; font-size: .86rem; opacity: .92; line-height: 1.7; max-width: 68ch; }
+
+  .flow { display: flex; align-items: stretch; gap: 8px; margin-bottom: 32px; flex-wrap: wrap; }
+  .flow .step { flex: 1 1 200px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; position: relative; }
+  .flow .step .num { font-family: var(--font-display); font-weight: 700; font-size: .72rem; color: var(--accent); background: var(--navy-soft); display: inline-block; border-radius: 100px; padding: 2px 10px; margin-bottom: 8px; }
+  .flow .step .ttl { font-weight: 700; font-size: .92rem; margin-bottom: 6px; }
+  .flow .step .desc { font-size: .78rem; color: var(--ink-soft); line-height: 1.6; }
+  .flow .arrow { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; color: var(--ink-soft); font-size: 1.3rem; padding: 0 2px; }
+  @media (max-width: 760px) { .flow .arrow { transform: rotate(90deg); } }
+
+  section.sec { margin-bottom: 40px; }
+  .sec-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; border-bottom: 2px solid var(--navy); padding-bottom: 8px; }
+  .sec-head .n { font-family: var(--font-display); font-weight: 700; color: #fff; background: var(--navy); border-radius: 6px; padding: 2px 10px; font-size: .9rem; }
+  .sec-head h2 { font-size: 1.1rem; margin: 0; font-family: var(--font-display); }
+
+  .step-list { display: flex; flex-direction: column; gap: 14px; }
+  .step-row { display: flex; gap: 14px; align-items: flex-start; }
+  .step-row .bullet { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 100px; background: var(--navy-soft); color: var(--navy); font-weight: 700; font-size: .8rem; display: flex; align-items: center; justify-content: center; }
+  .step-row .body { flex: 1 1 auto; font-size: .88rem; line-height: 1.75; padding-top: 2px; }
+  .step-row .body b { color: var(--ink); }
+
+  .note-box { background: var(--warn-bg); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: .8rem; color: var(--ink-soft); line-height: 1.7; margin-top: 10px; }
+  .note-box strong { color: var(--ink); }
+  .danger-box { background: var(--danger-bg); border-left: 3px solid var(--danger); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: .8rem; color: var(--ink-soft); line-height: 1.7; margin-top: 10px; }
+  .danger-box strong { color: var(--danger); }
+
+  /* ── 画面モックアップ共通 ── */
+  .mock { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 16px 0; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .mock-label { font-size: .68rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 8px; }
+
+  /* ── ガントチャート画面モック ── */
+  .g-mock { border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; font-size: .72rem; background: #fff; color: #1c2430; }
+  .g-mock .g-head { display: flex; background: #eef2ff; border-bottom: 1px solid #cbd5e1; }
+  .g-mock .g-namehead { width: 190px; flex: 0 0 190px; font-weight: 700; padding: 8px; border-right: 1px solid #cbd5e1; display: flex; align-items: center; }
+  .g-mock .g-days { flex: 1 1 auto; display: flex; }
+  .g-mock .g-day { flex: 1 1 0; text-align: center; padding: 6px 2px; color: #475569; font-size: .64rem; border-right: 1px solid #eef2f7; }
+  .g-mock .g-day.today { background: #dbeafe; font-weight: 700; color: #1e3a8a; }
+  .g-mock .g-day.weekend { background: #fdeef2; color: #b91c1c; }
+  .g-mock .g-row { display: flex; border-bottom: 1px solid #f1f5f9; align-items: stretch; min-height: 34px; }
+  .g-mock .g-row.parent .g-name { background: #eef4ff; font-weight: 700; }
+  .g-mock .g-name { width: 190px; flex: 0 0 190px; border-right: 1px solid #cbd5e1; display: flex; align-items: center; gap: 6px; padding: 4px 8px; }
+  .g-mock .g-name .indent { width: 14px; flex: 0 0 auto; color: #a855f7; text-align: center; }
+  .g-mock .g-name .lbl { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .g-mock .g-name .people { flex: 0 0 auto; font-size: .62rem; background: #eef2ff; border: 1px solid #c7d2fe; color: #4338ca; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+  .g-mock .g-track { flex: 1 1 auto; position: relative; display: flex; }
+  .g-mock .g-track .cell { flex: 1 1 0; border-right: 1px solid #f5f7fa; }
+  .g-mock .g-track .cell.today { background: #dbeafe; }
+  .g-mock .g-track .cell.weekend { background: #fdeef2; }
+  .g-mock .bar { position: absolute; top: 5px; bottom: 5px; border-radius: 5px; border: 1px solid #3b82f6;
+    background: linear-gradient(180deg,#bfdbfe,#60a5fa); display: flex; align-items: center; justify-content: center;
+    font-size: .6rem; font-weight: 700; color: #1e3a8a; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+  .g-mock .bar.new { outline: 2px solid #f59e0b; }
+  .g-mock .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(180deg,#6ee7b7,#10b981); z-index: 0; }
+  .g-mock .bar span { position: relative; z-index: 1; }
+  .g-mock .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface-alt); border-bottom: 1px solid var(--line); font-size: .74rem; flex-wrap: wrap; }
+  .g-mock .toolbar .title { font-weight: 700; margin-right: auto; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; border-radius: 100px; padding: 3px 10px; font-size: .68rem; }
+  .chip.ghost { background: var(--surface); color: var(--ink-soft); border-color: var(--line); }
+  .btn-mock { display: inline-flex; align-items: center; gap: 4px; background: var(--navy); color: #fff; border-radius: 6px; padding: 4px 12px; font-size: .72rem; font-weight: 700; }
+  .btn-mock.outline { background: var(--surface); color: var(--navy); border: 1px solid var(--navy); }
+  .btn-mock.disabled { background: var(--surface-alt); color: var(--ink-soft); border: 1px solid var(--line); }
+
+  /* 入力欄モック */
+  .input-mock { display: inline-flex; align-items: center; border: 1px solid #a5b4fc; border-radius: 4px; padding: 3px 8px; background: #fff; font-size: .74rem; color: #1c2430; }
+  .input-mock .caret { display: inline-block; width: 1px; height: 12px; background: #4338ca; margin-left: 2px; animation: blink 1s step-end infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* 週間予定モーダルモック */
+  .modal-mock { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); max-width: 480px; box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+  .modal-mock .m-head { background: var(--navy-soft); color: var(--navy); font-weight: 700; padding: 10px 16px; font-size: .88rem; display: flex; justify-content: space-between; align-items: center; }
+  .modal-mock .m-body { padding: 14px 16px; font-size: .78rem; line-height: 1.7; color: var(--ink); }
+  .modal-mock .m-body ul { margin: 6px 0 0; padding-left: 18px; color: var(--ink-soft); }
+  .modal-mock .m-foot { padding: 10px 16px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); }
+
+  .qa-list { display: flex; flex-direction: column; gap: 8px; }
+  .qa-item { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; font-size: .82rem; }
+  .qa-item .q { font-weight: 700; color: var(--navy); }
+  .qa-item .a { color: var(--ink-soft); margin-top: 4px; }
+
+  /* 強調ボックス（最重要注意） */
+  .emphasis-box { background: var(--danger-bg); border: 2px solid var(--danger); border-radius: 10px; padding: 14px 18px; margin: 16px 0; }
+  .emphasis-box .em-head { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--danger); font-size: .92rem; margin-bottom: 8px; }
+  .emphasis-box .em-body { font-size: .86rem; line-height: 1.8; color: var(--ink); }
+  .emphasis-box .em-body strong { color: var(--danger); }
+
+  /* 行の操作ボタン群モック（⠿ ＜ ＞ ＋ ×） */
+  .g-mock .g-name .op { flex: 0 0 auto; display: flex; gap: 2px; align-items: center; }
+  .g-mock .g-name .op .drag { color: #94a3b8; font-size: .8rem; cursor: grab; padding-right: 2px; }
+  .g-mock .g-name .op button { border: 1px solid #c7d2fe; background: #eef2ff; color: #4338ca; min-width: 17px; height: 16px; border-radius: 3px; font-size: .58rem; line-height: 1; padding: 0; }
+  .g-mock .g-name .op button.del { border-color: #fecaca; background: #fef2f2; color: #dc2626; }
+  .g-mock .g-name .op button.hl { outline: 2px solid #f59e0b; outline-offset: 1px; }
+
+  /* 状態バッジ */
+  .status-badge { display: inline-flex; align-items: center; gap: 5px; font-size: .78rem; font-weight: 700; padding: 3px 10px; border-radius: 100px; }
+  .status-badge .dot { width: 8px; height: 8px; border-radius: 100px; }
+  .status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; margin: 12px 0; }
+  .status-grid .item { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: .78rem; line-height: 1.6; }
+  .status-grid .item .desc { color: var(--ink-soft); margin-top: 4px; }
+
+  /* 詳細編集モーダルモック */
+  .detail-mock { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); max-width: 420px; box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+  .detail-mock .d-head { background: var(--navy-soft); color: var(--navy); font-weight: 700; padding: 10px 16px; font-size: .86rem; }
+  .detail-mock .d-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .detail-mock .d-fld { display: flex; align-items: center; gap: 8px; font-size: .76rem; }
+  .detail-mock .d-fld label { flex: 0 0 78px; color: var(--ink-soft); }
+  .detail-mock .d-fld .val { flex: 1 1 auto; border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; background: var(--bg); color: var(--ink); }
+  .detail-mock .d-fld .val.danger-btn { border-color: var(--danger); color: var(--danger); background: var(--danger-bg); text-align: center; cursor: pointer; }
+  .detail-mock .d-foot { padding: 10px 16px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); }
+
+  /* 移動・グループ化の説明図 */
+  .move-diagram { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+  .move-diagram .tree-box { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; font-size: .78rem; line-height: 1.9; min-width: 200px; }
+  .move-diagram .tree-box .lv0 { font-weight: 700; }
+  .move-diagram .tree-box .lv1 { padding-left: 16px; color: var(--ink-soft); }
+  .move-diagram .tree-box .lv1.moved { color: var(--accent); font-weight: 700; }
+  .move-diagram .diagram-arrow { font-size: 1.4rem; color: var(--ink-soft); }
+
+  /* 定例作業・イベントタブのモック */
+  .tab-mock-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #6d4c41; color: #fff; border-radius: 8px 8px 0 0; font-size: .82rem; font-weight: 700; }
+  .tab-mock-head.event { background: var(--navy); }
+  .tab-mock-head .tag { font-size: .68rem; font-weight: 400; background: rgba(255,255,255,.18); border-radius: 100px; padding: 2px 8px; }
+  .tab-mock-body { border: 1px solid var(--line); border-top: none; border-radius: 0 0 8px 8px; background: var(--surface); overflow-x: auto; }
+  .tab-mock-body table { width: 100%; border-collapse: collapse; font-size: .76rem; }
+  .tab-mock-body th { background: var(--surface-alt); color: var(--ink-soft); text-align: left; padding: 6px 10px; font-weight: 700; white-space: nowrap; }
+  .tab-mock-body td { padding: 6px 10px; border-top: 1px solid var(--line); white-space: nowrap; }
+  .tab-mock-body tr.milestone { background: var(--warn-bg); }
+  .beta-tag { display: inline-flex; align-items: center; gap: 4px; font-size: .68rem; font-weight: 700; background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); border-radius: 100px; padding: 2px 10px; }
+
+  .footnote { font-size: .74rem; color: var(--ink-soft); border-top: 1px solid var(--line); padding-top: 16px; margin-top: 8px; line-height: 1.8; }
+
+  @media (max-width: 640px) {
+    .g-mock .g-namehead, .g-mock .g-name { width: 130px; flex-basis: 130px; }
+  }
+
+  .sec h3 {
+    font-family: var(--font-display); font-size: 1.02rem; font-weight: 700;
+    color: var(--navy); margin: 20px 0 10px; padding-left: 10px;
+    border-left: 3px solid var(--accent);
+  }
+  ul.bullet { margin: 10px 0 14px 0; padding-left: 1.3em; }
+  ul.bullet li { margin: 6px 0; line-height: 1.75; }
+  ul.bullet li ul { margin: 5px 0; padding-left: 1.2em; }
+  ul.bullet li ul li { margin: 3px 0; color: var(--ink-soft); font-size: .95em; }
+  .lead { margin: 4px 0 12px; color: var(--ink-soft); }
+  .link-flow {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    flex-wrap: wrap; margin: 16px 0 6px;
+  }
+  .link-flow .box {
+    background: var(--surface-alt); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 18px; text-align: center; min-width: 190px;
+  }
+  .link-flow .box .ttl {
+    font-family: var(--font-display); font-weight: 700; color: var(--navy);
+    font-size: .98rem; margin-bottom: 4px;
+  }
+  .link-flow .box .sub { font-size: .82rem; color: var(--ink-soft); line-height: 1.6; }
+  .link-flow .ar { font-size: 1.5rem; color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="masthead">
+    <div class="eyebrow">機能のご案内</div>
+    <h1>実績入力画面でタスクの状態を変更できます</h1>
+    <p>実績入力画面から、ガントチャートのタスクの状態をその場で変更できるようになりました。</p>
+  </div>
+
+  <section class="sec">
+    <div class="sec-head"><span class="n">1</span><h2>何ができるようになったか</h2></div>
+    <ul class="bullet">
+      <li>実績入力画面の各行で、<b>タスクの状態（未着手・着手・順調・遅れ・完了・中断）</b>を選べます</li>
+      <li>選んだ時点で<b>自動的に保存</b>されます（「保存」ボタンは不要）</li>
+      <li>「遅れ」を選ぶと、<b>遅れ日数（0〜10日）</b>も指定できます</li>
+      <li>状態と実績が食い違っていると、<b>⚠警告</b>が出て気付かせます</li>
+    </ul>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="n">2</span><h2>どこと連動するか</h2></div>
+    <p class="lead">変更した状態は、<b>ガントチャート</b>に直接反映されます。</p>
+
+    <div class="link-flow">
+      <div class="box">
+        <div class="ttl">実績入力画面</div>
+        <div class="sub">状態を選ぶ</div>
+      </div>
+      <div class="ar">&#8594;</div>
+      <div class="box">
+        <div class="ttl">ガントチャート</div>
+        <div class="sub">状態・進捗バーが<br>その場で変わる</div>
+      </div>
+    </div>
+
+    <h3>連動するもの</h3>
+    <ul class="bullet">
+      <li><b>ガントチャートの状態</b>
+        <ul><li>実績入力で選んだ状態が、そのままガントチャートの状態になります</li></ul>
+      </li>
+      <li><b>ガントチャートの進捗バー</b>
+        <ul><li>「遅れ」の日数を選ぶと、その分だけバーが戻ります</li></ul>
+      </li>
+    </ul>
+
+    <h3>連動しないもの</h3>
+    <ul class="bullet">
+      <li><b>過去の実績データ</b>
+        <ul><li>状態を変えても、過去に入力した実績は一切変わりません</li></ul>
+      </li>
+      <li><b>実績の時間・作業名</b>
+        <ul><li>これらは従来どおり「保存」ボタンが必要です</li></ul>
+      </li>
+    </ul>
+
+    <div class="note-box"><strong>ご注意：</strong> 過去の日付を開いているときに状態を変更しても、変わるのは<b>タスクの「今」の状態</b>です。その日の状態が記録されるわけではありません。</div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="n">3</span><h2>状態の選択が出ない行があります</h2></div>
+    <p class="lead">状態の選択は、<b>ガントチャートに登録されているタスクに紐付いた行だけ</b>に表示されます。</p>
+    <ul class="bullet">
+      <li>朝礼・掃除・問い合わせ対応などの<b>定例業務</b></li>
+      <li>会議・打合せなどの<b>イベント</b></li>
+      <li>ガントチャートに<b>登録していない作業</b></li>
+      <li>すでに<b>「完了」「中断」にしたタスク</b></li>
+    </ul>
+    <div class="footnote">変更する先（ガントチャートのタスク）が存在しないためで、不具合ではありません。作業名の左にある &#128279; が青ければ紐付いており、灰色の — なら紐付いていません。</div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="n">4</span><h2>変更できる人</h2></div>
+    <ul class="bullet">
+      <li>そのタスクの<b>担当者本人</b></li>
+      <li><b>管理職以上</b>（管理職・所属長・システム管理者）</li>
+    </ul>
+  </section>
+
+</div>
+
+</body>
+</html>

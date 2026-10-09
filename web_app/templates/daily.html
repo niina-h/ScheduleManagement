@@ -1018,6 +1018,20 @@ function initProjectTaskLink() {
   var taskById = {};
   projectTasks.forEach(function (t) { taskById[String(t.id)] = t; });
 
+  /* 作業名がそのタスクのものとみなせるかを判定する。
+     完全一致のほか、「○○　△△」のような祖先付き表記や、
+     末尾に時刻を添えた表記も同一とみなす。 */
+  function nameMatchesTask(name, ptId) {
+    var allowed = idToNames[ptId] || [];
+    for (var i = 0; i < allowed.length; i++) {
+      var a = allowed[i];
+      if (!a) continue;
+      if (name === a) return true;
+      if (name.indexOf(a) !== -1) return true;
+    }
+    return false;
+  }
+
   function updateStatusUi(slot, idx, ptId) {
     var wrap = document.querySelector('.pt-status-wrap[data-slot="' + slot + '"][data-idx="' + idx + '"]');
     if (!wrap) return;
@@ -1181,8 +1195,27 @@ function initProjectTaskLink() {
     });
   });
 
-  /* 初期表示：既に紐付いている行の状態を出す */
+  /* 初期表示：既に紐付いている行の状態を出す。
+
+     週間予定から引き継いだ ID が、別の作業名に書き換えられたまま
+     残っていることがある（例：週間予定でタスクを選んだ枠に、当日は
+     ガントチャートに無い作業を書いた場合）。そのままだと無関係な
+     タスクの状態セレクトが出てしまう。
+
+     ただし作業名は「祖先　子」形式や時刻付きなど表記揺れが多く、
+     完全一致しないだけで解除すると正当な紐付けまで消える。
+     そこで、作業名がタスク名を含んでいるか（前後に時刻等が付いていても可）
+     を見て判定し、全く別物の場合のみ解除する。 */
   document.querySelectorAll('.pt-id-field').forEach(function (f) {
+    if (f.value) {
+      var nameInput = document.querySelector(
+        '[name="result_task_' + f.dataset.slot + '_' + f.dataset.idx + '"]');
+      var curName = (nameInput ? nameInput.value : '').trim();
+      if (curName && !nameMatchesTask(curName, f.value)) {
+        f.value = '';
+        updateBadge(f.dataset.slot, f.dataset.idx, '');
+      }
+    }
     updateStatusUi(f.dataset.slot, f.dataset.idx, f.value);
   });
 
