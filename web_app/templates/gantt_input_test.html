@@ -60,6 +60,11 @@
   /* アーカイブ済み行（「アーカイブ済みも表示」時のみ現れる）は淡色＋左帯で区別する */
   .g-row.archived { background: #f1f5f9; opacity: .75; }
   .g-row.archived .g-name { border-left: 3px solid #94a3b8; }
+  /* 担当者未設定で保存できない行（マスタ以外） */
+  .g-row.no-owner .g-name { border-left: 3px solid #f59e0b; }
+  .g-row.no-owner .g-name::after {
+    content: '⚠'; flex: 0 0 auto; margin-left: 2px; color: #b45309; font-size: .75rem;
+  }
   /* 折りたたみトグル（子を持つ親に表示） */
   .g-name .cx { flex: 0 0 auto; width: 14px; text-align: center; cursor: pointer; color: #475569; font-size: .7rem; user-select: none; }
   .g-name .cx:hover { color: #4338ca; }
@@ -276,6 +281,7 @@
   var TASKS = {{ tasks | tojson }};
   var ASSIGN_USERS = {{ assign_users | tojson }};
   var DEV_SUMMARY_ENABLED = {{ dev_summary_enabled | tojson }};  // 部門で「開発集計」機能が有効か
+  var IS_MASTER = {{ is_master | tojson }};  // システム管理者か（担当者未設定タスクの保存可否判定に使う）
   var DAYW = 30, INDENT = 18;
 
   var STATUS_COLORS = {
@@ -693,6 +699,13 @@
     row.dataset.archived = opts.archived ? '1' : '0';
     row.dataset.name = opts.name || '';
     if (opts.archived) row.classList.add('archived');
+    /* 担当者・メンバー未設定のタスクはシステム管理者しか保存できないため、
+       マスタ以外には印を付けて事前に気付けるようにする。 */
+    row.dataset.noOwner = opts.noOwner ? '1' : '0';
+    if (opts.noOwner && !IS_MASTER) {
+      row.classList.add('no-owner');
+      row.title = '担当者・メンバーが未設定のため、この行の変更は保存されません（システム管理者のみ変更可）';
+    }
     var editable = opts.editable !== false;   // 既存の読取専用行（一般ユーザーの親など）
     row.dataset.editable = editable ? '1' : '0';
     if (!editable) row.classList.add('ro');
@@ -1236,6 +1249,19 @@
       body: JSON.stringify({ user_id: SELECTED_USER_ID, rows: rows, deleted: deletedIds }) })
       .then(function (r) { return r.json(); }).then(function (d) {
         if (d && d.ok) {
+          /* 権限不足で保存されなかったタスクがあれば、黙って捨てずに知らせる。
+             担当者・メンバーが未設定のタスクはシステム管理者しか更新できないため、
+             変更したのに保存されない状態になりやすい。 */
+          if (d.skipped && d.skipped.length) {
+            var names = d.skipped.slice(0, 10).join('\n・');
+            var more = d.skipped.length > 10
+              ? '\n…ほか' + (d.skipped.length - 10) + '件' : '';
+            alert('次のタスクは権限がないため保存されませんでした：\n\n・'
+              + names + more
+              + '\n\n担当者・メンバーが割り当てられていないタスクは、'
+              + 'システム管理者のみ変更できます。\n'
+              + '担当者を設定するか、システム管理者に依頼してください。');
+          }
           pageDirty = false; setMsg('保存しました。', 'success');
           // 表示中の期間・スクロール位置を保ったまま再読み込みする
           // （location.reload() だと表示開始日がデフォルト値に戻ってしまうため）。
@@ -1270,7 +1296,7 @@
   if (undoBtn) undoBtn.addEventListener('click', undoLastChange);
 
   // 初期描画
-  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable, isMilestone: t.is_milestone, isParent: t.is_parent, devSummary: t.include_in_dev_summary, archived: t.is_archived }); });
+  TASKS.forEach(function (t) { makeRow({ id: t.id, name: t.task_name, start: t.start, end: t.end, status: t.status, progress: t.progress, delay: t.delay_days, people: t.people, level: t.level, editable: t.editable, isMilestone: t.is_milestone, isParent: t.is_parent, devSummary: t.include_in_dev_summary, archived: t.is_archived, noOwner: t.no_owner }); });
   renderMilestoneLines();  // マイルストーンの全体貫通縦線を描画
   ensureTrailing(false);  // 末尾に入力行
   // 前回の折りたたみ状態を復元（保存済みIDを collapsed=1 に）。

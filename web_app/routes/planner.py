@@ -487,6 +487,12 @@ def planner() -> Any:
             "is_parent": is_parent,
             "include_in_dev_summary": bool(t.get("include_in_dev_summary")),
             "is_archived": bool(t.get("is_archived")),
+            # 担当者・メンバーが未設定のタスクはシステム管理者しか保存できない。
+            # 画面で事前に知らせ、変更しても保存されない事態を防ぐ。
+            "no_owner": not (
+                t.get("assigned_to") or t.get("assigned_to_2")
+                or (t.get("member_ids") or "").strip()
+            ),
         })
         for c in sorted(children.get(t["id"], []), key=_sortkey):
             _emit(c, level + 1, member_matched)
@@ -755,6 +761,10 @@ def save() -> Any:
                 return True
         return False
 
+    # 権限不足で保存できなかったタスク名を集め、画面に知らせる
+    # （黙ってスキップすると「変更したのに保存されない」原因が分からないため）。
+    skipped_names: list[str] = []
+
     created = 0
     updated = 0
     tmp_map: dict[str, int] = {}   # クライアント一時ID → 実タスクID
@@ -857,6 +867,7 @@ def save() -> Any:
                         clear_project_task_assigned_to(tid)
                 continue
             if not _can_touch_existing(existing):
+                skipped_names.append(existing.get("task_name") or ("ID:%s" % tid))
                 continue
             assigned_ids_update: str | None = None
             if is_parent:
@@ -907,8 +918,10 @@ def save() -> Any:
         if not existing:
             continue
         if not existing.get("parent_task_id") and not privileged:
+            skipped_names.append(existing.get("task_name") or ("ID:%s" % did))
             continue  # 親タスクは一般ユーザー削除不可
         if not _can_touch_existing(existing):
+            skipped_names.append(existing.get("task_name") or ("ID:%s" % did))
             continue
         delete_project_task(did)
         deleted += 1
@@ -916,7 +929,10 @@ def save() -> Any:
     # DOM順に表示順（display_order）を再割当し、上下移動・挿入を永続化する。
     reassign_project_task_order(ordered_ids)
 
-    return jsonify({"ok": True, "created": created, "updated": updated, "deleted": deleted})
+    return jsonify({
+        "ok": True, "created": created, "updated": updated, "deleted": deleted,
+        "skipped": skipped_names,
+    })
 
 
 @planner_bp.route("/import-excel", methods=["POST"])

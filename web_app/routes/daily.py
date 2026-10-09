@@ -10,7 +10,7 @@ import json
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, session, url_for
 
 from ..models import (
     add_carryover,
@@ -18,6 +18,7 @@ from ..models import (
     get_accessible_users,
     get_active_tasks_for_user,
     get_all_project_tasks,
+    get_project_task_by_id,
     get_project_task_display_names,
     get_all_users,
     get_comments_in_range,
@@ -28,7 +29,6 @@ from ..models import (
     get_events_for_user_date,
     get_pending_carryovers,
     get_task_master,
-    get_task_plan_vs_actual,
     get_user_by_id,
     get_weekly_leave,
     get_weekly_schedule,
@@ -39,6 +39,7 @@ from ..models import (
     save_daily_comment,
     save_daily_result,
     sync_daily_progress_to_task,
+    update_task_status_only,
 )
 from ..auth_helpers import is_privileged, is_master, is_manager, can_access_user, normalize_role
 
@@ -50,7 +51,7 @@ daily_bp = Blueprint("daily_bp", __name__)
 # ---------------------------------------------------------------------------
 
 
-def _build_project_tasks_json(user_id: int) -> str:
+def _build_project_tasks_json(user_id: int, target_date: date | None = None) -> str:
     """該当ユーザーに割り当てられたプロジェクトタスクをJSONに変換する。
 
     実績画面でのタスク自動マッチング用。タスク名 → ID のマッピング。
@@ -62,23 +63,67 @@ def _build_project_tasks_json(user_id: int) -> str:
     引き継いだ作業名の表記）の両方を含める。単体名だけで照合すると、親名付きの
     作業名がタスクと一致せず紐付けできないため。
 
+    ``end_date`` と ``over_days`` は、実績入力画面で「期限を過ぎているのに
+    未完了」のタスクに気付けるようにするために渡す（over_days は超過日数。
+    期限内・期限未設定なら0）。
+
+    ``stale_since`` は「前営業日にも作業実績があるのに状態が『着手』のまま」
+    であることを示す日付（前営業日）。担当者がガントチャートの状態を更新
+    し忘れている可能性が高いため、画面側で更新を促すのに使う。
+
     Returns:
-        str: [{id, name, names, status, progress}] のJSON文字列
+        str: [{id, name, names, status, progress, end_date, over_days}] のJSON文字列
     """
     import json
+    today = date.today()
+    base_date = target_date or today
+
+    # 前営業日（土日を飛ばした直前の平日）に実績が入っているタスクを調べる。
+    # その日も作業していて、今日まだ状態が「着手」のままなら更新漏れとみなす。
+    prev_day = _prev_weekday(base_date)
+    prev_day_str = prev_day.isoformat()
+    from ..database import get_db
+    db = get_db()
+    prev_rows = db.execute(
+        "SELECT DISTINCT project_task_id FROM daily_result"
+        " WHERE user_id = ? AND date = ? AND hours > 0"
+        "   AND project_task_id IS NOT NULL",
+        (user_id, prev_day_str),
+    ).fetchall()
+    worked_prev: set[int] = {int(r["project_task_id"]) for r in prev_rows}
+
     tasks = get_all_project_tasks(assigned_to=user_id, exclude_archived=True)
     name_variants = get_project_task_display_names()
-    result = [
-        {
+    result = []
+    for t in tasks:
+        if t["status"] in ("完了", "中断"):
+            continue
+        # 通常のイベント（会議・打合せ等）はガントチャートに載らないため、
+        # 状態管理の対象外として状態セレクトを出さない。
+        # マイルストーンはガントチャートに残るため対象に含める。
+        if t.get("is_event") and not t.get("is_milestone"):
+            continue
+        end_date = (t.get("end_date") or "").strip()
+        over_days = 0
+        if end_date:
+            try:
+                over_days = max(0, (today - date.fromisoformat(end_date)).days)
+            except ValueError:
+                over_days = 0
+        result.append({
             "id": t["id"],
             "name": t["task_name"],
             "names": sorted(name_variants.get(t["id"], {t["task_name"]})),
             "status": t["status"],
             "progress": t.get("progress", 0),
-        }
-        for t in tasks
-        if t["status"] not in ("完了", "中断")
-    ]
+            "end_date": end_date,
+            "over_days": over_days,
+            "delay_days": t.get("delay_days") or 0,
+            # 前営業日も作業していて「着手」のままなら、更新漏れとして警告する
+            "stale_since": prev_day_str if (
+                t["status"] == "着手" and t["id"] in worked_prev
+            ) else "",
+        })
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -358,13 +403,8 @@ def daily_view(date_str: str) -> Any:
         pending_carryovers=pending_carryovers,
         leave_dates_json=leave_dates_json,
         day_events=day_events,
-        project_tasks_json=_build_project_tasks_json(target_user_id),
+        project_tasks_json=_build_project_tasks_json(target_user_id, target_date),
         active_project_tasks=get_active_tasks_for_user(target_user_id),
-        # 進捗（予定 vs 実績）は「本日時点」の指標のため、当日を表示している時のみ算出する。
-        task_progress_json=json.dumps(
-            get_task_plan_vs_actual(target_user_id) if target_date == date.today() else {},
-            ensure_ascii=False,
-        ),
     )
 
 
@@ -535,6 +575,66 @@ def daily_save() -> Any:
             url_for("daily_bp.daily_view", date_str=date_str) + f"?user_id={target_user_id}"
         )
     return redirect(url_for("daily_bp.daily_view", date_str=date_str))
+
+
+@daily_bp.route("/daily/update_task_status", methods=["POST"])
+def update_task_status() -> Any:
+    """実績入力画面から、紐付いたタスクの状態をその場で更新する（POST/JSON）。
+
+    担当者がガントチャートの状態を更新し忘れるのを防ぐため、実績を入力した
+    その場で「未着手のまま」「期限超過」のタスクを進められるようにする。
+    日付・担当者などは変更せず、状態（と進捗）のみを更新する。
+
+    権限は、そのタスクの担当者本人、または管理職以上。
+
+    Returns:
+        Any: 更新結果のJSON（success, status, progress）。
+    """
+    if "user_id" not in session:
+        return jsonify(success=False, error="未ログインです"), 401
+
+    payload = request.get_json(silent=True) or {}
+    if payload.get("csrf_token") != session.get("csrf_token"):
+        abort(400)
+
+    raw_id = str(payload.get("task_id", "")).strip()
+    if not raw_id.isdigit():
+        abort(400)
+    task_id = int(raw_id)
+    status = str(payload.get("status", "")).strip()
+    # 「遅れ」選択時の遅延日数（0〜上限）。未指定・不正値は None として扱い、
+    # その場合は既存の値を維持する。
+    raw_delay = payload.get("delay_days")
+    try:
+        delay_days: int | None = int(raw_delay) if raw_delay is not None else None
+    except (TypeError, ValueError):
+        delay_days = None
+
+    task = get_project_task_by_id(task_id)
+    if not task:
+        return jsonify(success=False, error="タスクが見つかりません"), 404
+
+    # 担当者本人か、管理職以上のみ変更できる
+    login_id = int(session["user_id"])
+    is_assignee = (task.get("assigned_to") == login_id
+                   or task.get("assigned_to_2") == login_id)
+    if not is_assignee and not is_privileged(session.get("user_role", "")):
+        abort(403)
+
+    ok = update_task_status_only(
+        task_id, status, updated_by=session.get("user_name", ""),
+        delay_days=delay_days,
+    )
+    if not ok:
+        return jsonify(success=False, error="状態の値が不正です"), 400
+
+    updated = get_project_task_by_id(task_id)
+    return jsonify(
+        success=True,
+        status=updated.get("status"),
+        progress=updated.get("progress") or 0,
+        delay_days=updated.get("delay_days") or 0,
+    )
 
 
 @daily_bp.route("/daily/resolve_carryover/<int:carryover_id>", methods=["POST"])

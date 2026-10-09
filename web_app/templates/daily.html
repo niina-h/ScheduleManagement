@@ -132,10 +132,6 @@
         <div class="card-header bg-success text-white py-2 d-flex justify-content-between align-items-center">
           <strong>✏️ 本日の実績</strong>
           <div class="d-flex align-items-center gap-2">
-            <label class="small mb-0" style="cursor:pointer;font-weight:normal;white-space:nowrap;"
-                   title="予定に対する進捗（遅れ/前倒し）の表示を隠します">
-              <input type="checkbox" id="hide-progress-today"> 本日は表示しない
-            </label>
             <button type="button" id="btn-clear-result" class="btn btn-sm btn-outline-light"
                     title="実績をクリアして予定を反映">実績クリア</button>
           </div>
@@ -195,8 +191,32 @@
                     <span class="pt-link-badge badge ms-1"
                           data-slot="am" data-idx="{{ i }}"
                           style="background:{% if linked_pt_id %}#0d6efd{% else %}#e2e8f0{% endif %};color:{% if linked_pt_id %}#fff{% else %}#94a3b8{% endif %};font-size:0.68em;cursor:default;"
-                          title="{% if linked_pt_id %}タスク管理に紐付き済み（ID:{{ linked_pt_id }}）{% else %}タスク管理に未紐付け{% endif %}">
+                          title="{% if linked_pt_id %}ガントチャートのタスクに紐付き済み{% else %}ガントチャートのタスクに未紐付け（この作業は状態管理の対象外です）{% endif %}">
                       {% if linked_pt_id %}🔗{% else %}—{% endif %}
+                    </span>
+                    <span class="pt-status-wrap ms-1 d-none" data-slot="am" data-idx="{{ i }}"
+                          style="white-space:nowrap;display:inline-flex;align-items:center;gap:2px;vertical-align:middle;">
+                      <select class="pt-status-sel form-select form-select-sm d-inline-block py-0 px-1"
+                              data-slot="am" data-idx="{{ i }}"
+                              style="width:5.6em;min-width:5.6em;font-size:0.72em;vertical-align:middle;white-space:nowrap;padding-right:1.1rem !important;background-position:right .25rem center;"
+                              title="ガントチャートの状態をここで変更できます">
+                        <option value="未着手">未着手</option>
+                        <option value="着手">着手</option>
+                        <option value="順調">順調</option>
+                        <option value="遅れ">遅れ</option>
+                        <option value="完了">完了</option>
+                        <option value="中断">中断</option>
+                      </select>
+                      <select class="pt-delay-sel form-select form-select-sm d-inline-block py-0 px-1 d-none"
+                              data-slot="am" data-idx="{{ i }}"
+                              style="width:4.4em;min-width:4.4em;font-size:0.72em;vertical-align:middle;white-space:nowrap;padding-right:1.1rem !important;background-position:right .25rem center;"
+                              title="何日遅れているかを選びます（ガントチャートの進捗バーに反映されます）">
+                        {% for d in range(0, 11) %}
+                        <option value="{{ d }}">{{ d }}日</option>
+                        {% endfor %}
+                      </select>
+                      <span class="pt-status-note" data-slot="am" data-idx="{{ i }}"
+                            style="font-size:0.68em;white-space:nowrap;"></span>
                     </span>
                   </div>
                   <input type="date" name="defer_date_am_{{ i }}"
@@ -269,8 +289,32 @@
                     <span class="pt-link-badge badge ms-1"
                           data-slot="pm" data-idx="{{ i }}"
                           style="background:{% if linked_pt_id %}#0d6efd{% else %}#e2e8f0{% endif %};color:{% if linked_pt_id %}#fff{% else %}#94a3b8{% endif %};font-size:0.68em;cursor:default;"
-                          title="{% if linked_pt_id %}タスク管理に紐付き済み（ID:{{ linked_pt_id }}）{% else %}タスク管理に未紐付け{% endif %}">
+                          title="{% if linked_pt_id %}ガントチャートのタスクに紐付き済み{% else %}ガントチャートのタスクに未紐付け（この作業は状態管理の対象外です）{% endif %}">
                       {% if linked_pt_id %}🔗{% else %}—{% endif %}
+                    </span>
+                    <span class="pt-status-wrap ms-1 d-none" data-slot="pm" data-idx="{{ i }}"
+                          style="white-space:nowrap;display:inline-flex;align-items:center;gap:2px;vertical-align:middle;">
+                      <select class="pt-status-sel form-select form-select-sm d-inline-block py-0 px-1"
+                              data-slot="pm" data-idx="{{ i }}"
+                              style="width:5.6em;min-width:5.6em;font-size:0.72em;vertical-align:middle;white-space:nowrap;padding-right:1.1rem !important;background-position:right .25rem center;"
+                              title="ガントチャートの状態をここで変更できます">
+                        <option value="未着手">未着手</option>
+                        <option value="着手">着手</option>
+                        <option value="順調">順調</option>
+                        <option value="遅れ">遅れ</option>
+                        <option value="完了">完了</option>
+                        <option value="中断">中断</option>
+                      </select>
+                      <select class="pt-delay-sel form-select form-select-sm d-inline-block py-0 px-1 d-none"
+                              data-slot="pm" data-idx="{{ i }}"
+                              style="width:4.4em;min-width:4.4em;font-size:0.72em;vertical-align:middle;white-space:nowrap;padding-right:1.1rem !important;background-position:right .25rem center;"
+                              title="何日遅れているかを選びます（ガントチャートの進捗バーに反映されます）">
+                        {% for d in range(0, 11) %}
+                        <option value="{{ d }}">{{ d }}日</option>
+                        {% endfor %}
+                      </select>
+                      <span class="pt-status-note" data-slot="pm" data-idx="{{ i }}"
+                            style="font-size:0.68em;white-space:nowrap;"></span>
                     </span>
                   </div>
                   <input type="date" name="defer_date_pm_{{ i }}"
@@ -926,8 +970,12 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
   });
 });
 
-/* ── タスク管理紐付け自動マッチング ── */
-(function () {
+/* ── タスク管理紐付け自動マッチング ──
+   タスクデータを持つ <script id="project-tasks-data"> はこのブロックより後ろに
+   あるため、DOM構築の完了を待ってから初期化する（待たずに実行すると
+   document.getElementById が null を返し、紐付け表示が一切動作しない）。 */
+function initProjectTaskLink() {
+  var CSRF_TOKEN = {{ csrf_token | tojson }};
   var projectTasks = [];
   var dataEl = document.getElementById('project-tasks-data');
   if (dataEl) {
@@ -953,14 +1001,190 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
       badge.textContent = '🔗';
       badge.style.background = '#0d6efd';
       badge.style.color = '#fff';
-      badge.title = 'タスク管理に紐付き（ID:' + ptId + '）';
+      var t = taskById[String(ptId)];
+      badge.title = 'ガントチャートのタスクに紐付き済み'
+        + (t ? '：' + t.name : '');
     } else {
       badge.textContent = '—';
       badge.style.background = '#e2e8f0';
       badge.style.color = '#94a3b8';
-      badge.title = 'タスク管理に未紐付け';
+      badge.title = 'ガントチャートのタスクに未紐付け（この作業は状態管理の対象外です）';
     }
   }
+
+  /* 紐付いたタスクの現在の状態を表示し、その場で変更できるようにする。
+     担当者がガントチャートの状態を更新し忘れるのを防ぐため、
+     「実績があるのに未着手」「期限超過なのに未完了」を警告する。 */
+  var taskById = {};
+  projectTasks.forEach(function (t) { taskById[String(t.id)] = t; });
+
+  function updateStatusUi(slot, idx, ptId) {
+    var wrap = document.querySelector('.pt-status-wrap[data-slot="' + slot + '"][data-idx="' + idx + '"]');
+    if (!wrap) return;
+    var sel  = wrap.querySelector('.pt-status-sel');
+    var note = wrap.querySelector('.pt-status-note');
+    var t = ptId ? taskById[String(ptId)] : null;
+    if (!t) { wrap.classList.add('d-none'); return; }
+
+    wrap.classList.remove('d-none');
+    sel.value = t.status || '未着手';
+
+    /* 「遅れ」のときだけ遅延日数の選択を出す */
+    var delaySel = wrap.querySelector('.pt-delay-sel');
+    if (delaySel) {
+      if (sel.value === '遅れ') {
+        delaySel.classList.remove('d-none');
+        delaySel.value = String(t.delay_days || 0);
+      } else {
+        delaySel.classList.add('d-none');
+      }
+    }
+
+    /* 入力中の実績時間（この行）を見て、実績があるのに未着手なら注意喚起する */
+    var hoursInput = document.querySelector(
+      '[name="result_hours_' + slot + '_' + idx + '"]');
+    var hours = hoursInput ? (parseFloat(hoursInput.value) || 0) : 0;
+
+    /* 1行に収めるため、警告は短い文言にして詳細は title（ツールチップ）へ回す */
+    var msg = '', color = '', tip = '';
+    if (t.over_days > 0 && t.status !== '完了') {
+      msg = '⚠' + t.over_days + '日超過';
+      tip = '期限（' + (t.end_date || '') + '）を' + t.over_days + '日過ぎていますが完了していません';
+      color = '#b91c1c';
+    } else if (hours > 0 && t.status === '未着手') {
+      msg = '⚠未着手';
+      tip = '実績を入力していますが、タスクの状態が「未着手」のままです';
+      color = '#b45309';
+    } else if (t.stale_since) {
+      /* 前営業日も作業していて「着手」のまま＝状態の更新漏れの可能性が高い */
+      msg = '⚠状態未更新';
+      tip = '前営業日（' + t.stale_since + '）も作業していますが、状態が「着手」のままです。'
+        + '進み具合に合わせて「順調」「遅れ」「完了」などに更新してください。';
+      color = '#b45309';
+    }
+    note.textContent = msg;
+    note.style.color = color;
+    note.title = tip;
+    sel.style.borderColor = msg ? color : '';
+
+    /* 状態そのものの色付け。「遅れ」は赤、「完了」は緑で一目で分かるようにする
+       （ガントチャートの状態表示と色味を揃える）。 */
+    var STATUS_COLOR = { '遅れ': '#b91c1c', '完了': '#15803d', '中断': '#6b7280' };
+    var sc = STATUS_COLOR[sel.value] || '';
+    sel.style.color = sc;
+    sel.style.fontWeight = sc ? '700' : '';
+    if (delaySel) {
+      delaySel.style.color = (sel.value === '遅れ') ? '#b91c1c' : '';
+      delaySel.style.fontWeight = (sel.value === '遅れ') ? '700' : '';
+    }
+  }
+
+  /* 状態セレクトの変更で、その場でガントチャートの状態を更新する */
+  document.querySelectorAll('.pt-status-sel').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      var slot = sel.dataset.slot, idx = sel.dataset.idx;
+      var hidden = document.querySelector(
+        '.pt-id-field[data-slot="' + slot + '"][data-idx="' + idx + '"]');
+      if (!hidden || !hidden.value) return;
+      var ptId = hidden.value;
+      var newStatus = sel.value;
+      var wrap = sel.closest('.pt-status-wrap');
+      var delaySel = wrap ? wrap.querySelector('.pt-delay-sel') : null;
+      /* 「遅れ」に変えた直後は遅延日数の選択がまだ隠れているため、
+         既定値（現在値、無ければ1日）を送る */
+      var delayVal = null;
+      if (newStatus === '遅れ') {
+        delayVal = delaySel && delaySel.value ? parseInt(delaySel.value) : 0;
+        if (!delayVal) { delayVal = 1; }
+      }
+      sel.disabled = true;
+      fetch('{{ url_for("daily_bp.update_task_status") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csrf_token: CSRF_TOKEN, task_id: ptId,
+                               status: newStatus, delay_days: delayVal })
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        sel.disabled = false;
+        if (j && j.success) {
+          if (taskById[String(ptId)]) {
+            taskById[String(ptId)].status = j.status;
+            taskById[String(ptId)].progress = j.progress;
+            taskById[String(ptId)].delay_days = j.delay_days || 0;
+            /* 状態を更新したので「状態未更新」の警告は解除する */
+            if (j.status !== '着手') { taskById[String(ptId)].stale_since = ''; }
+          }
+          updateStatusUi(slot, idx, ptId);
+          var note = document.querySelector(
+            '.pt-status-note[data-slot="' + slot + '"][data-idx="' + idx + '"]');
+          if (note && !note.textContent) {
+            note.textContent = '✓更新';
+            note.style.color = '#15803d';
+            setTimeout(function () { updateStatusUi(slot, idx, ptId); }, 2500);
+          }
+        } else {
+          alert('状態の更新に失敗しました：' + ((j && j.error) || ''));
+        }
+      }).catch(function () {
+        sel.disabled = false;
+        alert('状態の更新に失敗しました。');
+      });
+    });
+  });
+
+  /* 遅延日数を変えたら、ガントチャートの進捗バーに反映する */
+  document.querySelectorAll('.pt-delay-sel').forEach(function (dsel) {
+    dsel.addEventListener('change', function () {
+      var slot = dsel.dataset.slot, idx = dsel.dataset.idx;
+      var hidden = document.querySelector(
+        '.pt-id-field[data-slot="' + slot + '"][data-idx="' + idx + '"]');
+      if (!hidden || !hidden.value) return;
+      var ptId = hidden.value;
+      dsel.disabled = true;
+      fetch('{{ url_for("daily_bp.update_task_status") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csrf_token: CSRF_TOKEN, task_id: ptId,
+                               status: '遅れ', delay_days: parseInt(dsel.value) || 0 })
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        dsel.disabled = false;
+        if (j && j.success) {
+          if (taskById[String(ptId)]) {
+            taskById[String(ptId)].status = j.status;
+            taskById[String(ptId)].progress = j.progress;
+            taskById[String(ptId)].delay_days = j.delay_days || 0;
+          }
+          var note = document.querySelector(
+            '.pt-status-note[data-slot="' + slot + '"][data-idx="' + idx + '"]');
+          if (note) {
+            note.textContent = '✓進捗' + j.progress + '%';
+            note.style.color = '#15803d';
+            note.title = '遅延' + (j.delay_days || 0) + '日を差し引いた進捗率です';
+          }
+        } else {
+          alert('遅延日数の更新に失敗しました：' + ((j && j.error) || ''));
+        }
+      }).catch(function () {
+        dsel.disabled = false;
+        alert('遅延日数の更新に失敗しました。');
+      });
+    });
+  });
+
+  /* 実績時間を変更したときも「実績ありで未着手」の判定をやり直す */
+  document.querySelectorAll('[name^="result_hours_"]').forEach(function (inp) {
+    inp.addEventListener('change', function () {
+      var m = inp.name.match(/result_hours_(am|pm)_(\d+)/);
+      if (!m) return;
+      var hidden = document.querySelector(
+        '.pt-id-field[data-slot="' + m[1] + '"][data-idx="' + m[2] + '"]');
+      updateStatusUi(m[1], m[2], hidden ? hidden.value : '');
+    });
+  });
+
+  /* 初期表示：既に紐付いている行の状態を出す */
+  document.querySelectorAll('.pt-id-field').forEach(function (f) {
+    updateStatusUi(f.dataset.slot, f.dataset.idx, f.value);
+  });
 
   /* タスク名入力フィールドの変更を監視 */
   document.querySelectorAll('input.result-task').forEach(function (input) {
@@ -982,7 +1206,11 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
          書き換えたのに古いタスクへの紐付けが残り続ける不具合を防ぐ）。 */
       if (hidden.value) {
         var allowed = idToNames[hidden.value] || [];
-        if (allowed.indexOf(name) !== -1) { updateBadge(slot, idx, hidden.value); return; }
+        if (allowed.indexOf(name) !== -1) {
+          updateBadge(slot, idx, hidden.value);
+          updateStatusUi(slot, idx, hidden.value);
+          return;
+        }
         hidden.value = '';
       }
 
@@ -990,65 +1218,22 @@ document.querySelectorAll('.admin-comment-form').forEach(form => {
       if (matched) {
         hidden.value = matched.id;
         updateBadge(slot, idx, matched.id);
+        updateStatusUi(slot, idx, matched.id);
       } else {
         updateBadge(slot, idx, '');
+        updateStatusUi(slot, idx, '');
       }
     });
   });
-})();
+}
 </script>
 <script type="application/json" id="project-tasks-data">{{ project_tasks_json | safe }}</script>
-<script type="application/json" id="task-progress-data">{{ task_progress_json | safe }}</script>
 <script>
-/* 実績 vs 予定の進捗可視化（遅れ/予定通り/前倒し）。
-   タスクに紐づく実績合計時間から算出した実績進捗率と、日付ベースの予定進捗率を比較する。 */
-(function () {
-  var TP = {};
-  try { TP = JSON.parse(document.getElementById('task-progress-data').textContent || '{}'); } catch (e) {}
-  var STATE = {
-    behind:  { t: '遅れ',   bg: '#fee2e2', fg: '#b91c1c' },
-    ahead:   { t: '前倒し', bg: '#dcfce7', fg: '#15803d' },
-    ontrack: { t: '予定通り', bg: '#e0e7ff', fg: '#4338ca' }
-  };
-  var toggle = document.getElementById('hide-progress-today');
-  function isHidden() { return toggle && toggle.checked; }
-
-  function render() {
-    document.querySelectorAll('.pt-id-field').forEach(function (f) {
-      var cell = f.closest('td'); if (!cell) return;
-      var wrap = cell.querySelector('.d-flex'); if (!wrap) return;
-      var badge = wrap.querySelector('.pt-prog-badge');
-      if (!badge) {
-        badge = document.createElement('span');
-        badge.className = 'pt-prog-badge badge ms-1';
-        badge.style.fontSize = '0.68em';
-        badge.style.whiteSpace = 'nowrap';
-        wrap.appendChild(badge);
-      }
-      var info = f.value ? TP[f.value] : null;
-      if (isHidden() || !info || info.state === 'none') { badge.style.display = 'none'; return; }
-      var s = STATE[info.state] || STATE.ontrack;
-      var sign = info.diff > 0 ? ('+' + info.diff) : ('' + info.diff);
-      badge.style.display = '';
-      badge.style.background = s.bg;
-      badge.style.color = s.fg;
-      badge.textContent = info.state === 'ontrack' ? s.t : (s.t + ' ' + sign + '%');
-      badge.title = '予定進捗 ' + info.planned + '% に対して実績進捗 ' + info.actual + '%（差 ' + sign + '%）';
-    });
-  }
-
-  if (toggle) {
-    toggle.checked = localStorage.getItem('hideProgressToday') === '1';
-    toggle.addEventListener('change', function () {
-      localStorage.setItem('hideProgressToday', toggle.checked ? '1' : '0');
-      render();
-    });
-  }
-  // タスク自動マッチ後（紐付けID変化後）にも再描画
-  document.querySelectorAll('input.result-task').forEach(function (inp) {
-    inp.addEventListener('change', function () { setTimeout(render, 0); });
-  });
-  render();
-})();
+/* タスクデータの読み込み後に紐付け表示を初期化する */
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initProjectTaskLink);
+} else {
+  initProjectTaskLink();
+}
 </script>
 {% endblock %}

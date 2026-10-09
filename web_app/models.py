@@ -3616,6 +3616,103 @@ def import_events_to_weekly_schedule(
     return imported
 
 
+# 「遅れ」状態で指定できる遅延日数の上限（日）
+MAX_DELAY_DAYS: int = 10
+
+
+def update_task_status_only(
+    task_id: int,
+    status: str,
+    progress: int | None = None,
+    updated_by: str = "",
+    delay_days: int | None = None,
+) -> bool:
+    """タスクの状態（と任意で進捗率・遅延日数）だけを更新する。
+
+    実績入力画面から「未着手のままになっているタスク」をその場で進めるために
+    使う。日付・担当者・区分などは変更しないため、ガントチャートの登録内容を
+    壊さずに状態だけを最新化できる。
+
+    状態が「遅れ」の場合は ``delay_days`` を受け取り、ガントチャートと同じ式
+    「(経過日数 − 遅延日数) ÷ 全体日数」で進捗率を再計算する（バーの進捗表示が
+    遅延分だけ戻る）。「遅れ」以外に変更した場合は遅延日数を0に戻す。
+
+    Args:
+        task_id: 対象タスクID。
+        status: 新しい状態（``PROJECT_TASK_STATUSES`` のいずれか）。
+        progress: 進捗率（0〜100）。None なら状態に応じて自動補正する。
+        updated_by: 更新者名。
+        delay_days: 遅延日数（0〜``MAX_DELAY_DAYS``）。状態が「遅れ」のときのみ使う。
+
+    Returns:
+        bool: 更新した場合 True。状態が不正、または対象が存在しない場合 False。
+    """
+    if status not in PROJECT_TASK_STATUSES:
+        return False
+    task = get_project_task_by_id(task_id)
+    if not task:
+        return False
+
+    # 「遅れ」以外に変更した場合は遅延日数を0に戻す（遅れが解消したとみなす）。
+    new_delay = 0
+    if status == "遅れ":
+        raw_delay = task.get("delay_days") or 0 if delay_days is None else delay_days
+        new_delay = max(0, min(MAX_DELAY_DAYS, int(raw_delay)))
+
+    # 進捗の指定が無い場合は、状態に応じた値へ正規化する
+    # （未着手→0、完了→100、着手・順調は日付ベースの自動計算）。
+    if progress is None:
+        if status == "遅れ":
+            # ガントチャートと同じ式で、遅延日数の分だけ進捗を戻す
+            new_progress = _calc_delayed_progress(
+                task.get("start_date"), task.get("end_date"), new_delay,
+            )
+        else:
+            new_progress = _normalize_progress(
+                status, task.get("progress") or 0,
+                task.get("start_date"), task.get("end_date"),
+            )
+    else:
+        new_progress = max(0, min(100, int(progress)))
+
+    db = get_db()
+    db.execute(
+        "UPDATE project_task SET status = ?, progress = ?, delay_days = ?,"
+        "       updated_at = datetime('now','localtime'), updated_by = ?"
+        " WHERE id = ?",
+        (status, new_progress, new_delay, updated_by, task_id),
+    )
+    db.commit()
+    return True
+
+
+def _calc_delayed_progress(
+    start_date: str | None, end_date: str | None, delay_days: int,
+) -> int:
+    """「遅れ」状態の進捗率を、遅延日数を差し引いて算出する。
+
+    ガントチャート（gantt_input_test.html の effOf）と同じ計算式に揃える：
+    (経過日数 − 遅延日数) ÷ 全体日数 × 100（0〜99%に収める）。
+    経過日数・全体日数はいずれも開始日・終了日を含む実日数で数える。
+
+    Args:
+        start_date: 開始日（YYYY-MM-DD）。
+        end_date: 終了日（YYYY-MM-DD）。
+        delay_days: 遅延日数。
+
+    Returns:
+        int: 0〜99の進捗率。期間が未設定・不正な場合は0。
+    """
+    try:
+        s = date.fromisoformat(start_date or "")
+        e = date.fromisoformat(end_date or "")
+    except (ValueError, TypeError):
+        return 0
+    total_days = max(1, (e - s).days + 1)
+    elapsed = (date.today() - s).days + 1
+    return max(0, min(99, round((elapsed - delay_days) / total_days * 100)))
+
+
 def sync_daily_progress_to_task(
     user_id: int,
     date_str: str,
